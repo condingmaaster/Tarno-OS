@@ -210,25 +210,28 @@ fn main() {
         }
         "e1000-test" => {
             let img = prod_interactive_image(cmd);
-            let out = boot_and_run_args(
-                &img,
-                "e1000",
-                "ping -c 3 10.0.2.2; echo e1000-after-$((11))",
-                "e1000-after-11",
-                90,
-                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "e1000,netdev=n0"],
-            );
-            let replies = out.lines().filter(|l| l.contains("bytes from 10.0.2.2")).count();
-            let log = std::fs::read(workspace_root().join("target/e1000-serial.log")).unwrap_or_default();
-            let nic = String::from_utf8_lossy(&log).contains("net nic          e1000");
-            if replies >= 2 && nic {
-                println!("e1000-test PASSED: the Intel e1000 driver brought the stack up (DHCP/ARP) and BusyBox ping got {replies} of 3 replies");
-            } else {
-                for l in out.lines().filter(|l| l.contains("ping") || l.contains("PING") || l.contains("bytes") || l.contains("net") || l.contains("packet")) {
-                    eprintln!("  {l}");
+            // the classic 82540EM and the PCIe 82574L ("e1000e") that QEMU also emulates
+            for model in ["e1000", "e1000e"] {
+                let out = boot_and_run_args(
+                    &img,
+                    "e1000",
+                    "ping -c 3 10.0.2.2; echo e1000-after-$((11))",
+                    "e1000-after-11",
+                    90,
+                    &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", &format!("{model},netdev=n0")],
+                );
+                let replies = out.lines().filter(|l| l.contains("bytes from 10.0.2.2")).count();
+                let log = std::fs::read(workspace_root().join("target/e1000-serial.log")).unwrap_or_default();
+                let nic = String::from_utf8_lossy(&log).contains("net nic          e1000");
+                if replies >= 2 && nic {
+                    println!("e1000-test PASSED ({model}): the Intel driver brought the stack up (DHCP/ARP) and BusyBox ping got {replies} of 3 replies");
+                } else {
+                    for l in out.lines().filter(|l| l.contains("ping") || l.contains("PING") || l.contains("bytes") || l.contains("net") || l.contains("packet")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("e1000-test FAILED with {model} ({replies} replies, e1000 driver in use: {nic})");
+                    exit(1);
                 }
-                eprintln!("e1000-test FAILED ({replies} replies, e1000 driver in use: {nic})");
-                exit(1);
             }
         }
         "dns-test" => {
