@@ -4353,6 +4353,10 @@ fn mouse_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/mouse-serial.log");
     let sock = root.join("target/mouse-mon.sock");
+    // A log or socket left over from the last run would let the helper thread below act on the *old*
+    // "mouse ready" before this boot has even started.
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
     let (tlog, tsock) = (log.clone(), sock.clone());
     std::thread::spawn(move || {
         if wait_for(&tlog, "mouse ready", 200) {
@@ -4389,6 +4393,8 @@ fn fb_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/fb-serial.log");
     let sock = root.join("target/fb-mon.sock");
+    let _ = std::fs::remove_file(&log); // see mouse_test: no stale "fb ready" from the last run
+    let _ = std::fs::remove_file(&sock);
     let shot = root.join("target/fb-screen.ppm");
     let _ = std::fs::remove_file(&shot);
     let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
