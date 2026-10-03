@@ -34,10 +34,28 @@ static pid_t child;
 static void mark(int r) { if (r < dirty0) dirty0 = r; if (r > dirty1) dirty1 = r; }
 static struct cell blank(void) { return (struct cell){ ' ', 7, 0, 0 }; }
 
+/* Latin-15 glyph index <-> Unicode (only the 8 positions where Latin-15 differs from Latin-1 matter here) */
+static unsigned latin15_to_cp(unsigned char g) {
+    switch (g) { case 0xA4: return 0x20AC; case 0xA6: return 0x160; case 0xA8: return 0x161; case 0xB4: return 0x17D;
+                 case 0xB8: return 0x17E; case 0xBC: return 0x152; case 0xBD: return 0x153; case 0xBE: return 0x178; }
+    return g;
+}
+static unsigned char cp_to_latin15(unsigned cp) {
+    if (cp == 0x20AC) return 0xA4;
+    if (cp == 0xB4) return 0x27;                 /* the acute accent has no Latin-15 glyph of its own here */
+    if (cp < 256) return (unsigned char)cp;
+    return '?';
+}
+static int put_utf8(char *o, unsigned cp) {
+    if (cp < 0x80) { o[0] = (char)cp; return 1; }
+    if (cp < 0x800) { o[0] = (char)(0xC0 | cp >> 6); o[1] = (char)(0x80 | (cp & 0x3F)); return 2; }
+    o[0] = (char)(0xE0 | cp >> 12); o[1] = (char)(0x80 | ((cp >> 6) & 0x3F)); o[2] = (char)(0x80 | (cp & 0x3F)); return 3;
+}
+
 static void log_row(int r) {
     if (!logging) return;
-    char b[COLS + 1]; int n = COLS;
-    for (int i = 0; i < COLS; i++) b[i] = grid[r][i].ch;
+    char b[COLS * 3 + 1]; int n = 0;
+    for (int i = 0; i < COLS; i++) n += put_utf8(b + n, latin15_to_cp(grid[r][i].ch));
     while (n > 0 && b[n - 1] == ' ') n--;
     b[n] = 0;
     printf("term-line: %s\n", b);
@@ -63,6 +81,7 @@ static void put(unsigned char c) {
 }
 
 static int st, par[8], npar, priv;
+static unsigned u8cp, u8need;
 static void csi(unsigned char f) {
     int a = npar > 0 ? par[0] : 0, b = npar > 1 ? par[1] : 0;
     switch (f) {
@@ -113,7 +132,8 @@ static void feed(unsigned char c) {
         else if (c == '\b') { if (cx > 0) cx--; }
         else if (c == '\t') { cx = (cx + 8) & ~7; if (cx >= COLS) cx = COLS - 1; }
         else if (c >= 32 && c < 127) put(c);
-        else if (c >= 160) put(c);
+        else if (c >= 0xC2 && c <= 0xF4) { u8cp = c >= 0xE0 ? c & 0x0F : c & 0x1F; u8need = c >= 0xE0 ? (c >= 0xF0 ? 3 : 2) : 1; }
+        else if (c >= 0x80 && c < 0xC0 && u8need) { u8cp = (u8cp << 6) | (c & 0x3F); if (--u8need == 0) put(cp_to_latin15(u8cp)); }
         break;
     case 1:
         if (c == '[') { st = 2; npar = 0; par[0] = 0; priv = 0; }
@@ -159,6 +179,7 @@ static void key(struct wl_msg *m) {
     else if (a == 0x4C) { memcpy(out, "\033[3~", 4); n = 4; }
     else if (a == 0x4A) { memcpy(out, "\033[H", 3); n = 3; }
     else if (a == 0x4D) { memcpy(out, "\033[F", 3); n = 3; }
+    else if (c >= 0x80) { n = put_utf8(out, c); }
     else if (c) {
         if ((mods & 0x11) && c >= 'a' && c <= 'z') c -= 96;
         else if ((mods & 0x11) && c >= 'A' && c <= 'Z') c -= 64;

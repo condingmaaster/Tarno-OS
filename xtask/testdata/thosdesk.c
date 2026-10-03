@@ -236,7 +236,8 @@ int main(void) {
             int t = nwin - 1;
             while (t >= 0 && !wins[t].deco) t--;
             if (read(kbd, ev, 8) == 8 && t >= 0) {
-                struct wl_msg k = { WL_KEY, ev[1], ev[0], ev[3], ev[2] };
+                unsigned cp = ev[3] ? ev[3] : (ev[4] | (ev[5] << 8) | (ev[6] << 16));   /* ASCII, else the code point */
+                struct wl_msg k = { WL_KEY, ev[1], ev[0], cp, ev[2] };
                 if (wins[t].hwnd) { if (ev[0] && ev[3]) ws_send(11, wins[t].hwnd, ev[3], 0, 0); }
                 else (void)!write(wins[t].fd, &k, sizeof k);
             }

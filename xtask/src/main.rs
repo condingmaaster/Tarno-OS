@@ -5673,10 +5673,16 @@ fn desk_term_test(img: &Path) {
             mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
             std::thread::sleep(ms(1000));
         }
+        // German layout: the key right of "ö" (US apostrophe) types "ä" — typed in, echoed back through the pty
+        for k in ["e", "c", "h", "o", "spc", "apostrophe", "ret"] {
+            mon(&tsock, &format!("sendkey {k}"));
+            std::thread::sleep(ms(150));
+        }
+        wait_for(&tlog, "term-line: ä", 20);
         type_line(&tsock, "exit");
     });
     let out = boot_and_run(img, "deskterm", "/busybox sh /desk-term.sh", "desk ok:", 150);
-    let line = out.lines().any(|l| l.trim() == "term-line: hellothos");
+    let line = out.lines().any(|l| l.trim() == "term-line: hellothos") && out.lines().any(|l| l.trim() == "term-line: ä");
     let (w, count) = match read_ppm(&shot) {
         Some((w, _, d)) => {
             let mut n = 0;
