@@ -1662,7 +1662,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
 
         SYS_EXECVE => sys_execve(a1, a2, a3),
 
-        SYS_WAIT4 => process::wait4(a1 as i64, a2),
+        SYS_WAIT4 => process::wait4(a1 as i64, a2, a3),
 
         // exit_group ends the whole process (the other threads notice and follow).
         SYS_EXIT_GROUP => {

@@ -159,6 +159,11 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
             if crate::gdi::fb_geometry().is_none() {
                 return None;
             }
+            // The opener owns the screen: the text console stops painting (its model keeps
+            // updating) until the last fd of /dev/fb0 closes — also when the owner crashes.
+            if FB_OPENS.fetch_add(1, Ordering::AcqRel) == 0 {
+                crate::fbcon::suspend();
+            }
             Arc::new(FbFile { pos: AtomicU64::new(0) })
         }
         "/dev/tty" | "/dev/console" => {
@@ -178,6 +183,16 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
 /// offsets, `FBIOGET_VSCREENINFO` / `FBIOGET_FSCREENINFO` for its geometry. (No `mmap` yet.)
 pub struct FbFile {
     pos: AtomicU64,
+}
+
+static FB_OPENS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+impl Drop for FbFile {
+    fn drop(&mut self) {
+        if FB_OPENS.fetch_sub(1, Ordering::AcqRel) == 1 {
+            crate::fbcon::resume();
+        }
+    }
 }
 
 impl FileOps for FbFile {

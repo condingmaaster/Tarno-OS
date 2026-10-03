@@ -1629,7 +1629,7 @@ pub fn pid_exited(pid: u64) -> bool {
     TASKS.lock().get(&pid).map_or(true, |t| t.exited.load(Ordering::Acquire))
 }
 
-pub fn wait4(pid: i64, status_ptr: u64) -> i64 {
+pub fn wait4(pid: i64, status_ptr: u64, options: u64) -> i64 {
     let me = current_pid();
     loop {
         {
@@ -1660,6 +1660,9 @@ pub fn wait4(pid: i64, status_ptr: u64) -> i64 {
             if !has_children {
                 return -10; // ECHILD
             }
+        }
+        if options & 1 != 0 {
+            return 0; // WNOHANG: children exist, none has exited yet
         }
         if crate::signal::interrupted() {
             return -4; // EINTR

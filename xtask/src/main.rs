@@ -218,6 +218,10 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_test(&img);
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -633,6 +637,18 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false);
             if ipc_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk.sh", root.join("xtask/testdata/desk.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["thosdesk", "thoswin"] {
+                let out = root.join(format!("target/{prog}"));
+                let ok = Command::new("gcc")
+                    .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
+                }
             }
             let mt = root.join("target/memtest");
             let mt_ok = Command::new("gcc")
@@ -3846,7 +3862,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "ipc-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -5435,6 +5451,114 @@ fn pipe_test(iso: &Path) {
         println!("pipe-test: OK — `|` and `$(…)` work through BusyBox sh");
     } else {
         eprintln!("pipe-test: FAIL — pipe / command-substitution output wrong\n--- serial ---\n{serial}\n---");
+        exit(1);
+    }
+}
+
+/// Parse a binary PPM (P6) into `(width, height, rgb bytes)`.
+fn read_ppm(path: &Path) -> Option<(usize, usize, Vec<u8>)> {
+    let data = std::fs::read(path).ok()?;
+    let mut pos = 0;
+    let mut tok = Vec::new();
+    while tok.len() < 4 {
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let start = pos;
+        while pos < data.len() && !data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        tok.push(String::from_utf8_lossy(&data[start..pos]).to_string());
+    }
+    pos += 1; // the single whitespace after maxval
+    if tok[0] != "P6" {
+        return None;
+    }
+    Some((tok[1].parse().ok()?, tok[2].parse().ok()?, data[pos..].to_vec()))
+}
+
+/// `cargo xtask desk-test`: the userspace compositor (`thosdesk`) with two `thoswin` clients —
+/// overlap and z-order, raise-on-click, titlebar drag — checked on QEMU screendumps.
+fn desk_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/desk-serial.log");
+    let sock = root.join("target/desk-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/desk-{i}.ppm"))).collect();
+    for s in &shots {
+        let _ = std::fs::remove_file(s);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "desk: window 2 created", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1500));
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        let Some((w, h, _)) = read_ppm(&tshots[0]) else { return };
+        // the cursor starts at the screen centre; walk it onto window 1's titlebar (150, 68)
+        let walk = |dx: i32, dy: i32| {
+            let (mut rx, mut ry) = (dx, dy);
+            while rx != 0 || ry != 0 {
+                let sx = rx.clamp(-40, 40);
+                let sy = ry.clamp(-40, 40);
+                mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                rx -= sx;
+                ry -= sy;
+            }
+        };
+        walk(150 - (w as i32) / 2, 68 - (h as i32) / 2);
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(500));
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        // press again on the (now top) window's titlebar and drag it +300,+250
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        walk(300, 250);
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(500));
+        mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+        std::thread::sleep(ms(1500));
+        type_line(&tsock, "thoswin quit");
+    });
+    let out = boot_and_run(img, "desk", "/busybox sh /desk.sh", "desk ok:", 150);
+    let px = |i: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shots[i])?;
+        if x >= w || y >= h {
+            return None;
+        }
+        let o = (y * w + x) * 3;
+        Some((*d.get(o)?, *d.get(o + 1)?, *d.get(o + 2)?))
+    };
+    let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| {
+        a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24)
+    };
+    let (red, green, bg) = ((220, 40, 40), (40, 200, 60), (30, 50, 90));
+    // A = red at (100,80) 300x200; B = green at (180,140) 300x200 on top of it
+    let c1 = near(px(0, 120, 100), red) && near(px(0, 300, 200), green) && near(px(0, 460, 320), green) && near(px(0, 700, 600), bg);
+    // after clicking A's titlebar A is on top
+    let c2 = near(px(1, 300, 200), red) && near(px(1, 460, 320), green);
+    // dragged +300,+250: A's old top-left is background, its new body is red, B is uncovered again
+    let c3 = near(px(2, 120, 100), bg) && near(px(2, 550, 430), red) && near(px(2, 200, 160), green);
+    let quit = out.lines().any(|l| l.contains("desk ok:"));
+    if c1 && c2 && c3 && quit {
+        println!("desk-test PASSED: compositor — two client windows overlap in z-order, a click raises, the titlebar drags, the client quit cleanly");
+    } else {
+        eprintln!("  shot1: A-only {:?} overlap {:?} B-only {:?} bg {:?}", px(0, 120, 100), px(0, 300, 200), px(0, 460, 320), px(0, 700, 600));
+        eprintln!("  shot2: overlap {:?} B-only {:?}", px(1, 300, 200), px(1, 460, 320));
+        eprintln!("  shot3: old A {:?} new A {:?} B {:?}", px(2, 120, 100), px(2, 550, 430), px(2, 200, 160));
+        for l in out.lines().filter(|l| l.contains("desk") || l.contains("win") || l.contains("unhandled") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-test FAILED (initial {c1}, raise {c2}, drag {c3}, quit {quit})");
         exit(1);
     }
 }
