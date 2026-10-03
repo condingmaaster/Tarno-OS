@@ -112,6 +112,75 @@ pub enum DevKind {
     Mice,
 }
 
+/// `/dev/winsys`: the display server's side of the Win32 window manager. `read` = 32-byte window
+/// events, `ioctl(0x7701, hwnd)` maps a window's pixels, `write` = 32-byte input records
+/// (`[kind, hwnd, a, b, ...]`: 10 = mouse message a at (b, c); 11 = char a; 12 = close; 13 = paint;
+/// 14 = destroy). Holding it open turns on composition: windows then draw into their own buffers.
+pub struct WinSys;
+
+impl FileOps for WinSys {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        if buf.len() < 32 {
+            return -22;
+        }
+        loop {
+            if let Some(e) = crate::window::winsys_read() {
+                for (i, v) in e.iter().enumerate() {
+                    buf[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+                }
+                return 32;
+            }
+            if crate::signal::interrupted() {
+                return -4;
+            }
+            crate::window::winsys_wait();
+        }
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        let mut done = 0;
+        for rec in buf.chunks_exact(32) {
+            let w = |i: usize| u32::from_le_bytes([rec[4 * i], rec[4 * i + 1], rec[4 * i + 2], rec[4 * i + 3]]);
+            let (kind, hwnd) = (w(0), w(1));
+            match kind {
+                10 => {
+                    crate::window::post_message(hwnd, w(2), 0, (w(3) & 0xFFFF) as u64 | ((w(4) as u64) << 16));
+                }
+                11 => {
+                    crate::window::post_message(hwnd, 0x102, w(2) as u64, 0);
+                }
+                12 => {
+                    crate::window::post_message(hwnd, 0x10, 0, 0);
+                }
+                13 => {
+                    crate::window::post_message(hwnd, crate::window::WM_PAINT, 0, 0);
+                }
+                14 => crate::window::destroy_window(hwnd),
+                _ => {}
+            }
+            done += 32;
+        }
+        done as i64
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        (if want & POLLIN != 0 && crate::window::winsys_ready() { POLLIN } else { 0 }) | (want & POLLOUT)
+    }
+    fn ioctl(&self, cmd: u64, arg: u64) -> i64 {
+        if cmd == 0x7701 { crate::window::winsys_map(arg as u32) } else { -25 }
+    }
+}
+
+impl Drop for WinSys {
+    fn drop(&mut self) {
+        crate::window::winsys_open(false);
+    }
+}
+
 /// `/dev/input/kbd`: key press/release events (see `console::kbd_read`). Holding it open takes the
 /// keyboard away from the tty.
 pub struct KbdDev {
@@ -197,6 +266,10 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
         "/dev/ptmx" => crate::pty::open_master(),
         p if p.starts_with("/dev/pts/") => crate::pty::open_slave(p[9..].parse().ok()?)?,
+        "/dev/winsys" => {
+            crate::window::winsys_open(true);
+            Arc::new(WinSys)
+        }
         "/dev/input/kbd" => {
             crate::console::kbd_grab(true);
             Arc::new(KbdDev { nonblock: AtomicBool::new(false) })

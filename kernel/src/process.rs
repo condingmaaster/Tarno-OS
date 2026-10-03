@@ -630,6 +630,24 @@ impl Section {
         Self { size: init.len(), frames, file }
     }
 
+    /// A zero-filled section of `size` bytes.
+    pub fn zeroed(size: usize) -> Self {
+        let pages = size.div_ceil(4096).max(1);
+        let mut frames = Vec::with_capacity(pages);
+        for _ in 0..pages {
+            let f = FRAME_ALLOC.lock().alloc().expect("no frame for section");
+            unsafe { core::ptr::write_bytes(phys_to_virt(f.start_address()).as_mut_ptr::<u8>(), 0, 4096) };
+            frames.push(f);
+        }
+        Self { size, frames, file: None }
+    }
+
+    /// Kernel pointer to byte `off` of the section (callers keep accesses inside one page).
+    pub fn ptr_at(&self, off: usize) -> Option<*mut u8> {
+        let f = self.frames.get(off / 4096)?;
+        Some(unsafe { phys_to_virt(f.start_address()).as_mut_ptr::<u8>().add(off % 4096) })
+    }
+
     /// The frames covering `[offset, offset+len)`, page-rounded outward.
     fn frames_for(&self, offset: usize, len: usize) -> &[PhysFrame] {
         let first = offset / 4096;
@@ -893,6 +911,9 @@ impl Task {
     }
     pub fn term_sig(&self) -> u32 {
         self.term_sig.load(Ordering::Relaxed)
+    }
+    pub fn exit_code(&self) -> i32 {
+        self.exit_status.lock().unwrap_or(0)
     }
     pub fn is_exited(&self) -> bool {
         self.exited.load(Ordering::Acquire)

@@ -234,6 +234,10 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_panel_test(&img);
         }
+        "desk-win32-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_win32_test(&img);
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -655,6 +659,16 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            let wh = root.join("target/winhello.exe");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O1", "-nostdlib", "-ffreestanding", "-Wl,-e,start", "-o", wh.to_str().unwrap(), root.join("xtask/testdata/winhello.c").to_str().unwrap(), "-luser32", "-lgdi32", "-lkernel32"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel"] {
                 let out = root.join(format!("target/{prog}"));
                 let ok = Command::new("gcc")
@@ -3878,7 +3892,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -5739,6 +5753,64 @@ fn desk_panel_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-panel-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-win32-test`: a real Win32 program (mingw-built `winhello.exe`) opens a window that the
+/// compositor shows next to the Linux clients; a click is delivered as WM_LBUTTONDOWN and repaints it.
+fn desk_win32_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskwin32-serial.log");
+    let sock = root.join("target/deskwin32-mon.sock");
+    let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/deskwin32-{i}.ppm"))).collect();
+    for f in [&log, &sock] {
+        let _ = std::fs::remove_file(f);
+    }
+    for s in &shots {
+        let _ = std::fs::remove_file(s);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "desk: win32 window", 200) {
+            return;
+        }
+        std::thread::sleep(ms(2500));
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        // click inside the window: window content at (100,80) 300x200; cursor from the centre (640,400)
+        let (mut rx, mut ry) = (150 - 640, 150 - 400);
+        while rx != 0 || ry != 0 {
+            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+            mon(&tsock, &format!("mouse_move {sx} {sy}"));
+            rx -= sx;
+            ry -= sy;
+        }
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(2000));
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+    });
+    let out = boot_and_run(img, "deskwin32", "/busybox sh /desk-win32.sh", "desk ok:", 150);
+    let px = |i: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shots[i])?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24);
+    // blue-ish background, yellow rectangle at (40..140, 40..100) in the window; after the click the blue is darker
+    let c1 = near(px(0, 100 + 250, 80 + 20), (30, 160, 200)) && near(px(0, 100 + 80, 80 + 70), (250, 220, 40));
+    let c2 = near(px(1, 100 + 250, 80 + 20), (30, 160, 140));
+    if c1 && c2 {
+        println!("desk-win32-test PASSED: a real Win32 .exe (mingw) draws into a compositor window; a click arrives as WM_LBUTTONDOWN and repaints it");
+    } else {
+        eprintln!("  before click: bg {:?} rect {:?}; after: bg {:?}", px(0, 350, 100), px(0, 180, 150), px(1, 350, 100));
+        for l in out.lines().filter(|l| l.contains("desk") || l.contains("win") || l.contains("PE") || l.contains("fault") || l.contains("unhandled")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-win32-test FAILED");
         exit(1);
     }
 }

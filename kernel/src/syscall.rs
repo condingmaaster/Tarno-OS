@@ -960,7 +960,7 @@ fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
             *(arg as *mut u32) = signal::FG_PGRP.load(Ordering::Relaxed) as u32;
             0
         },
-        0x4600 | 0x4602 => cur_fd(fd).map_or(EBADF, |f| f.ioctl(cmd, arg)), // fbdev geometry
+        0x4600 | 0x4602 | 0x7701 => cur_fd(fd).map_or(EBADF, |f| f.ioctl(cmd, arg)), // fbdev geometry, winsys map
         0x5421 => {
             // FIONBIO
             let on = usercopy::read_u32(arg).unwrap_or(0) != 0;
@@ -1164,6 +1164,9 @@ fn sys_nanosleep(clock: u64, flags: u64, req: u64, rem: u64) -> i64 {
     if left > 0 { signal::EINTR } else { 0 }
 }
 
+/// Sentinel `sys_execve` returns after running a PE as a proxy: `PE_PROXY_EXIT + status`.
+const PE_PROXY_EXIT: i64 = i64::MIN + 1024;
+
 /// `execve(path, argv, envp)`. Does not return on success.
 fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
     let path = match user_path(path_ptr) {
@@ -1183,6 +1186,21 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         // Not something we can run (a script, a text file, a truncated
         // binary): ENOEXEC lets the shell fall back instead of the kernel dying
         // inside `execve`'s own `expect`.
+        // A Windows program: run it as its own (NT-personality) task and stand in for it until it
+        // ends; `PE_PROXY_EXIT` tells the dispatcher to exit with its status.
+        Some(bytes) if bytes.starts_with(b"MZ") => match process::spawn_pe(&bytes) {
+            Ok(pid) => {
+                let Some(t) = process::find_task(pid) else { return ENOEXEC };
+                while !t.is_exited() {
+                    if signal::interrupted() {
+                        return -4;
+                    }
+                    crate::timer::sleep_ns(10_000_000);
+                }
+                PE_PROXY_EXIT + (t.exit_code() & 0xFF) as i64
+            }
+            Err(_) => ENOEXEC,
+        },
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
         Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
         None => ENOENT,
@@ -1661,7 +1679,19 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_NEWFSTATAT => sys_newfstatat(a1, a2, a3, a4),
         SYS_SETUID | SYS_SETGID => 0,
 
-        SYS_EXECVE => sys_execve(a1, a2, a3),
+        SYS_EXECVE => {
+            let r = sys_execve(a1, a2, a3);
+            if r >= PE_PROXY_EXIT && r < PE_PROXY_EXIT + 256 {
+                process::thread_exit_cleanup();
+                process::set_exit_status((r - PE_PROXY_EXIT) as i32);
+                USER_EXITS.fetch_add(1, Ordering::Release);
+                if let Some(t) = sched::current().task() {
+                    t.thread_leaving();
+                }
+                sched::exit()
+            }
+            r
+        }
 
         SYS_WAIT4 => process::wait4(a1 as i64, a2, a3),
 

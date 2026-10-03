@@ -173,7 +173,27 @@ fn resolve_dc(dc: u64) -> DcBounds {
 
 /// `SetPixel(hdc, x, y, colorref)` — `x`/`y` are client-relative for a
 /// window DC. `0xFFFF_FFFF` (`CLR_INVALID`) outside the DC's clip rect.
+/// The backing store of a window DC while a display server composes (`window::store_of`).
+fn store_dc(dc: u64) -> Option<(alloc::sync::Arc<crate::process::Section>, i32, i32, u32)> {
+    if dc & WINDOW_DC_TAG == 0 {
+        return None;
+    }
+    let hwnd = (dc & !WINDOW_DC_TAG) as u32;
+    let (s, w, h) = crate::window::store_of(hwnd)?;
+    Some((s, w, h, hwnd))
+}
+
 pub fn set_pixel(dc: u64, x: i64, y: i64, colorref: u32) -> u32 {
+    if let Some((s, w, h, hwnd)) = store_dc(dc) {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            return u32::MAX;
+        }
+        if let Some(p) = s.ptr_at((y as usize * w as usize + x as usize) * 4) {
+            unsafe { (p as *mut u32).write_volatile(pack(colorref)) };
+            crate::window::damage(hwnd, x as i32, y as i32, 1, 1);
+        }
+        return colorref;
+    }
     let b = resolve_dc(dc);
     let (sx, sy) = (b.origin.0 as i64 + x, b.origin.1 as i64 + y);
     let (l, t, r, bot) = b.clip;
@@ -191,6 +211,12 @@ pub fn set_pixel(dc: u64, x: i64, y: i64, colorref: u32) -> u32 {
 
 /// `GetPixel(hdc, x, y)` — the inverse of [`set_pixel`]'s coordinate mapping.
 pub fn get_pixel(dc: u64, x: i64, y: i64) -> u32 {
+    if let Some((s, w, h, _)) = store_dc(dc) {
+        if x < 0 || y < 0 || x >= w as i64 || y >= h as i64 {
+            return u32::MAX;
+        }
+        return s.ptr_at((y as usize * w as usize + x as usize) * 4).map_or(u32::MAX, |p| unpack(unsafe { (p as *mut u32).read_volatile() }));
+    }
     let b = resolve_dc(dc);
     let (sx, sy) = (b.origin.0 as i64 + x, b.origin.1 as i64 + y);
     let (l, t, r, bot) = b.clip;
@@ -208,6 +234,23 @@ pub fn get_pixel(dc: u64, x: i64, y: i64) -> u32 {
 /// brush colour, clamped to its clip rect. `false` if the clamped rectangle
 /// is empty — otherwise `true`, matching real GDI's BOOL.
 pub fn fill_rect(dc: u64, left: i64, top: i64, right: i64, bottom: i64) -> bool {
+    if let Some((s, w, h, hwnd)) = store_dc(dc) {
+        let color = pack(brush_of(dc));
+        let (l, t) = (left.max(0), top.max(0));
+        let (r, b) = (right.min(w as i64), bottom.min(h as i64));
+        if l >= r || t >= b {
+            return false;
+        }
+        for y in t..b {
+            for x in l..r {
+                if let Some(p) = s.ptr_at((y as usize * w as usize + x as usize) * 4) {
+                    unsafe { (p as *mut u32).write_volatile(color) };
+                }
+            }
+        }
+        crate::window::damage(hwnd, l as i32, t as i32, (r - l) as i32, (b - t) as i32);
+        return true;
+    }
     if fb().is_none() {
         return false;
     }

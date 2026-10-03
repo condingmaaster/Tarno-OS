@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <sys/mman.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
@@ -27,7 +28,8 @@ struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; };
+static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
 static int W, H, pitch;
@@ -115,10 +117,15 @@ static void raise_win(int i) {
     wins[nwin - 1] = t;
 }
 
+static void ws_send(unsigned kind, unsigned hwnd, unsigned a, unsigned b, unsigned c) {
+    unsigned rec[8] = { kind, hwnd, a, b, c, 0, 0, 0 };
+    (void)!write(wsfd, rec, sizeof rec);
+}
+
 static void remove_win(int i) {
     struct rect f = frame_of(&wins[i]);
-    close(wins[i].fd);
-    if (wins[i].px) shmdt(wins[i].px);
+    if (wins[i].hwnd) ws_send(14, wins[i].hwnd, 0, 0, 0);
+    else { close(wins[i].fd); if (wins[i].px) shmdt(wins[i].px); }
     memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof wins[0]);
     nwin--;
     compose(f);
@@ -143,6 +150,29 @@ static void on_client(int i) {
     } else if (m.op == WL_COMMIT) {
         struct win *w = &wins[i];
         compose(isect(content_of(w), rect_xywh(w->x + m.a, w->y + m.b, m.c, m.d)));
+    }
+}
+
+static void on_winsys(unsigned *e) {
+    if (e[0] == 1 && nwin < MAXWIN) {
+        long va = syscall(16 /* SYS_ioctl: glibc's ioctl() returns int and would cut the address */, wsfd, 0x7701, (unsigned long)e[1]);
+        if (va <= 0) return;
+        struct win *w = &wins[nwin++];
+        int k = next_id - 1;
+        *w = (struct win){ -1, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), (int)e[4], (int)e[5], (uint32_t *)va };
+        w->deco = 1; w->hwnd = e[1];
+        memcpy(w->title, "win32", 6);
+        printf("desk: win32 window %u created %dx%d\n", e[1], w->w, w->h);
+        fflush(stdout);
+        compose(frame_of(w));
+    } else if (e[0] == 2) {
+        for (int i = 0; i < nwin; i++) if (wins[i].hwnd == e[1]) { struct rect f = frame_of(&wins[i]); memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof wins[0]); nwin--; compose(f); break; }
+    } else if (e[0] == 3) {
+        for (int i = 0; i < nwin; i++) if (wins[i].hwnd == e[1]) {
+            struct win *w = &wins[i];
+            compose(isect(content_of(w), rect_xywh(w->x + e[2], w->y + e[3], e[4], e[5])));
+            break;
+        }
     }
 }
 
@@ -171,6 +201,7 @@ int main(void) {
     gfx_load_font();
     int fb = open("/dev/fb0", O_RDWR), mice = open("/dev/input/mice", O_RDONLY);
     int kbd = open("/dev/input/kbd", O_RDONLY);
+    wsfd = open("/dev/winsys", O_RDWR);
     if (fb < 0 || mice < 0) { printf("desk FAIL: open fb=%d mice=%d\n", fb, mice); return 1; }
     struct var_screeninfo v; memset(&v, 0, sizeof v);
     char fix[80];
@@ -194,9 +225,9 @@ int main(void) {
     int drag = 0, dx0 = 0, dy0 = 0, prev_btn = 0;
     int idle = 0;
     for (; idle < 1200 && !quit;) {
-        struct pollfd p[3 + MAXWIN] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 } };
-        for (int i = 0; i < nwin; i++) p[3 + i] = (struct pollfd){ wins[i].fd, POLLIN, 0 };
-        int pr = poll(p, 3 + nwin, 100);
+        struct pollfd p[4 + MAXWIN] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 }, { wsfd, POLLIN, 0 } };
+        for (int i = 0; i < nwin; i++) p[4 + i] = (struct pollfd){ wins[i].hwnd ? -1 : wins[i].fd, POLLIN, 0 };
+        int pr = poll(p, 4 + nwin, 100);
         if (pr < 0) { printf("desk: poll %d\n", pr); break; }
         if (pr == 0) { idle++; continue; }
         idle = 0;
@@ -206,11 +237,16 @@ int main(void) {
             while (t >= 0 && !wins[t].deco) t--;
             if (read(kbd, ev, 8) == 8 && t >= 0) {
                 struct wl_msg k = { WL_KEY, ev[1], ev[0], ev[3], ev[2] };
-                (void)!write(wins[t].fd, &k, sizeof k);
+                if (wins[t].hwnd) { if (ev[0] && ev[3]) ws_send(11, wins[t].hwnd, ev[3], 0, 0); }
+                else (void)!write(wins[t].fd, &k, sizeof k);
             }
         }
+        if (p[3].revents & POLLIN) {
+            unsigned e[8];
+            if (read(wsfd, e, sizeof e) == (ssize_t)sizeof e) on_winsys(e);
+        }
         for (int i = nwin - 1; i >= 0; i--)
-            if (p[3 + i].revents & (POLLIN | POLLHUP | POLLERR)) on_client(i);
+            if (!wins[i].hwnd && (p[4 + i].revents & (POLLIN | POLLHUP | POLLERR))) on_client(i);
         if (p[1].revents & POLLIN) on_new_client(ls);
         if (p[2].revents & POLLIN) {
             unsigned char pkt[3];
@@ -229,12 +265,14 @@ int main(void) {
                     if (!in(frame_of(w), mx, my)) continue;
                     if (in(close_btn(w), mx, my)) {
                         struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
-                        (void)!write(w->fd, &c, sizeof c);
+                        if (w->hwnd) ws_send(12, w->hwnd, 0, 0, 0);
+                        else (void)!write(w->fd, &c, sizeof c);
                         remove_win(i);
                     } else {
                         if (i != nwin - 1) raise_win(i);
                         w = &wins[nwin - 1];
-                        if (in(content_of(w), mx, my)) {
+                        if (in(content_of(w), mx, my) && w->hwnd) ws_send(10, w->hwnd, 0x201, mx - w->x, my - w->y);
+                        else if (in(content_of(w), mx, my)) {
                             struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - w->x), (uint32_t)(my - w->y), 1, 0 };
                             (void)!write(w->fd, &pm, sizeof pm);
                         }
