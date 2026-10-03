@@ -226,6 +226,10 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_kbd_test(&img);
         }
+        "desk-term-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_term_test(&img);
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -645,7 +649,8 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk.sh", root.join("xtask/testdata/desk.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-kbd.sh", root.join("xtask/testdata/desk-kbd.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["thosdesk", "thoswin", "thostext"] {
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm"] {
                 let out = root.join(format!("target/{prog}"));
                 let ok = Command::new("gcc")
                     .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
@@ -3868,7 +3873,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -5622,6 +5627,60 @@ fn desk_kbd_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-kbd-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-term-test`: a terminal window with a real BusyBox shell on a pty — a command typed
+/// on the (emulated) keyboard goes compositor -> terminal -> pty -> shell and its output comes back.
+fn desk_term_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskterm-serial.log");
+    let sock = root.join("target/deskterm-mon.sock");
+    let shot = root.join("target/deskterm.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "term ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(3000)); // the shell starts and prints its prompt
+        type_line(&tsock, "echo hellothos");
+        if wait_for(&tlog, "term-line: hellothos", 30) {
+            std::thread::sleep(ms(800));
+            mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            std::thread::sleep(ms(1000));
+        }
+        type_line(&tsock, "exit");
+    });
+    let out = boot_and_run(img, "deskterm", "/busybox sh /desk-term.sh", "desk ok:", 150);
+    let line = out.lines().any(|l| l.trim() == "term-line: hellothos");
+    let (w, count) = match read_ppm(&shot) {
+        Some((w, _, d)) => {
+            let mut n = 0;
+            for y in 84..84 + 384 {
+                for x in 100..100 + 640 {
+                    let o = (y * w + x) * 3;
+                    if d[o] > 160 && d[o + 1] > 160 && d[o + 2] > 160 {
+                        n += 1;
+                    }
+                }
+            }
+            (w, n)
+        }
+        None => (0, 0),
+    };
+    if line && count > 200 && out.contains("term done") {
+        println!("desk-term-test PASSED: a typed command ran in a BusyBox shell on a pty inside a terminal window ({count} text pixels on screen, width {w})");
+    } else {
+        eprintln!("  output line seen: {line}, text pixels: {count}");
+        for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault") || l.contains("unhandled")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-term-test FAILED");
         exit(1);
     }
 }

@@ -798,6 +798,8 @@ pub struct Task {
     live_threads: AtomicU32,
     /// Every thread of the task (weak), so exit_group / signals can wake them all.
     threads: Mutex<Vec<alloc::sync::Weak<crate::sched::Thread>>>,
+    /// Controlling terminal when it is a pseudo-terminal (`/dev/tty` opens it).
+    ctty: Mutex<Option<Arc<crate::pty::Pty>>>,
 }
 
 fn seed_fds() -> Vec<Fd> {
@@ -843,6 +845,7 @@ impl Task {
             active_threads: AtomicU64::new(0),
             live_threads: AtomicU32::new(0),
             threads: Mutex::new(Vec::new()),
+            ctty: Mutex::new(None),
         });
         TASKS.lock().insert(t.pid, t.clone());
         t
@@ -867,6 +870,12 @@ impl Task {
     }
     pub fn set_pgid(&self, v: u64) {
         self.pgid.store(v, Ordering::Relaxed);
+    }
+    pub fn ctty(&self) -> Option<Arc<crate::pty::Pty>> {
+        self.ctty.lock().clone()
+    }
+    pub fn set_ctty(&self, p: Option<Arc<crate::pty::Pty>>) {
+        *self.ctty.lock() = p;
     }
     pub fn set_sid(&self, v: u64) {
         self.sid.store(v, Ordering::Relaxed);
@@ -1533,6 +1542,7 @@ pub fn fork(frame: &UserFrame) -> i64 {
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
     child.set_pgid(parent.pgid());
+    child.set_ctty(parent.ctty());
     child.set_sid(parent.sid());
     {
         // Handlers and the blocked mask are inherited; pending signals are not.

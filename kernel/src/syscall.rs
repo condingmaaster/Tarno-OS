@@ -913,8 +913,9 @@ fn fill_stat_times(buf: u64, atime: u32, mtime: u32, ctime: u32) {
 /// edits), so BusyBox `sh` goes interactive — prompt on — but leaves line
 /// editing to us.
 fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
-    if cur_fd(fd).is_none() {
-        return EBADF;
+    let Some(file) = cur_fd(fd) else { return EBADF };
+    if let Some(r) = file.tty_ioctl(cmd, arg) {
+        return r;
     }
     // Every command below writes a fixed-size struct through `arg`.
     let need = match cmd {
@@ -1745,6 +1746,7 @@ fn sys_setsid() -> i64 {
     }
     me.set_sid(me.pid);
     me.set_pgid(me.pid);
+    me.set_ctty(None); // a new session has no controlling terminal
     me.pid as i64
 }
 

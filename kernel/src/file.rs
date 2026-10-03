@@ -62,6 +62,10 @@ pub trait FileOps: Send + Sync {
     fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
         None
     }
+    /// Terminal `ioctl`s of a pseudo-terminal end; `None` = not a pty (the console's defaults apply).
+    fn tty_ioctl(&self, _cmd: u64, _arg: u64) -> Option<i64> {
+        None
+    }
     /// `ftruncate`: only `memfd` files support it.
     fn truncate(&self, _len: u64) -> i64 {
         -22
@@ -191,6 +195,8 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/ptmx" => crate::pty::open_master(),
+        p if p.starts_with("/dev/pts/") => crate::pty::open_slave(p[9..].parse().ok()?)?,
         "/dev/input/kbd" => {
             crate::console::kbd_grab(true);
             Arc::new(KbdDev { nonblock: AtomicBool::new(false) })
@@ -205,6 +211,10 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
                 crate::fbcon::suspend();
             }
             Arc::new(FbFile { pos: AtomicU64::new(0) })
+        }
+        "/dev/tty" if crate::sched::current().task().is_some_and(|t| t.ctty().is_some()) => {
+            let p = crate::sched::current().task().and_then(|t| t.ctty())?;
+            crate::pty::open_ctty(&p)
         }
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
