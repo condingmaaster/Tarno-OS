@@ -133,7 +133,7 @@ fn main() {
         "real3-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "real3", "/usr/bin/bash /real3.sh", "real3-done", 200);
-            if out.lines().any(|l| l.trim() == "perl-ok") && out.lines().any(|l| l.trim() == "2 4 6 8 10") && out.lines().any(|l| l.trim() == "py 42 45") {
+            if out.lines().any(|l| l.trim() == "perl-ok") && out.lines().any(|l| l.trim() == "2 4 6 8 10") && out.lines().any(|l| l.trim() == "py 42 45") && out.lines().any(|l| l.trim() == "xs:3:55:9") {
                 println!("real3-test PASSED: dynamically linked perl and python3 run scripts");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
@@ -798,6 +798,7 @@ fn disk_image() -> PathBuf {
             }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real4.sh", root.join("xtask/testdata/real4.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-keys.sh", root.join("xtask/testdata/desk-keys.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            copy_tree_into_image(&img, "/usr/lib/x86_64-linux-gnu/perl-base", "/usr/lib/x86_64-linux-gnu/perl-base");
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -4691,6 +4692,43 @@ fn fb_test(img: &Path) {
         eprintln!("fb-test FAILED (rectangle {rect_ok}, cursor {cursor_ok}, mmap {mmap_ok})");
         exit(1);
     }
+}
+
+/// Copy a host directory tree (regular files only) into the image with one `debugfs -f` batch.
+fn copy_tree_into_image(img: &Path, host_dir: &str, image_dir: &str) {
+    let mut cmds = String::new();
+    let mut made = std::collections::BTreeSet::new();
+    let mut stack = vec![PathBuf::from(host_dir)];
+    let mk = |dir: &str, cmds: &mut String, made: &mut std::collections::BTreeSet<String>| {
+        let mut cur = String::new();
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            cur.push('/');
+            cur.push_str(part);
+            if made.insert(cur.clone()) {
+                cmds.push_str(&format!("mkdir {cur}\n"));
+            }
+        }
+    };
+    mk(image_dir, &mut cmds, &mut made);
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let path = e.path();
+            let rel = path.strip_prefix(host_dir).unwrap().to_string_lossy().to_string();
+            let target = format!("{}/{}", image_dir.trim_end_matches('/'), rel);
+            match e.file_type() {
+                Ok(t) if t.is_dir() => {
+                    mk(&target, &mut cmds, &mut made);
+                    stack.push(path);
+                }
+                Ok(t) if t.is_file() => cmds.push_str(&format!("write {} {}\n", path.display(), target)),
+                _ => {}
+            }
+        }
+    }
+    let script = workspace_root().join("target/debugfs-tree.cmds");
+    std::fs::write(&script, cmds).expect("write debugfs script");
+    let _ = Command::new("debugfs").args(["-w", "-f", script.to_str().unwrap(), img.to_str().unwrap()]).output();
 }
 
 /// Copy a dynamically linked host program and every library `ldd` lists for it into the image
