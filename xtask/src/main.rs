@@ -130,6 +130,19 @@ fn main() {
                 exit(1);
             }
         }
+        "real3-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real3", "/usr/bin/bash /real3.sh", "real3-done", 200);
+            if out.lines().any(|l| l.trim() == "perl-ok") && out.lines().any(|l| l.trim() == "2 4 6 8 10") && out.lines().any(|l| l.trim() == "py 42 45") {
+                println!("real3-test PASSED: dynamically linked perl and python3 run scripts");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real3-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -514,14 +527,14 @@ fn disk_image() -> PathBuf {
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
-        img.to_str().unwrap(), "32768",
+        img.to_str().unwrap(), "65536",
     ]));
     // Grow the backing file past the 16 MiB filesystem: scratch space for the
-    // AHCI write test (LBA 50000) plus room for the FAT32 volume at LBA 51000.
+    // AHCI write test (LBA 140000) plus room for the FAT32 volume at LBA 141000.
     std::fs::OpenOptions::new()
         .write(true)
         .open(&img)
-        .and_then(|f| f.set_len(96 * 1024 * 1024))
+        .and_then(|f| f.set_len(128 * 1024 * 1024))
         .expect("extend disk.img");
     for (name, elf) in elfs {
         run(Command::new("debugfs").args([
@@ -655,10 +668,21 @@ fn disk_image() -> PathBuf {
             // Real Debian programs, dynamically linked: bash, ls, grep, sed with all their libraries.
             let mut dirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real.sh", root.join("xtask/testdata/real.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real3.sh", root.join("xtask/testdata/real3.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            // a minimal Python standard library (startup needs `encodings`; os.py is the prefix landmark)
+            for d in ["usr", "usr/lib", "usr/lib/python3.13", "usr/lib/python3.13/encodings"] {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+            }
+            for f in ["os.py", "linecache.py", "encodings/__init__.py", "encodings/aliases.py", "encodings/utf_8.py", "encodings/latin_1.py", "encodings/ascii.py"] {
+                let host = format!("/usr/lib/python3.13/{f}");
+                if std::path::Path::new(&host).exists() {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {host} usr/lib/python3.13/{f}"), img.to_str().unwrap()]));
+                }
+            }
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make"] {
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
@@ -891,8 +915,8 @@ fn disk_image() -> PathBuf {
 
     // A self-contained GPT disk image — one EFI System Partition holding a
     // FAT32 volume with `/EFI/THOS/HELLO.TXT` — spliced into a hole past the
-    // ext2 image (LBA 51000; the fs is the first 16 MiB, the AHCI scratch write
-    // is a single sector at LBA 50000). The kernel walks GPT → ESP → FAT32.
+    // ext2 image (LBA 141000; the fs is the first 32 MiB, the AHCI scratch write
+    // is a single sector at LBA 140000). The kernel walks GPT → ESP → FAT32.
     // Needs `sfdisk` (util-linux), `mkfs.vfat` (dosfstools), `mmd`/`mcopy`
     // (mtools).
     let gpt = root.join("target/esp-gpt.img");
@@ -945,11 +969,11 @@ fn disk_image() -> PathBuf {
         "bs=512", &format!("seek={part_start}"), "conv=notrunc", "status=none",
     ]));
 
-    // Splice the whole GPT image into the main disk at LBA 51000.
+    // Splice the whole GPT image into the main disk at LBA 141000.
     run(Command::new("dd").args([
         &format!("if={}", gpt.to_str().unwrap()),
         &format!("of={}", img.to_str().unwrap()),
-        "bs=512", "seek=51000", "conv=notrunc", "status=none",
+        "bs=512", "seek=141000", "conv=notrunc", "status=none",
     ]));
 
     img
@@ -5059,7 +5083,7 @@ fn boot_kernel_headless(tag: &str, iso: &Path, disk: &Path, smp: u32) -> String 
 }
 
 /// Must match `SCRATCH_LBA` / the pattern in `kernel/src/main.rs`.
-const AHCI_SCRATCH_LBA: u64 = 50_000;
+const AHCI_SCRATCH_LBA: u64 = 140_000;
 
 fn ahci_test(iso: &Path) {
     use std::io::Read;

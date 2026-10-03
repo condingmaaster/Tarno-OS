@@ -280,9 +280,10 @@ pub fn map_page_in(pml4_phys: u64, virt: u64, phys: u64, writable: bool, user: b
     let page = Page::<Size4KiB>::containing_address(VirtAddr::new(virt));
     let frame = PhysFrame::<Size4KiB>::containing_address(PhysAddr::new(phys));
     let mut fa = FRAME_ALLOC.lock();
-    unsafe { m.map_to_with_table_flags(page, frame, f, parent, &mut *fa) }
-        .expect("map_page_in")
-        .ignore();
+    match unsafe { m.map_to_with_table_flags(page, frame, f, parent, &mut *fa) } {
+        Ok(flush) => flush.ignore(),
+        Err(e) => panic!("map_page_in: {:?} at virt {:#x} (pml4 {:#x})", e, virt, pml4_phys),
+    }
 }
 
 fn map_1g(m: &mut OffsetPageTable<'_>, v: VirtAddr, p: PhysAddr, f: F) {

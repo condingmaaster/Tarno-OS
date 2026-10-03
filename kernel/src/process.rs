@@ -39,6 +39,9 @@ pub struct Process {
     /// `NtUnmapViewOfSection` / `NtFlushVirtualMemory` can find which
     /// `Section` (and how many pages) a base VA names.
     views: Mutex<Vec<SectionView>>,
+    /// The main stack grows downwards on demand: `[stack_floor, stack_low)` is reserved but not mapped yet.
+    stack_floor: AtomicU64,
+    stack_low: AtomicU64,
 }
 
 struct SectionView {
@@ -50,6 +53,8 @@ struct SectionView {
 /// User virtual space for `mmap` / stacks, clear of typical ELF load addresses.
 const USER_ALLOC_BASE: u64 = 0x0000_7000_0000_0000;
 const USER_STACK_SIZE: u64 = 64 * 1024;
+/// How far the main stack may grow (the usual 8 MiB `RLIMIT_STACK`).
+const USER_STACK_MAX: u64 = 8 * 1024 * 1024;
 const BRK_BASE: u64 = 0x0000_6800_0000_0000;
 const BRK_MAX: u64 = BRK_BASE + 256 * 1024 * 1024;
 
@@ -78,6 +83,8 @@ impl Process {
             next_user_va: AtomicU64::new(USER_ALLOC_BASE),
             brk: AtomicU64::new(BRK_BASE),
             views: Mutex::new(Vec::new()),
+            stack_floor: AtomicU64::new(0),
+            stack_low: AtomicU64::new(0),
         })
     }
 
@@ -89,6 +96,27 @@ impl Process {
         self.next_user_va
             .store(other.next_user_va.load(Ordering::Relaxed), Ordering::Relaxed);
         self.brk.store(other.brk.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.stack_floor.store(other.stack_floor.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.stack_low.store(other.stack_low.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
+
+    /// A not-present fault just below the main stack: map zeroed pages down to the faulting page
+    /// (up to the 8 MiB reservation). `true` if the fault was such a stack access and is fixed.
+    pub fn grow_stack(&self, addr: u64) -> bool {
+        let (floor, low) = (self.stack_floor.load(Ordering::Relaxed), self.stack_low.load(Ordering::Relaxed));
+        if floor == 0 || addr < floor || addr >= low {
+            return false;
+        }
+        let new_low = addr & !0xFFF;
+        let mut v = new_low;
+        while v < low {
+            if !vmm::page_present_in(self.pml4_phys, v) {
+                self.map_zeroed(v);
+            }
+            v += 4096;
+        }
+        self.stack_low.store(new_low, Ordering::Relaxed);
+        true
     }
 
     /// Visit every present 4 KiB user page: `(virt, phys, writable, exec)`.
@@ -160,8 +188,18 @@ impl Process {
         }
         let mut v = (cur + 0xFFF) & !0xFFF;
         let end = (req + 0xFFF) & !0xFFF;
+        if end < v {
+            // shrinking: give the pages above the new break back (malloc trims the heap this way)
+            let mut p = end;
+            while p < v {
+                self.release_page(p);
+                p += 4096;
+            }
+        }
         while v < end {
-            self.map_zeroed(v);
+            if !vmm::page_present_in(self.pml4_phys, v) {
+                self.map_zeroed(v);
+            }
             v += 4096;
         }
         self.brk.store(req, Ordering::Relaxed);
@@ -429,7 +467,10 @@ impl Process {
 
     /// Allocate + map a fresh user stack; returns the (page-aligned) stack top.
     pub fn new_user_stack(&self) -> u64 {
-        let base = self.next_user_va.fetch_add(USER_STACK_SIZE + 0x1000, Ordering::Relaxed);
+        // Reserve address space for a stack that can grow to USER_STACK_MAX; only the top part is mapped.
+        let reserve = self.next_user_va.fetch_add(USER_STACK_MAX + 0x1000, Ordering::Relaxed);
+        let top = reserve + USER_STACK_MAX;
+        let base = top - USER_STACK_SIZE;
         let pages = USER_STACK_SIZE / 4096;
         for i in 0..pages {
             let frame = FRAME_ALLOC.lock().alloc().expect("no frame for user stack");
@@ -438,7 +479,9 @@ impl Process {
             }
             self.map(base + i * 4096, frame.start_address().as_u64(), true, false);
         }
-        base + USER_STACK_SIZE
+        self.stack_floor.store(reserve, Ordering::Relaxed);
+        self.stack_low.store(base, Ordering::Relaxed);
+        top
     }
 
     /// Walk this address space's page tables (via HHDM) to a physical address.

@@ -321,7 +321,9 @@ impl Ext2 {
         let blocks = self.block_map(inode);
 
         // Emit consecutive runs of block numbers in one disk read each.
-        let mut out = Vec::with_capacity(total);
+        // Whole blocks are appended (the tail is cut off afterwards): reserve them up front, or the
+        // last partial block makes the Vec double its capacity (a 7 MiB file asked for 14 MiB).
+        let mut out = Vec::with_capacity(blocks.len() * bs);
         let mut i = 0;
         while i < blocks.len() {
             if blocks[i] == 0 {
