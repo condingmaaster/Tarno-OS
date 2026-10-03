@@ -119,7 +119,7 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "real2", "/usr/bin/bash /real2.sh", "real2-done", 200);
             let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
-            let checks = [("gawk", has("gawk 42")), ("gawk fields", has("b")), ("bc", has("1024")), ("jq", has("6")), ("tar", has("tt/f.txt")), ("make", has("make-works"))];
+            let checks = [("gawk", has("gawk 42")), ("gawk fields", has("b")), ("bc", has("1024")), ("jq", has("6")), ("tar", has("tt/f.txt")), ("make", has("make-works")), ("symlink read", has("data")), ("readlink", has("/tmp/s1")), ("write through link", has("viasym")), ("dir symlink", has("inlinkeddir"))];
             if checks.iter().all(|c| c.1) {
                 println!("real2-test PASSED: dynamically linked gawk, bc, jq, tar and make run");
             } else {

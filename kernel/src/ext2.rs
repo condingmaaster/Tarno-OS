@@ -439,12 +439,130 @@ impl Ext2 {
         out
     }
 
+    /// Resolve `path` to an inode, following symbolic links everywhere (at most 8 hops).
     pub fn path_lookup(&self, path: &str) -> Option<u32> {
-        let mut ino = ROOT_INO;
-        for comp in path.split('/').filter(|s| !s.is_empty()) {
-            ino = self.lookup(ino, comp)?;
+        self.walk(path, true)
+    }
+
+    /// Like [`Self::path_lookup`] but a symlink as the *last* component is returned itself (`lstat`).
+    pub fn path_lookup_nofollow(&self, path: &str) -> Option<u32> {
+        self.walk(path, false)
+    }
+
+    fn walk(&self, path: &str, follow_last: bool) -> Option<u32> {
+        let mut stack: Vec<u32> = vec![ROOT_INO];
+        let mut todo: Vec<alloc::string::String> =
+            path.split('/').filter(|s| !s.is_empty()).rev().map(Into::into).collect();
+        let mut hops = 0;
+        while let Some(c) = todo.pop() {
+            let cur = *stack.last()?;
+            if c == "." {
+                continue;
+            }
+            if c == ".." {
+                if stack.len() > 1 {
+                    stack.pop();
+                }
+                continue;
+            }
+            let ino = self.lookup(cur, &c)?;
+            let node = self.read_inode(ino);
+            let last = todo.is_empty();
+            if node.mode & 0xF000 == 0xA000 && (!last || follow_last) {
+                hops += 1;
+                if hops > 8 {
+                    return None; // ELOOP
+                }
+                let target = self.read_link(ino)?;
+                if target.starts_with('/') {
+                    stack.truncate(1);
+                }
+                for comp in target.split('/').filter(|s| !s.is_empty()).rev() {
+                    todo.push(comp.into());
+                }
+                continue;
+            }
+            if !last && node.mode & 0xF000 != 0x4000 {
+                return None; // ENOTDIR
+            }
+            stack.push(ino);
         }
-        Some(ino)
+        stack.last().copied()
+    }
+
+    /// The target text of symlink inode `ino` (fast symlinks keep it inside the inode).
+    pub fn read_link(&self, ino: u32) -> Option<alloc::string::String> {
+        let node = self.read_inode(ino);
+        if node.mode & 0xF000 != 0xA000 {
+            return None;
+        }
+        let bytes: Vec<u8> = if node.size < 60 {
+            node.block.iter().flat_map(|w| w.to_le_bytes()).take(node.size as usize).collect()
+        } else {
+            self.read_file(&node).into_iter().take(node.size as usize).collect()
+        };
+        alloc::string::String::from_utf8(bytes).ok()
+    }
+
+    /// Follow a symlink in the *last* component of `path` until it names something else
+    /// (what `open(O_CREAT)` needs so it writes to the target). Absolute result.
+    pub fn resolve_final(&self, path: &str) -> alloc::string::String {
+        let mut cur = alloc::string::String::from(path);
+        for _ in 0..8 {
+            let Some(ino) = self.path_lookup_nofollow(&cur) else { break };
+            let Some(target) = self.read_link(ino) else { break };
+            let joined = if target.starts_with('/') {
+                target
+            } else {
+                match split_parent(&cur) {
+                    Some((dir, _)) => alloc::format!("{}/{}", dir.trim_end_matches('/'), target),
+                    None => target,
+                }
+            };
+            let mut comps: Vec<&str> = Vec::new();
+            for p in joined.split('/') {
+                match p {
+                    "" | "." => {}
+                    ".." => {
+                        comps.pop();
+                    }
+                    c => comps.push(c),
+                }
+            }
+            cur = alloc::format!("/{}", comps.join("/"));
+        }
+        cur
+    }
+
+    /// `symlink(2)`: create `path` as a symbolic link to `target`.
+    pub fn symlink_path(&self, target: &str, path: &str, uid: u32, gid: u32) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        let (parent, name) = split_parent(path).ok_or("bad path")?;
+        let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
+        if self.lookup(parent_ino, name).is_some() {
+            return Err("already exists");
+        }
+        if target.is_empty() || target.len() > 1000 {
+            return Err("bad target");
+        }
+        let (block, blocks512) = if target.len() < 60 {
+            let mut b = [0u32; 15];
+            for (i, chunk) in target.as_bytes().chunks(4).enumerate() {
+                let mut w = [0u8; 4];
+                w[..chunk.len()].copy_from_slice(chunk);
+                b[i] = u32::from_le_bytes(w);
+            }
+            (b, 0)
+        } else {
+            self.lay_out_data(target.as_bytes()).ok_or("no space")?
+        };
+        let ino = self.alloc_inode(false).ok_or("no free inode")?;
+        self.patch_inode(ino, |raw| {
+            set_inode(raw, 0o120_777, uid, gid, target.len() as u64, 1, blocks512, &block);
+        });
+        self.dir_insert_ft(parent_ino, name, ino, 7)?;
+        self.sync_backups();
+        Ok(())
     }
 
     pub fn read_path(&self, path: &str) -> Option<Vec<u8>> {
@@ -834,13 +952,12 @@ impl Ext2 {
 
     /// Add a `(name -> child)` entry to directory `dir_ino` (direct blocks only).
     fn dir_insert(&self, dir_ino: u32, name: &str, child: u32, is_dir: bool) -> Result<(), &'static str> {
-        let ft: u8 = if !self.filetype {
-            0
-        } else if is_dir {
-            2
-        } else {
-            1
-        };
+        self.dir_insert_ft(dir_ino, name, child, if is_dir { 2 } else { 1 })
+    }
+
+    /// [`Self::dir_insert`] with an explicit `EXT2_FT_*` code (1 file, 2 dir, 7 symlink).
+    fn dir_insert_ft(&self, dir_ino: u32, name: &str, child: u32, ftype: u8) -> Result<(), &'static str> {
+        let ft: u8 = if !self.filetype { 0 } else { ftype };
         let need = round4(8 + name.len());
         let bs = self.block_size as usize;
         let dir = self.read_inode(dir_ino);
@@ -1128,7 +1245,9 @@ impl Ext2 {
         self.dir_remove(parent_ino, name).ok_or("dirent vanished")?;
         let links = le16(&disk_range(self.inode_off(ino) + 26, 2)); // i_links_count @ 26
         if links <= 1 {
-            self.free_all_blocks(&node);
+            if !(node.mode & 0xF000 == 0xA000 && node.size < 60) {
+                self.free_all_blocks(&node); // (a fast symlink's "block pointers" are its text)
+            }
             self.free_inode(ino, false);
         } else {
             self.bump_links(ino, -1);

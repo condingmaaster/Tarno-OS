@@ -9,4 +9,18 @@ echo hello > /tmp/tt/f.txt
 /usr/bin/tar tf /tmp/t.tar
 printf 'all:\n\t@echo make-works\n' > /tmp/Makefile
 /usr/bin/make -f /tmp/Makefile
+echo data > /tmp/s1
+ln -s /tmp/s1 /tmp/s2
+cat /tmp/s2
+/busybox readlink /tmp/s2
+echo viasym > /tmp/s2
+cat /tmp/s1
+ln -s s1 /tmp/s3
+cat /tmp/s3
+mkdir /tmp/dd
+ln -s /tmp/dd /tmp/dl
+echo inlinkeddir > /tmp/dl/f
+cat /tmp/dd/f
+rm /tmp/s2
+cat /tmp/s1
 echo real2-done

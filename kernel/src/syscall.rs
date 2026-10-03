@@ -116,6 +116,7 @@ const SYS_MUNMAP: u64 = 11;
 const SYS_CREAT: u64 = 85;
 const SYS_RENAME: u64 = 82;
 const SYS_LINK: u64 = 86;
+const SYS_SYMLINKAT: u64 = 266;
 const SYS_SYMLINK: u64 = 88;
 const SYS_LINKAT: u64 = 265;
 const SYS_RENAMEAT: u64 = 264;
@@ -460,7 +461,19 @@ fn sys_readlink(path_ptr: u64, buf: u64, size: u64) -> i64 {
                 Err(e) => e,
             }
         }
-        None => EINVAL,
+        None => match ext2::open().ok().and_then(|fs| fs.path_lookup_nofollow(&path).and_then(|i| fs.read_link(i))) {
+            Some(target) => {
+                let n = target.len().min(size as usize);
+                match usercopy::slice_mut(buf, n) {
+                    Ok(b) => {
+                        b.copy_from_slice(&target.as_bytes()[..n]);
+                        n as i64
+                    }
+                    Err(e) => e,
+                }
+            }
+            None => EINVAL,
+        },
     }
 }
 
@@ -532,7 +545,8 @@ fn sys_statx(dirfd: u64, path_ptr: u64, flags: u64, buf: u64) -> i64 {
             (mode, size, 0, 0, 0, 0, 0, 0)
         } else {
             let Some(fs) = ext2::open().ok() else { return -5 };
-            let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+            let found = if flags & 0x100 != 0 { fs.path_lookup_nofollow(&path) } else { fs.path_lookup(&path) };
+            let Some(ino) = found else { return ENOENT };
             let n = fs.read_inode(ino);
             (n.mode as u32, n.size, ino as u64, n.uid, n.gid, n.atime, n.mtime, n.ctime)
         }
@@ -682,6 +696,30 @@ fn sys_rename(olddirfd: u64, old: u64, newdirfd: u64, new: u64) -> i64 {
         Err("is a directory") => EISDIR,
         Err("not a directory") => ENOTDIR,
         Err("directory not empty") => ENOTEMPTY,
+        Err(_) => EINVAL,
+    }
+}
+
+fn sys_symlink(target_ptr: u64, newdirfd: u64, link_ptr: u64) -> i64 {
+    let target = match usercopy::cstr(target_ptr, 4096) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let path = match user_path_at(newdirfd, link_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    if let Some(pino) = parent_of(&path).and_then(|p| fs.path_lookup(p)) {
+        if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+            return EACCES;
+        }
+    }
+    match fs.symlink_path(&target, &path, task.uid, task.gid) {
+        Ok(()) => 0,
+        Err("already exists") => EEXIST,
+        Err("parent dir missing") => ENOENT,
         Err(_) => EINVAL,
     }
 }
@@ -841,6 +879,15 @@ pub fn open_resolved(path: &str, flags: u64) -> i64 {
     if let Some(r) = open_dev(path, flags & 0x3 != 1, flags & 0x3 != 0) {
         return r;
     }
+    // A symlink as the last component: operate on its target (also what the file will be written back to).
+    let followed;
+    let path = match ext2::open().ok() {
+        Some(fs) => {
+            followed = fs.resolve_final(path);
+            followed.as_str()
+        }
+        None => path,
+    };
     if flags & O_CREAT != 0 {
         let Some(task) = sched::current().task() else {
             return EBADF;
@@ -1133,7 +1180,8 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
         return fstat_into(&*f, buf);
     }
     let Some(fs) = ext2::open().ok() else { return -5 /* EIO */ };
-    let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+    let found = if flags & 0x100 != 0 { fs.path_lookup_nofollow(&path) } else { fs.path_lookup(&path) };
+    let Some(ino) = found else { return ENOENT };
     let node = fs.read_inode(ino);
     unsafe {
         core::ptr::write_bytes(buf as *mut u8, 0, 144);
@@ -1358,7 +1406,8 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
 
         SYS_LINK => sys_link((-100i64) as u64, a1, (-100i64) as u64, a2),
         SYS_LINKAT => sys_link(a1, a2, a3, a4),
-        SYS_SYMLINK => -1, // EPERM: symbolic links are not supported yet
+        SYS_SYMLINK => sys_symlink(a1, (-100i64) as u64, a2),
+        SYS_SYMLINKAT => sys_symlink(a1, a2, a3),
         SYS_RENAME => sys_rename((-100i64) as u64, a1, (-100i64) as u64, a2),
         SYS_RENAMEAT => sys_rename(a1, a2, a3, a4),
         SYS_RENAMEAT2 => if a5 != 0 { EINVAL } else { sys_rename(a1, a2, a3, a4) },
