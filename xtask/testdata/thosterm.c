@@ -131,7 +131,9 @@ static void feed(unsigned char c) {
     }
 }
 
+static int last_cy;
 static void render(void) {
+    mark(last_cy); mark(cy); last_cy = cy;
     if (dirty1 < 0) return;
     for (int r = dirty0; r <= dirty1; r++)
         for (int c = 0; c < COLS; c++) {
