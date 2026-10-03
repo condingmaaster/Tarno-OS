@@ -77,6 +77,25 @@ thos_user_thread_start:
     push r14
     push r12
     swapgs
+    // A new program starts with every general register zero (the kernel's leftovers must not
+    // leak into user mode). `rdx` matters most: the ELF entry point passes it on to
+    // __libc_start_main as `rtld_fini`, and a stray value there is registered as an exit handler
+    // and called at exit — the long-chased "BusyBox crashes at exit, rip=0x1" bug (B17).
+    xor eax, eax
+    xor ebx, ebx
+    xor ecx, ecx
+    xor edx, edx
+    xor esi, esi
+    xor edi, edi
+    xor ebp, ebp
+    xor r8d, r8d
+    xor r9d, r9d
+    xor r10d, r10d
+    xor r11d, r11d
+    xor r12d, r12d
+    xor r13d, r13d
+    xor r14d, r14d
+    xor r15d, r15d
     iretq
 "#
 );
