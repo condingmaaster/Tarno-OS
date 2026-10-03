@@ -115,6 +115,21 @@ fn main() {
                 exit(1);
             }
         }
+        "real2-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real2", "/usr/bin/bash /real2.sh", "real2-done", 200);
+            let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
+            let checks = [("gawk", has("gawk 42")), ("gawk fields", has("b")), ("bc", has("1024")), ("jq", has("6")), ("tar", has("tt/f.txt")), ("make", has("make-works"))];
+            if checks.iter().all(|c| c.1) {
+                println!("real2-test PASSED: dynamically linked gawk, bc, jq, tar and make run");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real2-test FAILED ({:?})", checks.iter().filter(|c| !c.1).map(|c| c.0).collect::<Vec<_>>());
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -499,7 +514,7 @@ fn disk_image() -> PathBuf {
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
-        img.to_str().unwrap(), "16384",
+        img.to_str().unwrap(), "32768",
     ]));
     // Grow the backing file past the 16 MiB filesystem: scratch space for the
     // AHCI write test (LBA 50000) plus room for the FAT32 volume at LBA 51000.
@@ -640,7 +655,10 @@ fn disk_image() -> PathBuf {
             // Real Debian programs, dynamically linked: bash, ls, grep, sed with all their libraries.
             let mut dirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real.sh", root.join("xtask/testdata/real.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed"] {
+            run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
@@ -3892,7 +3910,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

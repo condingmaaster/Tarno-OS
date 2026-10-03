@@ -66,6 +66,10 @@ pub trait FileOps: Send + Sync {
     fn tty_ioctl(&self, _cmd: u64, _arg: u64) -> Option<i64> {
         None
     }
+    /// The directory path of an opened directory (`fchdir`, `openat`).
+    fn dir_path(&self) -> Option<String> {
+        None
+    }
     /// `ftruncate`: only `memfd` files support it.
     fn truncate(&self, _len: u64) -> i64 {
         -22
@@ -784,6 +788,7 @@ pub struct DirFile {
     /// Back-to-back `linux_dirent64` records, each `d_reclen`-aligned to 8.
     blob: Vec<u8>,
     pos: Mutex<usize>,
+    path: Mutex<Option<String>>,
 }
 
 impl DirFile {
@@ -800,11 +805,20 @@ impl DirFile {
             blob[s + 18] = *dtype;
             blob[s + DIRENT_HEAD..s + DIRENT_HEAD + name.len()].copy_from_slice(name.as_bytes());
         }
-        Arc::new(Self { blob, pos: Mutex::new(0) })
+        Arc::new(Self { blob, pos: Mutex::new(0), path: Mutex::new(None) })
+    }
+
+    /// Remember which directory this is (for `fchdir` and the `*at` calls).
+    pub fn with_path(self: Arc<Self>, p: &str) -> Arc<Self> {
+        *self.path.lock() = Some(String::from(p));
+        self
     }
 }
 
 impl FileOps for DirFile {
+    fn dir_path(&self) -> Option<String> {
+        self.path.lock().clone()
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EISDIR
     }

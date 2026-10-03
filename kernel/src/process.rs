@@ -1584,6 +1584,49 @@ pub fn fork(frame: &UserFrame) -> i64 {
     child.pid as i64
 }
 
+/// `clone(CLONE_VM [| CLONE_VFORK])` without `CLONE_THREAD`: a new *process* that runs in the
+/// caller's address space (what glibc's `posix_spawn` and `vfork` use). With `CLONE_VFORK` the caller
+/// stays suspended until the child execs (gets its own space) or exits.
+pub fn clone_vm(frame: &UserFrame, flags: u64, stack: u64, tls: u64) -> i64 {
+    const CLONE_VFORK: u64 = 0x4000;
+    const CLONE_SETTLS: u64 = 0x80000;
+    let parent = sched::current().task().expect("clone: not a user task");
+    let pspace = parent.space();
+    let child = Task::new(parent.pid, pspace.clone());
+    *child.fds.lock() = parent.clone_fds();
+    child.set_cwd(parent.cwd());
+    *child.cmdline.lock() = parent.cmdline();
+    child.set_pgid(parent.pgid());
+    child.set_ctty(parent.ctty());
+    child.set_sid(parent.sid());
+    {
+        let p = parent.sig.lock();
+        let mut c = child.sig.lock();
+        c.actions = p.actions;
+        c.blocked = p.blocked;
+    }
+    let (cs, ss) = user_selectors();
+    let mut cf = *frame;
+    cf.rax = 0;
+    cf.cs = cs;
+    cf.ss = ss;
+    if stack != 0 {
+        cf.rsp = stack;
+    }
+    let fsbase = if flags & CLONE_SETTLS != 0 { tls } else { sched::current().fsbase() };
+    sched::spawn_user_frame("vm-child", child.clone(), cf, fsbase);
+    let pid = child.pid;
+    if flags & CLONE_VFORK != 0 {
+        while !child.is_exited() && Arc::ptr_eq(&child.space(), &pspace) {
+            if crate::signal::interrupted() {
+                break;
+            }
+            crate::timer::sleep_ns(1_000_000);
+        }
+    }
+    pid as i64
+}
+
 /// `execve`: replace the current task's image. Does not return on success.
 pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
     // The native-exec gate: same check `spawn_pe` runs, here for the path a

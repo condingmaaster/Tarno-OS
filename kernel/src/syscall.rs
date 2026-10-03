@@ -113,6 +113,9 @@ const SYS_SETGID: u64 = 106;
 const SYS_MPROTECT: u64 = 10;
 const SYS_MADVISE: u64 = 28;
 const SYS_MUNMAP: u64 = 11;
+const SYS_CREAT: u64 = 85;
+const SYS_UMASK: u64 = 95;
+const SYS_GETGROUPS: u64 = 115;
 const SYS_SHMGET: u64 = 29;
 const SYS_SHMAT: u64 = 30;
 const SYS_SHMCTL: u64 = 31;
@@ -619,8 +622,8 @@ fn sys_pipe(fds_ptr: u64, flags: u64) -> i64 {
     0
 }
 
-fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
-    let path = match user_path(path_ptr) {
+fn sys_unlink(dirfd: u64, path_ptr: u64, dir: bool) -> i64 {
+    let path = match user_path_at(dirfd, path_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
@@ -636,8 +639,8 @@ fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
     }
 }
 
-fn sys_open(path_ptr: u64, flags: u64) -> i64 {
-    match user_path(path_ptr) {
+fn sys_open(dirfd: u64, path_ptr: u64, flags: u64) -> i64 {
+    match user_path_at(dirfd, path_ptr) {
         Ok(p) => open_resolved(&p, flags),
         Err(e) => e,
     }
@@ -647,13 +650,19 @@ fn sys_open(path_ptr: u64, flags: u64) -> i64 {
 /// always `0755`, matching `ext2::mkdir_path`'s prior hardcoded behaviour);
 /// what's new here is a real owner (the calling task's uid) instead of the
 /// permanent system uid every directory got before this increment.
-fn sys_mkdir(path_ptr: u64) -> i64 {
-    let path = match user_path(path_ptr) {
+/// The process-wide `umask` (stored and returned; file creation still uses fixed modes).
+static UMASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0o022);
+
+fn sys_mkdir(dirfd: u64, path_ptr: u64) -> i64 {
+    let path = match user_path_at(dirfd, path_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
+    if fs.path_lookup(&path).is_some() {
+        return EEXIST; // `mkdir -p` relies on EEXIST for directories that are already there ("/" included)
+    }
     // Same rule as O_CREAT in `open_resolved`: creating an entry is a write
     // to the *parent* directory, checked against the parent's own mode bits.
     if let Some(parent) = parent_of(&path) {
@@ -861,7 +870,7 @@ pub fn open_resolved_access(path: &str, want_read: bool, want_write: bool) -> i6
         // A directory: hand back a `getdents64`-able stream.
         let entries: alloc::vec::Vec<(u64, u8, alloc::string::String)> =
             fs.read_dir(ino).into_iter().map(|(i, t, n)| (i as u64, t, n)).collect();
-        task.fd_alloc(crate::file::DirFile::new(&entries)) as i64
+        task.fd_alloc(crate::file::DirFile::new(&entries).with_path(path)) as i64
     } else {
         if !want_write && node.size > crate::file::STREAM_THRESHOLD {
             // big and read-only: stream it instead of loading it all
@@ -1044,7 +1053,14 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
     if raw.is_empty() && flags & 0x1000 != 0 {
         return sys_fstat(dirfd, buf);
     }
-    let path = process::resolve_path(&raw);
+    let path = if raw.starts_with('/') || dirfd as i32 == -100 {
+        process::resolve_path(&raw)
+    } else {
+        match cur_fd(dirfd).and_then(|f| f.dir_path()) {
+            Some(d) => process::resolve_path(&alloc::format!("{d}/{raw}")),
+            None => process::resolve_path(&raw),
+        }
+    };
     if !usercopy::user_ok(buf, 144, true) {
         return EFAULT;
     }
@@ -1072,6 +1088,19 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
 /// A path argument, resolved against the cwd. A pointer that is not valid user
 /// memory is `EFAULT` — **not** the empty string, which would silently mean "the
 /// current directory".
+/// Directory-relative path resolution for the `*at` calls: a relative path is taken against
+/// `dirfd`'s directory unless `dirfd` is `AT_FDCWD` (-100).
+fn user_path_at(dirfd: u64, ptr: u64) -> Result<alloc::string::String, i64> {
+    let raw = usercopy::cstr(ptr, 4096)?;
+    if raw.starts_with('/') || dirfd as i32 == -100 {
+        return Ok(process::resolve_path(&raw));
+    }
+    match cur_fd(dirfd).and_then(|f| f.dir_path()) {
+        Some(d) => Ok(process::resolve_path(&alloc::format!("{d}/{raw}"))),
+        None => Ok(process::resolve_path(&raw)),
+    }
+}
+
 fn user_path(ptr: u64) -> Result<alloc::string::String, i64> {
     Ok(process::resolve_path(&usercopy::cstr(ptr, 4096)?))
 }
@@ -1255,14 +1284,17 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             total
         }
 
-        SYS_OPEN => sys_open(a1, a2),
-        SYS_OPENAT => sys_open(a2, a3), // dirfd ignored; paths are absolute
+        SYS_OPEN => sys_open((-100i64) as u64, a1, a2),
+        SYS_CREAT => sys_open((-100i64) as u64, a1, 0o1101), // O_WRONLY | O_CREAT | O_TRUNC
+        SYS_UMASK => UMASK.swap((a1 & 0o777) as u32, Ordering::AcqRel) as i64,
+        SYS_GETGROUPS => 0, // no supplementary groups
+        SYS_OPENAT => sys_open(a1, a2, a3),
 
-        SYS_UNLINK => sys_unlink(a1, false),
-        SYS_RMDIR => sys_unlink(a1, true),
-        SYS_UNLINKAT => sys_unlink(a2, a3 & 0x200 != 0), // flags=a3; AT_REMOVEDIR=0x200
-        SYS_MKDIR => sys_mkdir(a1),
-        SYS_MKDIRAT => sys_mkdir(a2), // dirfd ignored; paths are absolute
+        SYS_UNLINK => sys_unlink((-100i64) as u64, a1, false),
+        SYS_RMDIR => sys_unlink((-100i64) as u64, a1, true),
+        SYS_UNLINKAT => sys_unlink(a1, a2, a3 & 0x200 != 0), // flags=a3; AT_REMOVEDIR=0x200
+        SYS_MKDIR => sys_mkdir((-100i64) as u64, a1),
+        SYS_MKDIRAT => sys_mkdir(a1, a2),
         SYS_CHMOD => sys_chmod(a1, a2),
         SYS_FCHMODAT => sys_chmod(a2, a3), // dirfd ignored; flags (a4) ignored
         SYS_CHOWN => sys_chown(a1, a2, a3),
@@ -1413,8 +1445,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         SYS_PRLIMIT64 => sys_prlimit(a2, a3, a4),
         SYS_GETRLIMIT => sys_prlimit(a1, 0, a2),
+        SYS_FCHDIR => match cur_fd(a1).and_then(|f| f.dir_path()) {
+            Some(d) => {
+                process::set_current_cwd(d);
+                0
+            }
+            None => if cur_fd(a1).is_some() { ENOTDIR } else { EBADF },
+        },
         SYS_SET_ROBUST_LIST | SYS_SIGALTSTACK | SYS_MADVISE
-        | SYS_PRCTL | SYS_FCHDIR => 0,
+        | SYS_PRCTL => 0,
         SYS_FUTEX => crate::futex::sys_futex(a1, a2, a3, a4, a5, frame.r9),
         SYS_RSEQ => ENOSYS,
 
@@ -1670,7 +1709,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                     process::clone_thread(frame, a1, a2, a3, a4, a5)
                 }
             } else if a1 & CLONE_VM != 0 {
-                ENOSYS // vfork-style shared-VM processes are not supported
+                process::clone_vm(frame, a1, a2, a5)
             } else {
                 process::fork(frame)
             }
