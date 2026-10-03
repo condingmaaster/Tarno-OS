@@ -337,6 +337,52 @@ fn main() {
                 exit(1);
             }
         }
+        "desktop-test" => {
+            // the whole thing the way a user starts it: type `desktop` in the console shell
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/desktop-serial.log");
+            let sock = root.join("target/desktop-mon.sock");
+            let shot = root.join("target/desktop.ppm");
+            for f in [&log, &sock, &shot] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "term ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(3000));
+                type_line(&tsock, "echo hellodesktop");
+                wait_for(&tlog, "hellodesktop", 20);
+                std::thread::sleep(ms(1000));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+                std::thread::sleep(ms(500));
+                mon(&tsock, "sendkey alt-f4");
+                std::thread::sleep(ms(1500));
+                std::fs::write(tlog.with_extension("done"), b"x").ok();
+            });
+            // the console shell is grabbed by the compositor once it runs, so the test ends on the host side
+            let out = boot_and_run(&img, "desktop", "desktop -v", "term done", 150);
+            let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+                let (w, h, d) = read_ppm(&shot)?;
+                (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+            };
+            let panel = px(600, 790).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70);
+            let log_text = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).to_string();
+            let echoed = log_text.contains("hellodesktop");
+            if panel && echoed && out.contains("panel ready") {
+                println!("desktop-test PASSED: `desktop` starts compositor, panel and a terminal; a command typed in the terminal ran");
+            } else {
+                eprintln!("  panel pixel {:?}, command echoed {echoed}", px(600, 790));
+                for l in log_text.lines().filter(|l| l.contains("desk") || l.contains("panel") || l.contains("term")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desktop-test FAILED");
+                exit(1);
+            }
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -785,6 +831,11 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
             for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel"] {
+                if prog == "thosterm" {
+                    // `desktop` is the same program started under another name: it brings up panel + terminal too
+                    let td = root.join("target/thosdesk");
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
+                }
                 let out = root.join(format!("target/{prog}"));
                 let ok = Command::new("gcc")
                     .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
@@ -4007,7 +4058,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

@@ -198,7 +198,9 @@ static void on_new_client(int ls) {
     compose(frame_of(w));
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+    int verbose = argc > 1 && !strcmp(argv[argc - 1], "-v");
+    int session = (argc > 1 && !strcmp(argv[1], "-s")) || strstr(argv[0], "desktop") != 0;
     gfx_load_font();
     signal(SIGCHLD, SIG_IGN);
     int fb = open("/dev/fb0", O_RDWR), mice = open("/dev/input/mice", O_RDONLY);
@@ -223,6 +225,11 @@ int main(void) {
     compose(rect_xywh(0, 0, W, H));
     printf("desk: ready %dx%d\n", W, H);
     fflush(stdout);
+    if (session) {      /* the usual session: panel, then a terminal */
+        if (fork() == 0) { execl("/thospanel", "thospanel", (char *)0); _exit(127); }
+        usleep(500000);
+        if (fork() == 0) { execl("/thosterm", "thosterm", verbose ? "-l" : (char *)0, (char *)0); _exit(127); }
+    }
 
     int drag = 0, dx0 = 0, dy0 = 0, prev_btn = 0;
     int idle = 0;
