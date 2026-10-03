@@ -16,6 +16,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include "thoswl.h"
+#include "thosgfx.h"
 
 #define MAXWIN 16
 #define BORDER 4
@@ -26,7 +27,7 @@ struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
-struct win { int fd, id, x, y, w, h; uint32_t *px; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; };
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
 static int W, H, pitch;
@@ -38,6 +39,7 @@ static int mx, my, quit;
 static uint32_t rgb(int r, int g, int b) { return ((uint32_t)r << rs) | ((uint32_t)g << gs) | ((uint32_t)b << bs); }
 
 struct rect { int x0, y0, x1, y1; };     /* half-open */
+static int in(struct rect r, int x, int y);
 static struct rect rect_xywh(int x, int y, int w, int h) { return (struct rect){ x, y, x + w, y + h }; }
 static struct rect clip(struct rect r) {
     if (r.x0 < 0) r.x0 = 0;
@@ -83,6 +85,15 @@ static void compose(struct rect r) {
             fill(f, top ? rgb(40, 120, 220) : rgb(100, 100, 110));
             struct rect cb = isect(close_btn(w), r);
             if (!empty(cb)) fill(cb, rgb(210, 50, 50));
+            /* title text, clipped to the damage rectangle */
+            for (int k = 0; w->title[k] && gfx_font; k++) {
+                int gx = w->x + 4 + 8 * k, gy = w->y - TITLE + 4;
+                for (int j = 0; j < 16; j++) {
+                    unsigned char row = gfx_font[(unsigned char)w->title[k] * 16 + j];
+                    for (int i = 0; i < 8; i++)
+                        if ((row & (0x80 >> i)) && in(r, gx + i, gy + j)) bb[(size_t)(gy + j) * W + gx + i] = rgb(255, 255, 255);
+                }
+            }
         }
         struct rect c = isect(content_of(w), r);
         for (int y = c.y0; y < c.y1; y++)
@@ -113,13 +124,18 @@ static void remove_win(int i) {
     compose(f);
 }
 
-static int in(struct rect r, int x, int y) { return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1; }
+static int in(struct rect r, int x, int y) {
+    return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1; }
 
 static void on_client(int i) {
     struct wl_msg m;
     ssize_t n = read(wins[i].fd, &m, sizeof m);
     if (n != (ssize_t)sizeof m) { remove_win(i); return; }
-    if (m.op == WL_COMMIT) {
+    if (m.op == WL_TITLE) {
+        memcpy(wins[i].title, &m.a, 16);
+        wins[i].title[16] = 0;
+        compose(frame_of(&wins[i]));
+    } else if (m.op == WL_COMMIT) {
         struct win *w = &wins[i];
         compose(isect(content_of(w), rect_xywh(w->x + m.a, w->y + m.b, m.c, m.d)));
     }
@@ -145,7 +161,9 @@ static void on_new_client(int ls) {
 }
 
 int main(void) {
+    gfx_load_font();
     int fb = open("/dev/fb0", O_RDWR), mice = open("/dev/input/mice", O_RDONLY);
+    int kbd = open("/dev/input/kbd", O_RDONLY);
     if (fb < 0 || mice < 0) { printf("desk FAIL: open fb=%d mice=%d\n", fb, mice); return 1; }
     struct var_screeninfo v; memset(&v, 0, sizeof v);
     char fix[80];
@@ -169,12 +187,19 @@ int main(void) {
     int drag = 0, dx0 = 0, dy0 = 0, prev_btn = 0;
     int idle = 0;
     for (; idle < 1200 && !quit;) {
-        struct pollfd p[3 + MAXWIN] = { { 0, 0, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 } };
+        struct pollfd p[3 + MAXWIN] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 } };
         for (int i = 0; i < nwin; i++) p[3 + i] = (struct pollfd){ wins[i].fd, POLLIN, 0 };
         int pr = poll(p, 3 + nwin, 100);
         if (pr < 0) { printf("desk: poll %d\n", pr); break; }
         if (pr == 0) { idle++; continue; }
         idle = 0;
+        if (p[0].revents & POLLIN) {
+            unsigned char ev[8];
+            if (read(kbd, ev, 8) == 8 && nwin) {
+                struct wl_msg k = { WL_KEY, ev[1], ev[0], ev[3], ev[2] };
+                (void)!write(wins[nwin - 1].fd, &k, sizeof k);
+            }
+        }
         for (int i = nwin - 1; i >= 0; i--)
             if (p[3 + i].revents & (POLLIN | POLLHUP | POLLERR)) on_client(i);
         if (p[1].revents & POLLIN) on_new_client(ls);

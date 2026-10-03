@@ -337,6 +337,63 @@ fn shortcut(k: u8, ctrl: bool, shift: bool) -> bool {
     true
 }
 
+// --- raw key events for a display server (`/dev/input/kbd`) ---
+
+/// Number of open `/dev/input/kbd` files; while non-zero, keystrokes become events there instead of
+/// going to the tty line discipline (the secure attention key is still handled first).
+static KBD_GRAB: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static KBD_Q: Mutex<VecDeque<[u8; 8]>> = Mutex::new(VecDeque::new());
+static KBD_WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+
+pub fn kbd_grab(on: bool) {
+    if on {
+        KBD_GRAB.fetch_add(1, Ordering::AcqRel);
+    } else if KBD_GRAB.fetch_sub(1, Ordering::AcqRel) == 1 {
+        KBD_Q.lock().clear();
+    }
+}
+
+pub fn kbd_ready() -> bool {
+    !KBD_Q.lock().is_empty()
+}
+
+/// One 8-byte event per read: `[1 = press / 0 = release, HID usage, modifier byte, ASCII (0 = none), 0, 0, 0, 0]`.
+pub fn kbd_read(buf: &mut [u8], nonblock: bool) -> i64 {
+    if buf.len() < 8 {
+        return -22;
+    }
+    loop {
+        if let Some(e) = KBD_Q.lock().pop_front() {
+            buf[..8].copy_from_slice(&e);
+            return 8;
+        }
+        if nonblock {
+            return -11;
+        }
+        if crate::signal::interrupted() {
+            return -4;
+        }
+        KBD_WQ.wait_if_intr(|| KBD_Q.lock().is_empty());
+    }
+}
+
+/// Turn the change between two reports into press/release events.
+fn kbd_events(rpt: &[u8; 8], keys: &[u8; 6], prev: &[u8; 6], shift: bool, altgr: bool) {
+    let mut q = KBD_Q.lock();
+    for &k in prev {
+        if k != 0 && !keys.contains(&k) && q.len() < 256 {
+            q.push_back([0, k, rpt[0], 0, 0, 0, 0, 0]);
+        }
+    }
+    for &k in keys {
+        if k != 0 && !prev.contains(&k) && q.len() < 256 {
+            q.push_back([1, k, rpt[0], ascii(k, shift, altgr), 0, 0, 0, 0]);
+        }
+    }
+    drop(q);
+    KBD_WQ.wake_all();
+}
+
 /// Feed one HID boot keyboard report (`[modifiers, reserved, k0..k5]`).
 pub fn feed_report(rpt: &[u8; 8]) {
     crate::random::add_event(u64::from_le_bytes(*rpt)); // keystroke timing is entropy
@@ -363,6 +420,12 @@ pub fn feed_report(rpt: &[u8; 8]) {
     }
     if SAK_ACTIVE.load(Ordering::Relaxed) {
         sak_feed(&keys, &mut prev, shift, altgr);
+        return;
+    }
+
+    if KBD_GRAB.load(Ordering::Acquire) > 0 {
+        kbd_events(rpt, &keys, &prev, shift, altgr);
+        *prev = keys;
         return;
     }
 

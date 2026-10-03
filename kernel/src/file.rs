@@ -108,6 +108,42 @@ pub enum DevKind {
     Mice,
 }
 
+/// `/dev/input/kbd`: key press/release events (see `console::kbd_read`). Holding it open takes the
+/// keyboard away from the tty.
+pub struct KbdDev {
+    nonblock: AtomicBool,
+}
+
+impl FileOps for KbdDev {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        crate::console::kbd_read(buf, self.nonblock.load(Ordering::Relaxed))
+    }
+    fn write(&self, _buf: &[u8]) -> i64 {
+        -9
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        if want & POLLIN != 0 && crate::console::kbd_ready() { POLLIN } else { 0 }
+    }
+    fn set_nonblock(&self, on: bool) {
+        self.nonblock.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.nonblock.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for KbdDev {
+    fn drop(&mut self) {
+        crate::console::kbd_grab(false);
+    }
+}
+
 pub struct DevFile(pub DevKind);
 
 impl FileOps for DevFile {
@@ -155,6 +191,10 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/input/kbd" => {
+            crate::console::kbd_grab(true);
+            Arc::new(KbdDev { nonblock: AtomicBool::new(false) })
+        }
         "/dev/fb0" => {
             if crate::gdi::fb_geometry().is_none() {
                 return None;

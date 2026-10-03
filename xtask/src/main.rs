@@ -222,6 +222,10 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_test(&img);
         }
+        "desk-kbd-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_kbd_test(&img);
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -639,7 +643,9 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
             }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk.sh", root.join("xtask/testdata/desk.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["thosdesk", "thoswin"] {
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-kbd.sh", root.join("xtask/testdata/desk-kbd.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["thosdesk", "thoswin", "thostext"] {
                 let out = root.join(format!("target/{prog}"));
                 let ok = Command::new("gcc")
                     .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
@@ -3862,7 +3868,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -5559,6 +5565,63 @@ fn desk_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-test FAILED (initial {c1}, raise {c2}, drag {c3}, quit {quit})");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-kbd-test`: keystrokes reach the focused window's client through the compositor
+/// (`/dev/input/kbd` -> `thosdesk` -> `WL_KEY` -> `thostext`) and its text — and the title — are on screen.
+fn desk_kbd_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskkbd-serial.log");
+    let sock = root.join("target/deskkbd-mon.sock");
+    let shot = root.join("target/deskkbd.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "text ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1500));
+        for k in ["h", "e", "l", "l", "o"] {
+            mon(&tsock, &format!("sendkey {k}"));
+            std::thread::sleep(ms(150));
+        }
+        std::thread::sleep(ms(800));
+        mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        mon(&tsock, "sendkey esc");
+    });
+    let out = boot_and_run(img, "deskkbd", "/busybox sh /desk-kbd.sh", "text done", 150);
+    // window at (100,80) 400x200; text origin (8,8) in the window, five 8x16 glyphs
+    let count = |x0: usize, y0: usize, x1: usize, y1: usize, pred: &dyn Fn(u8, u8, u8) -> bool| -> usize {
+        let Some((w, _, d)) = read_ppm(&shot) else { return 0 };
+        let mut n = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let o = (y * w + x) * 3;
+                if o + 2 < d.len() && pred(d[o], d[o + 1], d[o + 2]) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let white = |r: u8, g: u8, b: u8| r > 200 && g > 200 && b > 200;
+    let typed = count(108, 88, 148, 104, &white); // where "hello" is
+    let beyond = count(160, 88, 300, 104, &white); // nothing typed here
+    let title = count(104, 60, 200, 78, &white); // "typewriter" in the titlebar
+    if typed > 30 && beyond == 0 && title > 30 && out.contains("text done") {
+        println!("desk-kbd-test PASSED: typed text reached the focused client through the compositor ({typed} text pixels, title drawn: {title})");
+    } else {
+        eprintln!("  text pixels {typed}, beyond {beyond}, title pixels {title}");
+        for l in out.lines().filter(|l| l.contains("text") || l.contains("desk") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-kbd-test FAILED");
         exit(1);
     }
 }
