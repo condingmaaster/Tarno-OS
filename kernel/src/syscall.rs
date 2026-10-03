@@ -113,6 +113,12 @@ const SYS_SETGID: u64 = 106;
 const SYS_MPROTECT: u64 = 10;
 const SYS_MADVISE: u64 = 28;
 const SYS_MUNMAP: u64 = 11;
+const SYS_SHMGET: u64 = 29;
+const SYS_SHMAT: u64 = 30;
+const SYS_SHMCTL: u64 = 31;
+const SYS_SHMDT: u64 = 67;
+const SYS_FTRUNCATE: u64 = 77;
+const SYS_MEMFD_CREATE: u64 = 319;
 const SYS_KILL: u64 = 62;
 const SYS_REBOOT: u64 = 169;
 const SYS_GETTIMEOFDAY: u64 = 96;
@@ -135,6 +141,7 @@ const SYS_BIND: u64 = 49;
 const SYS_LISTEN: u64 = 50;
 const SYS_GETSOCKNAME: u64 = 51;
 const SYS_GETPEERNAME: u64 = 52;
+const SYS_SOCKETPAIR: u64 = 53;
 const SYS_SETSOCKOPT: u64 = 54;
 const SYS_GETSOCKOPT: u64 = 55;
 const SYS_ACCEPT4: u64 = 288;
@@ -366,6 +373,14 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
         None
     } else {
         let Some(f) = cur_fd(fd) else { return EBADF };
+        if flags & 1 != 0 {
+            if let Some(sec) = f.shm_section() {
+                if fixed || off as usize >= sec.size {
+                    return EINVAL;
+                }
+                return proc.map_section_view(&sec, off as usize, (len as usize).min(sec.size - off as usize)) as i64;
+            }
+        }
         if let Some((phys, dev_len)) = f.device_phys() {
             // device memory (the framebuffer): shared, not copied
             if off >= dev_len {
@@ -1322,6 +1337,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
 
         SYS_BRK => sched::current_proc().map(|p| p.brk(a1) as i64).unwrap_or(EINVAL),
         SYS_MMAP => sys_mmap(a1, a2, a3, a4, a5, frame.r9),
+        SYS_SHMGET => crate::shm::sys_shmget(a1, a2, a3),
+        SYS_SHMAT => crate::shm::sys_shmat(a1),
+        SYS_SHMCTL => crate::shm::sys_shmctl(a1, a2, a3),
+        SYS_SHMDT => crate::shm::sys_shmdt(a1),
+        SYS_FTRUNCATE => crate::shm::sys_ftruncate(a1, a2),
+        SYS_MEMFD_CREATE => crate::shm::sys_memfd_create(a2),
         SYS_MUNMAP => match sched::current_proc() {
             Some(p) if a1 & 0xFFF == 0 && a2 > 0 && a1.saturating_add(a2) < usercopy::USER_TOP => {
                 p.munmap(a1, a2);
@@ -1528,6 +1549,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_RECVMMSG => sock_sys::sys_recvmmsg(a1, a2, a3),
         SYS_GETSOCKNAME => sock_sys::sys_getsockname(a1, a2, a3),
         SYS_GETPEERNAME => sock_sys::sys_getpeername(a1, a2, a3),
+        SYS_SOCKETPAIR => sock_sys::sys_socketpair(a1, a2, a4),
         SYS_SETSOCKOPT => sock_sys::sys_setsockopt(a1),
         SYS_GETSOCKOPT => sock_sys::sys_getsockopt(a1, a2, a3, a4, a5),
 

@@ -62,6 +62,18 @@ pub trait FileOps: Send + Sync {
     fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
         None
     }
+    /// `ftruncate`: only `memfd` files support it.
+    fn truncate(&self, _len: u64) -> i64 {
+        -22
+    }
+    /// The shared-memory section behind a `memfd`, for `mmap(MAP_SHARED)`.
+    fn shm_section(&self) -> Option<alloc::sync::Arc<crate::process::Section>> {
+        None
+    }
+    /// The AF_UNIX socket behind this file, if it is one.
+    fn as_unix(&self) -> Option<&crate::unix::UnixSock> {
+        None
+    }
     /// For `mmap`: the device memory this file maps (`(physical base, length)`), if any.
     fn device_phys(&self) -> Option<(u64, u64)> {
         None

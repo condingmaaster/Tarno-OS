@@ -239,6 +239,9 @@ impl Process {
 
     /// `munmap`: drop the mappings in `[addr, addr+len)` and return their frames.
     pub fn munmap(&self, addr: u64, len: u64) {
+        if self.unmap_view(addr & !0xFFF) {
+            return; // a shared-memory view: its frames belong to the section
+        }
         let (start, end) = (addr & !0xFFF, (addr + len + 0xFFF) & !0xFFF);
         let mut v = start;
         while v < end {
@@ -1750,4 +1753,15 @@ pub fn clone_thread(frame: &UserFrame, flags: u64, stack: u64, ptid: u64, ctid: 
     let clear = if flags & CLONE_CHILD_CLEARTID != 0 { ctid } else { 0 };
     sched::spawn_user_thread(task, cf, fsbase, tid, clear);
     tid as i64
+}
+
+/// A section's frames go back to the allocator once the last handle *and* the last view are gone
+/// (views keep an `Arc`, and `teardown` unmaps them before the address space is freed).
+impl Drop for Section {
+    fn drop(&mut self) {
+        let mut fa = FRAME_ALLOC.lock();
+        for f in self.frames.drain(..) {
+            fa.dealloc(f);
+        }
+    }
 }

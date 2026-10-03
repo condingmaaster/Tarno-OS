@@ -204,6 +204,20 @@ fn main() {
                 exit(1);
             }
         }
+        "ipc-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "ipc", "ipctest; echo ipc-after-$((11))", "ipc-after-11", 90);
+            let ok = out.lines().find(|l| l.contains("ipc ok:")).map(str::trim);
+            if let (Some(l), true) = (ok, !out.contains("page fault")) {
+                println!("ipc-test PASSED: {l}");
+            } else {
+                for l in out.lines().filter(|l| l.contains("ipc") || l.contains("unhandled") || l.contains("fault")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("ipc-test FAILED");
+                exit(1);
+            }
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -610,6 +624,15 @@ fn disk_image() -> PathBuf {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
+            }
+            let ipc = root.join("target/ipctest");
+            let ipc_ok = Command::new("gcc")
+                .args(["-O1", "-o", ipc.to_str().unwrap(), root.join("xtask/testdata/ipctest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ipc_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let mt = root.join("target/memtest");
             let mt_ok = Command::new("gcc")
@@ -3823,7 +3846,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "dyn-test", "thr-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "dyn-test", "thr-test", "ipc-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
