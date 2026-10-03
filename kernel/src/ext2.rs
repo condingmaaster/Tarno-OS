@@ -11,13 +11,24 @@
 //! journalling, timestamps, hard links.
 
 use alloc::vec;
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use crate::ahci::{self, SECTOR};
 
 const SB_OFFSET: u64 = 1024;
+
+/// Disk LBA where the ext2 filesystem starts: 0 for a bare-image disk (the QEMU
+/// test disk), the partition's first sector on a real MBR disk.
+static PART_LBA: AtomicU64 = AtomicU64::new(0);
 const EXT2_MAGIC: u16 = 0xEF53;
 pub const ROOT_INO: u32 = 2;
+
+/// Serialises every operation that changes the filesystem (allocation bitmaps, directories,
+/// inodes are read-modify-write with no other protection). Threads and several CPUs can now
+/// write at once; without this two of them could be handed the same free block.
+static FS_WRITE: spin::Mutex<()> = spin::Mutex::new(());
 
 pub struct Ext2 {
     block_size: u32,
@@ -37,6 +48,10 @@ pub struct Inode {
     pub mode: u16,
     pub size: u64,
     pub block: [u32; 15],
+    /// `i_atime` / `i_ctime` / `i_mtime`, seconds since the epoch.
+    pub atime: u32,
+    pub ctime: u32,
+    pub mtime: u32,
     /// `i_uid`/`i_gid` — the classic 16-bit ext2 fields (not the Linux
     /// high-16-bits-in-`i_osd2` extension; THOS's own uid space is small
     /// enough that this doesn't matter yet). Every file THOS itself creates
@@ -83,11 +98,12 @@ fn disk_range(off: u64, len: usize) -> Vec<u8> {
     let start_lba = off / SECTOR as u64;
     let end_lba = (off + len as u64 + SECTOR as u64 - 1) / SECTOR as u64;
     let sectors = (end_lba - start_lba) as usize;
+    let part = PART_LBA.load(Ordering::Relaxed);
     let mut raw = vec![0u8; sectors * SECTOR];
     let mut done = 0;
     while done < sectors {
         let n = (sectors - done).min(64);
-        ahci::read(start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
+        ahci::read(part + start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
             .expect("ext2 disk read");
         done += n;
     }
@@ -102,10 +118,33 @@ fn le16(b: &[u8]) -> u16 {
     u16::from_le_bytes(b[..2].try_into().unwrap())
 }
 
+/// True when the root FS was found inside an MBR partition (a real disk), not a
+/// bare QEMU test image. Fixed-LBA scratch tests must not run on such a disk.
+pub fn on_partition() -> bool {
+    PART_LBA.load(Ordering::Relaxed) != 0
+}
+
 pub fn open() -> Result<Ext2, &'static str> {
-    let sb = disk_range(SB_OFFSET, 1024);
+    let mut sb = disk_range(SB_OFFSET, 1024);
     if le16(&sb[56..]) != EXT2_MAGIC {
-        return Err("ext2 magic not found");
+        // Not a bare-image disk: look for a Linux partition in the MBR.
+        let found = crate::mbr::entries()
+            .into_iter()
+            .filter(|e| e.ptype == crate::mbr::TYPE_LINUX)
+            .find(|e| {
+                PART_LBA.store(e.start_lba, Ordering::Relaxed);
+                le16(&disk_range(SB_OFFSET, 1024)[56..]) == EXT2_MAGIC
+            });
+        match found {
+            Some(e) => {
+                crate::kprintln!("THOS: ext2 part        root FS in MBR partition at LBA {} ({} MiB)", e.start_lba, e.sectors / 2048);
+                sb = disk_range(SB_OFFSET, 1024);
+            }
+            None => {
+                PART_LBA.store(0, Ordering::Relaxed);
+                return Err("ext2 magic not found");
+            }
+        }
     }
     let block_size = 1024u32 << le32(&sb[24..]);
     let rev = le32(&sb[76..]);
@@ -131,12 +170,13 @@ fn disk_write(off: u64, data: &[u8]) {
     let start_lba = off / SECTOR as u64;
     let end_lba = (off + data.len() as u64 + SECTOR as u64 - 1) / SECTOR as u64;
     let sectors = (end_lba - start_lba) as usize;
+    let part = PART_LBA.load(Ordering::Relaxed);
     let mut raw = vec![0u8; sectors * SECTOR];
 
     let mut done = 0;
     while done < sectors {
         let n = (sectors - done).min(64);
-        ahci::read(start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
+        ahci::read(part + start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
             .expect("ext2 rmw read");
         done += n;
     }
@@ -147,7 +187,7 @@ fn disk_write(off: u64, data: &[u8]) {
     let mut done = 0;
     while done < sectors {
         let n = (sectors - done).min(64);
-        ahci::write(start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR])
+        ahci::write(part + start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR])
             .expect("ext2 rmw write");
         done += n;
     }
@@ -186,6 +226,11 @@ fn set_inode(
     raw[24..26].copy_from_slice(&(gid as u16).to_le_bytes());
     raw[26..28].copy_from_slice(&links.to_le_bytes());
     raw[28..32].copy_from_slice(&blocks512.to_le_bytes()); // i_blocks (512-byte units)
+    // Timestamps: every inode write through here is a create or a content rewrite.
+    let now = (crate::timer::unix_secs() as u32).to_le_bytes();
+    raw[8..12].copy_from_slice(&now); // i_atime
+    raw[12..16].copy_from_slice(&now); // i_ctime
+    raw[16..20].copy_from_slice(&now); // i_mtime
     for (i, b) in block.iter().enumerate() {
         raw[40 + i * 4..44 + i * 4].copy_from_slice(&b.to_le_bytes());
     }
@@ -217,6 +262,9 @@ impl Ext2 {
             block,
             uid: le16(&raw[2..]) as u32,
             gid: le16(&raw[24..]) as u32,
+            atime: le32(&raw[8..]),
+            ctime: le32(&raw[12..]),
+            mtime: le32(&raw[16..]),
         }
     }
 
@@ -291,6 +339,49 @@ impl Ext2 {
         }
         out.truncate(total);
         out
+    }
+
+    /// The block numbers of a file (0 = hole), for [`Ext2::read_at`].
+    pub fn file_blocks(&self, inode: &Inode) -> Vec<u32> {
+        self.block_map(inode)
+    }
+
+    /// Read up to `out.len()` bytes at byte offset `off` of a file of `size` bytes whose
+    /// block map is `blocks` — only the blocks that are needed, in runs of consecutive disk
+    /// blocks (at most 64 per disk read). Returns the number of bytes read (0 at EOF).
+    pub fn read_at(&self, blocks: &[u32], size: u64, off: u64, out: &mut [u8]) -> usize {
+        if off >= size {
+            return 0;
+        }
+        let n = out.len().min((size - off) as usize);
+        let bs = self.block_size as u64;
+        let mut done = 0usize;
+        while done < n {
+            let pos = off + done as u64;
+            let bi = (pos / bs) as usize;
+            let in_off = (pos % bs) as usize;
+            let remaining = n - done;
+            if bi >= blocks.len() || blocks[bi] == 0 {
+                // a hole (or past the map): reads as zeros up to the end of this block
+                let take = (bs as usize - in_off).min(remaining);
+                out[done..done + take].fill(0);
+                done += take;
+                continue;
+            }
+            let mut j = bi + 1;
+            while j < blocks.len()
+                && j - bi < 64
+                && blocks[j] == blocks[j - 1] + 1
+                && (j - bi) * (bs as usize) < in_off + remaining
+            {
+                j += 1;
+            }
+            let take = ((j - bi) * bs as usize - in_off).min(remaining);
+            let data = disk_range(blocks[bi] as u64 * bs + in_off as u64, take);
+            out[done..done + take].copy_from_slice(&data);
+            done += take;
+        }
+        n
     }
 
     fn lookup(&self, dir_ino: u32, name: &str) -> Option<u32> {
@@ -401,6 +492,17 @@ impl Ext2 {
         None
     }
 
+    /// `(block size, blocks, free blocks, inodes, free inodes)` from the superblock, for `statfs`.
+    pub fn stats(&self) -> (u32, u32, u32, u32, u32) {
+        let sb = disk_range(SB_OFFSET, 1024);
+        (self.block_size, le32(&sb[4..]), le32(&sb[12..]), le32(&sb[0..]), le32(&sb[16..]))
+    }
+
+    /// Start a batched block-allocation transaction (see [`BlockTx`]).
+    fn tx(&self) -> BlockTx<'_> {
+        BlockTx { fs: self, bitmaps: BTreeMap::new(), free: BTreeMap::new(), delta: BTreeMap::new() }
+    }
+
     /// Allocate one zeroed data block; updates the group + superblock counts.
     fn alloc_block(&self) -> Option<u32> {
         let groups = self.group_count();
@@ -485,18 +587,19 @@ impl Ext2 {
 
     /// Free every data / indirect / double-indirect block an inode owns.
     fn free_all_blocks(&self, node: &Inode) {
+        let mut tx = self.tx();
         for &b in &node.block[..12] {
             if b != 0 {
-                self.free_block(b);
+                tx.release(b);
             }
         }
         if node.block[12] != 0 {
             for c in self.block(node.block[12]).chunks_exact(4) {
                 if le32(c) != 0 {
-                    self.free_block(le32(c));
+                    tx.release(le32(c));
                 }
             }
-            self.free_block(node.block[12]);
+            tx.release(node.block[12]);
         }
         if node.block[13] != 0 {
             for c in self.block(node.block[13]).chunks_exact(4) {
@@ -506,13 +609,152 @@ impl Ext2 {
                 }
                 for d in self.block(sib).chunks_exact(4) {
                     if le32(d) != 0 {
-                        self.free_block(le32(d));
+                        tx.release(le32(d));
                     }
                 }
-                self.free_block(sib);
+                tx.release(sib);
             }
-            self.free_block(node.block[13]);
+            tx.release(node.block[13]);
         }
+        tx.commit();
+    }
+
+    /// Build the 15 inode block pointers (direct, single-, double-indirect) for a list of data
+    /// blocks (0 = hole), allocating and writing the indirect blocks. Returns the pointers and
+    /// the number of indirect blocks used; `None` if the file needs triple indirection or the
+    /// disk is full.
+    fn build_ptrs(&self, tx: &mut BlockTx<'_>, blocks: &[u32]) -> Option<([u32; 15], u32)> {
+        let bs = self.block_size as usize;
+        let per = bs / 4;
+        let mut ptrs = [0u32; 15];
+        let mut meta = 0u32;
+        let mut bi = 0usize;
+        while bi < blocks.len() && bi < 12 {
+            ptrs[bi] = blocks[bi];
+            bi += 1;
+        }
+        if bi < blocks.len() {
+            let ind = tx.alloc()?;
+            meta += 1;
+            let mut buf = vec![0u8; bs];
+            let mut k = 0;
+            while bi < blocks.len() && k < per {
+                buf[k * 4..k * 4 + 4].copy_from_slice(&blocks[bi].to_le_bytes());
+                bi += 1;
+                k += 1;
+            }
+            self.write_block(ind, &buf);
+            ptrs[12] = ind;
+        }
+        if bi < blocks.len() {
+            let dind = tx.alloc()?;
+            meta += 1;
+            let mut dbuf = vec![0u8; bs];
+            let mut j = 0;
+            while bi < blocks.len() && j < per {
+                let ind = tx.alloc()?;
+                meta += 1;
+                let mut buf = vec![0u8; bs];
+                let mut k = 0;
+                while bi < blocks.len() && k < per {
+                    buf[k * 4..k * 4 + 4].copy_from_slice(&blocks[bi].to_le_bytes());
+                    bi += 1;
+                    k += 1;
+                }
+                self.write_block(ind, &buf);
+                dbuf[j * 4..j * 4 + 4].copy_from_slice(&ind.to_le_bytes());
+                j += 1;
+            }
+            self.write_block(dind, &dbuf);
+            ptrs[13] = dind;
+        }
+        if bi < blocks.len() {
+            return None; // would need triple indirection
+        }
+        Some((ptrs, meta))
+    }
+
+    /// Incrementally update an existing regular file to `data`, of which only the byte range
+    /// `[lo, hi)` changed since the file on disk was last in sync: the blocks of that range are
+    /// overwritten in place, new blocks are appended when the file grew, and only the (few)
+    /// indirect blocks are rebuilt. Unchanged data blocks are not touched. `Err` when an
+    /// incremental update is not possible (the file shrank, it is not a regular file, no
+    /// space) — the caller then rewrites the whole file with [`Ext2::write_path`].
+    ///
+    /// Crash order, as in `write_path_owned`: new data and indirect blocks first, the inode
+    /// (one atomic sector write) second, the old indirect blocks freed last.
+    pub fn write_at(&self, ino: u32, data: &[u8], lo: usize, hi: usize) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        let old = self.read_inode(ino);
+        if old.mode & 0xF000 != 0x8000 {
+            return Err("not a regular file");
+        }
+        let bs = self.block_size as usize;
+        let new_size = data.len();
+        let old_size = old.size as usize;
+        if new_size < old_size {
+            return Err("file shrank");
+        }
+        let old_blocks: Vec<u32> = if old_size == 0 { Vec::new() } else { self.block_map(&old) };
+        let needed = new_size.div_ceil(bs);
+        let mut blocks = old_blocks.clone();
+        blocks.resize(needed, 0);
+        let (first, last) = if hi > lo { (lo / bs, (hi - 1) / bs) } else { (usize::MAX, 0) };
+        let mut tx = self.tx();
+        let mut write = alloc::vec![false; needed];
+        for b in 0..needed {
+            let dirty = b >= first && b <= last;
+            let fresh = b >= old_blocks.len();
+            if blocks[b] == 0 && (fresh || dirty) {
+                blocks[b] = tx.alloc().ok_or("no space")?;
+                write[b] = true;
+            } else if dirty {
+                write[b] = true;
+            }
+        }
+        // Data: whole blocks from the in-memory buffer, consecutive blocks in one disk write.
+        let mut b = 0;
+        while b < needed {
+            if !write[b] || blocks[b] == 0 {
+                b += 1;
+                continue;
+            }
+            let mut e = b + 1;
+            while e < needed && write[e] && blocks[e] == blocks[e - 1] + 1 && (e - b) < 256 {
+                e += 1;
+            }
+            let mut run = alloc::vec![0u8; (e - b) * bs];
+            let from = b * bs;
+            let to = (e * bs).min(new_size);
+            run[..to - from].copy_from_slice(&data[from..to]);
+            disk_write(blocks[b] as u64 * bs as u64, &run);
+            b = e;
+        }
+        let (ptrs, meta) = self.build_ptrs(&mut tx, &blocks).ok_or("no space / file too large")?;
+        tx.commit();
+        let used = blocks.iter().filter(|&&x| x != 0).count() as u32 + meta;
+        let blocks512 = used * (self.block_size / 512);
+        let (mode, uid, gid) = (old.mode, old.uid, old.gid);
+        self.patch_inode(ino, |raw| {
+            let links = le16(&raw[26..]);
+            set_inode(raw, mode, uid, gid, new_size as u64, links, blocks512, &ptrs);
+        });
+        // The old indirect blocks are garbage now (the data blocks live on).
+        let mut gone = self.tx();
+        if old.block[12] != 0 {
+            gone.release(old.block[12]);
+        }
+        if old.block[13] != 0 {
+            for c in self.block(old.block[13]).chunks_exact(4) {
+                if le32(c) != 0 {
+                    gone.release(le32(c));
+                }
+            }
+            gone.release(old.block[13]);
+        }
+        gone.commit();
+        self.sync_backups();
+        Ok(())
     }
 
     /// Allocate + fill data blocks for `data`. Returns `(block[15], i_blocks)`
@@ -521,6 +763,7 @@ impl Ext2 {
         let bs = self.block_size as usize;
         let per = bs / 4; // pointers per indirect block
         let nblocks = data.len().div_ceil(bs);
+        let mut tx = self.tx();
         let mut block = [0u32; 15];
         let mut meta = 0u32;
         let mut bi = 0usize;
@@ -533,19 +776,19 @@ impl Ext2 {
         };
 
         while bi < nblocks && bi < 12 {
-            let b = self.alloc_block()?;
+            let b = tx.alloc()?;
             self.write_block(b, &chunk(bi));
             block[bi] = b;
             bi += 1;
         }
 
         if bi < nblocks {
-            let ind = self.alloc_block()?;
+            let ind = tx.alloc()?;
             meta += 1;
             let mut buf = vec![0u8; bs];
             let mut k = 0;
             while bi < nblocks && k < per {
-                let b = self.alloc_block()?;
+                let b = tx.alloc()?;
                 self.write_block(b, &chunk(bi));
                 buf[k * 4..k * 4 + 4].copy_from_slice(&b.to_le_bytes());
                 bi += 1;
@@ -556,17 +799,17 @@ impl Ext2 {
         }
 
         if bi < nblocks {
-            let dind = self.alloc_block()?;
+            let dind = tx.alloc()?;
             meta += 1;
             let mut dbuf = vec![0u8; bs];
             let mut j = 0;
             while bi < nblocks && j < per {
-                let ind = self.alloc_block()?;
+                let ind = tx.alloc()?;
                 meta += 1;
                 let mut buf = vec![0u8; bs];
                 let mut k = 0;
                 while bi < nblocks && k < per {
-                    let b = self.alloc_block()?;
+                    let b = tx.alloc()?;
                     self.write_block(b, &chunk(bi));
                     buf[k * 4..k * 4 + 4].copy_from_slice(&b.to_le_bytes());
                     bi += 1;
@@ -583,6 +826,7 @@ impl Ext2 {
         if bi < nblocks {
             return None; // would need triple-indirect
         }
+        tx.commit();
         Some((block, (nblocks as u32 + meta) * (self.block_size / 512)))
     }
 
@@ -673,6 +917,7 @@ impl Ext2 {
     /// never changes its owner — matches real Unix: truncating a file you
     /// have write access to doesn't let you take it over.
     pub fn write_path_owned(&self, path: &str, data: &[u8], uid: u32, gid: u32) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         if name.len() > 255 {
@@ -733,6 +978,7 @@ impl Ext2 {
     /// Create directory `path`, owned by `uid`/`gid`. The parent must
     /// exist; `path` must not.
     pub fn mkdir_path_owned(&self, path: &str, uid: u32, gid: u32) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         if self.lookup(parent_ino, name).is_some() {
@@ -774,6 +1020,7 @@ impl Ext2 {
     /// The caller (`syscall::sys_chmod`) is responsible for the "only the
     /// owner or root may do this" check — this just writes the bits.
     pub fn chmod_path(&self, path: &str, perm: u16) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let ino = self.path_lookup(path).ok_or("no such file")?;
         let file_type = self.read_inode(ino).mode & 0xF000;
         self.patch_inode(ino, |raw| {
@@ -787,6 +1034,7 @@ impl Ext2 {
     /// — the permission check (real `chown` is stricter: owner alone isn't
     /// enough, it's root-only, matching modern Unix) lives in the caller.
     pub fn chown_path(&self, path: &str, uid: u32, gid: u32) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let ino = self.path_lookup(path).ok_or("no such file")?;
         self.patch_inode(ino, |raw| {
             raw[2..4].copy_from_slice(&(uid as u16).to_le_bytes());
@@ -863,6 +1111,7 @@ impl Ext2 {
 
     /// Unlink a regular file: drop its last link and free it.
     pub fn unlink_path(&self, path: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such file")?;
@@ -884,6 +1133,7 @@ impl Ext2 {
 
     /// Remove an empty directory.
     pub fn rmdir_path(&self, path: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such directory")?;
@@ -949,6 +1199,93 @@ impl Ext2 {
             sbc[90..92].copy_from_slice(&(g as u16).to_le_bytes()); // s_block_group_nr
             disk_write(sb_blk as u64 * self.block_size as u64, &sbc);
             disk_write((sb_blk + 1) as u64 * self.block_size as u64, &gdt);
+        }
+    }
+}
+
+
+/// A batch of block allocations / frees. The bitmaps and free counters each group needs are
+/// read **once**, edited in memory and written **once** at [`BlockTx::commit`] — instead of
+/// a read-modify-write of the bitmap, the group descriptor and the superblock for every single
+/// block, which made writing a megabyte take dozens of seconds. Dropping the transaction
+/// without committing leaves the disk's bitmaps untouched (blocks a failed allocation had
+/// picked simply stay free).
+struct BlockTx<'a> {
+    fs: &'a Ext2,
+    /// group -> (bitmap block number, bitmap bytes, modified)
+    bitmaps: BTreeMap<u32, (u32, Vec<u8>, bool)>,
+    /// group -> free-block count as read from its descriptor
+    free: BTreeMap<u32, i64>,
+    /// group -> change in free blocks to write back
+    delta: BTreeMap<u32, i64>,
+}
+
+impl BlockTx<'_> {
+    fn load(&mut self, g: u32) {
+        if !self.bitmaps.contains_key(&g) {
+            let bgd = self.fs.read_bgd(g);
+            let bmb = le32(&bgd[0..]);
+            self.free.insert(g, le16(&bgd[12..]) as i64);
+            self.bitmaps.insert(g, (bmb, self.fs.block(bmb), false));
+        }
+    }
+
+    /// The first free block (first-fit over the groups), marked used in the cached bitmap.
+    fn alloc(&mut self) -> Option<u32> {
+        let fs = self.fs;
+        let groups = fs.group_count();
+        for g in 0..groups {
+            self.load(g);
+            if self.free[&g] + self.delta.get(&g).copied().unwrap_or(0) <= 0 {
+                continue;
+            }
+            let in_group = if g == groups - 1 {
+                fs.block_count - fs.first_data_block - g * fs.blocks_per_group
+            } else {
+                fs.blocks_per_group
+            };
+            let bm = self.bitmaps.get_mut(&g).unwrap();
+            for i in 0..in_group as usize {
+                if bm.1[i / 8] & (1 << (i % 8)) == 0 {
+                    bm.1[i / 8] |= 1 << (i % 8);
+                    bm.2 = true;
+                    *self.delta.entry(g).or_insert(0) -= 1;
+                    return Some(fs.first_data_block + g * fs.blocks_per_group + i as u32);
+                }
+            }
+        }
+        None
+    }
+
+    /// Mark a block free (a no-op if its bit is already clear).
+    fn release(&mut self, bno: u32) {
+        let rel = bno - self.fs.first_data_block;
+        let g = rel / self.fs.blocks_per_group;
+        let i = (rel % self.fs.blocks_per_group) as usize;
+        self.load(g);
+        let bm = self.bitmaps.get_mut(&g).unwrap();
+        if bm.1[i / 8] & (1 << (i % 8)) != 0 {
+            bm.1[i / 8] &= !(1 << (i % 8));
+            bm.2 = true;
+            *self.delta.entry(g).or_insert(0) += 1;
+        }
+    }
+
+    /// Write the changed bitmaps and counters.
+    fn commit(self) {
+        let mut total = 0i64;
+        for (g, (bmb, bytes, dirty)) in &self.bitmaps {
+            if *dirty {
+                self.fs.write_block(*bmb, bytes);
+            }
+            let d = self.delta.get(g).copied().unwrap_or(0);
+            if d != 0 {
+                self.fs.bgd_add16(*g, 12, d);
+                total += d;
+            }
+        }
+        if total != 0 {
+            self.fs.sb_add32(12, total);
         }
     }
 }

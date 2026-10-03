@@ -22,6 +22,9 @@
 #![no_main]
 #![feature(alloc_error_handler)]
 #![feature(abi_x86_interrupt)]
+// The self-test suite (cargo feature `selftest`) is most of this file. A normal
+// boot compiles it out entirely, leaving the helpers it used unreferenced.
+#![cfg_attr(not(feature = "selftest"), allow(dead_code, unused_imports, unused_variables))]
 
 extern crate alloc;
 
@@ -43,6 +46,8 @@ mod gdi;
 mod gdt;
 mod gpt;
 mod idt;
+mod ioapic;
+mod itimer;
 mod integrity;
 #[cfg(feature = "interactive")]
 mod login;
@@ -52,17 +57,31 @@ mod object;
 mod pci;
 mod pe;
 mod process;
+mod procfs;
 mod registry;
 mod sched;
 mod secsvc;
+mod net;
+mod net_sock;
 mod seh;
+mod sock_sys;
+mod signal;
 mod serial;
 mod smp;
 mod syscall;
 mod timer;
+mod usercopy;
+mod virtio_net;
 mod vfs;
 mod vmm;
 mod window;
+mod fbcon;
+mod futex;
+mod power;
+mod mbr;
+mod ps2;
+mod random;
+mod rtc;
 mod xhci;
 mod wait;
 
@@ -131,6 +150,7 @@ extern "C" fn kmain() -> ! {
             Some(fb) => {
                 paint_smoke_test(fb);
                 kprintln!("THOS: framebuffer painted");
+                fbcon::init(fb); // from here on, kprintln! also lands on screen
             }
             None => kprintln!("THOS: no framebuffer in response"),
         },
@@ -138,16 +158,21 @@ extern "C" fn kmain() -> ! {
     }
 
     cpu::enable_sse();
+    let smep = cpu::enable_smep();
     gdt::init(0);
     idt::init();
     kprintln!("THOS: GDT + IDT loaded");
+    kprintln!("THOS: SMEP             {}", if smep { "enabled" } else { "not available on this CPU" });
     x86_64::instructions::interrupts::int3();
     kprintln!("THOS: traps ok (returned from #BP)");
 
     memory_bringup();
     acpi_apic_bringup();
+    fbcon::suspend(); // the FB mapping changes under vmm_bringup
     vmm_bringup();
     gdi_bringup();
+    fbcon::resume();
+    #[cfg(feature = "selftest")]
     gdi_paint_check();
 
     let mp = MP_REQUEST.response().expect("Limine MP request unanswered");
@@ -155,31 +180,50 @@ extern "C" fn kmain() -> ! {
 
     syscall::init_cpu(0);
 
-    scheduler_milestone();
-    multi_wait_milestone();
-    storage_milestone();
+    // `selftest` = the full in-kernel verification suite `cargo xtask *-test`
+    // drives (it needs the test binaries on the disk, writes scratch files,
+    // spawns dozens of processes). A normal boot is just: bring up the
+    // scheduler, find the disk + root filesystem, start the input devices.
+    #[cfg(feature = "selftest")]
+    {
+        scheduler_milestone();
+        multi_wait_milestone();
+        storage_milestone();
+    }
+    #[cfg(not(feature = "selftest"))]
+    {
+        sched::init_bsp();
+        boot_system();
+    }
 
     #[cfg(feature = "interactive")]
     {
         // Milestone 2: first-run setup / login, then launch the shell off ext2
-        // and hand it the USB keyboard.
-        let fs = ext2::open().expect("mount ext2 for the shell");
-        let session = login::establish(&fs);
-        process::set_session(&session.name, session.uid);
-        kprintln!("THOS: session          {} (uid {})", session.name, session.uid);
-
-        // The interactive shell is stock BusyBox `sh` (ash).
-        let sh = fs.read_path("/busybox").expect("read /busybox from ext2");
-        kprintln!("THOS: shell            /busybox sh = {} bytes", sh.len());
-        process::spawn_init(
-            &sh,
-            &["sh"],
-            &["PATH=/bin:/", "HOME=/", "PWD=/", "TERM=dumb", "PS1=thos$ "],
-        );
-
-        kprintln!("THOS: interactive hold — type on the USB keyboard");
+        // and hand it the keyboard. When the shell ends (`exit`, Ctrl+D) the
+        // session is over: back to the login prompt, never a dead console.
         loop {
-            sched::yield_now();
+            let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
+            let session = login::establish(&fs);
+            process::set_session(&session.name, session.uid);
+            kprintln!("THOS: session          {} (uid {})", session.name, session.uid);
+
+            // The interactive shell is stock BusyBox `sh` (ash).
+            let sh = fs
+                .read_path("/busybox")
+                .unwrap_or_else(|| fatal_boot("no login shell", "/busybox is missing from the root filesystem"));
+            kprintln!("THOS: shell            /busybox sh = {} bytes", sh.len());
+            let pid = process::spawn_init(
+                &sh,
+                &["sh"],
+                &["PATH=/bin:/", "HOME=/", "PWD=/", "TERM=dumb", "PS1=thos$ "],
+            );
+
+            signal::FG_PGRP.store(pid, core::sync::atomic::Ordering::Relaxed);
+            kprintln!("THOS: interactive hold — type on the keyboard");
+            while !process::pid_exited(pid) {
+                sched::yield_now();
+            }
+            kprintln!("\nTHOS: session ended");
         }
     }
 
@@ -248,6 +292,8 @@ fn acpi_apic_bringup() {
         .address as *const u8;
 
     let info = unsafe { acpi::parse(rsdp) };
+    ioapic::remember(&info);
+    unsafe { power::init(rsdp) };
     let enabled = info.cpus.iter().filter(|c| c.enabled).count();
 
     kprintln!(
@@ -276,6 +322,20 @@ fn acpi_apic_bringup() {
         apic::bsp_apic_id(),
         apic::counts_per_ms()
     );
+
+    // Start the wall clock: RTC reading + the TSC calibrated against the PIT.
+    let rtc = rtc::read_unix();
+    timer::start_clock(apic::tsc_per_ms(), rtc);
+    kprintln!(
+        "THOS: clock            TSC {} MHz; RTC {}",
+        apic::tsc_per_ms() / 1000,
+        match rtc {
+            Some(t) => alloc::format!("{} (unix)", t),
+            None => alloc::string::String::from("unreadable — wall clock starts at 0"),
+        }
+    );
+
+    random::init(); // after the clock: the RTC and TSC are inputs to the pool
 
     x86_64::instructions::interrupts::enable();
     let start = apic::ticks();
@@ -600,25 +660,58 @@ fn smp_stress_milestone(init_bytes: &[u8]) {
     }
 
     for _ in 0..WAVES {
+        // Taken BEFORE the wave is spawned: on many CPUs the first churn threads can finish while the
+        // spawn loop is still running, and a mark computed afterwards would count them as
+        // "already exited" and end up beyond the number of threads that exist — a wait for ever.
+        let exited_before_wave = EXITED.load(Ordering::Relaxed);
         for i in 0..PER_WAVE {
             SPAWNED.fetch_add(1, Ordering::Relaxed);
             sched::spawn("stress-churn", churn_worker, i);
         }
         // Only let a wave half-drain before piling on the next, so create and
         // destroy overlap across all CPUs the whole time.
-        let mark = EXITED.load(Ordering::Relaxed) + (PER_WAVE as u64 / 2);
+        let mark = exited_before_wave + (PER_WAVE as u64 / 2);
+        let mut wave_report = timer::monotonic_ns();
         while EXITED.load(Ordering::Relaxed) < mark {
             sched::yield_now();
+            if timer::monotonic_ns() - wave_report > 10_000_000_000 {
+                wave_report = timer::monotonic_ns();
+                kprintln!(
+                    "THOS: smp stress waiting in a wave: churn {}/{} (mark {}) parkers {}/{} user exits {}/{} ctx {}",
+                    EXITED.load(Ordering::Relaxed),
+                    SPAWNED.load(Ordering::Relaxed),
+                    mark,
+                    PARK_EXITED.load(Ordering::Relaxed),
+                    PARKERS,
+                    syscall::user_exits() - user_base,
+                    USER_INITS * 2,
+                    sched::ctx_switches()
+                );
+            }
         }
         sched::reap(); // free exited stacks — the bootstrap heap is small
     }
 
+    let mut last_report = timer::monotonic_ns();
     while EXITED.load(Ordering::Relaxed) < SPAWNED.load(Ordering::Relaxed)
         || PARK_EXITED.load(Ordering::Relaxed) < PARKERS as u64
         || syscall::user_exits() < user_base + USER_INITS * 2
     {
         sched::yield_now();
         sched::reap();
+        // Watchdog: say what the drain is still waiting for (a hang here is a scheduler bug).
+        if timer::monotonic_ns() - last_report > 10_000_000_000 {
+            last_report = timer::monotonic_ns();
+            kprintln!(
+                "THOS: smp stress waiting: churn {}/{} parkers {}/{} user exits {}/{}",
+                EXITED.load(Ordering::Relaxed),
+                SPAWNED.load(Ordering::Relaxed),
+                PARK_EXITED.load(Ordering::Relaxed),
+                PARKERS,
+                syscall::user_exits() - user_base,
+                USER_INITS * 2
+            );
+        }
     }
     sched::reap();
 
@@ -1108,6 +1201,28 @@ fn group_tier_check(fs: &ext2::Ext2) {
 /// trace of a dead process's memory the isolation boundary is supposed to
 /// have closed) and, in the shared-section case, that only the process's
 /// *own* frames go back — a section still held elsewhere must survive.
+/// Drive the reaper until the free-frame count has not changed for 200 consecutive rounds
+/// (each round yields so exiting threads can finish switching away, then reaps).
+fn settled_free_frames() -> u64 {
+    let mut last = mm::FRAME_ALLOC.lock().free_frames();
+    let mut stable = 0;
+    for _ in 0..50_000 {
+        sched::yield_now();
+        sched::reap();
+        let now = mm::FRAME_ALLOC.lock().free_frames();
+        if now == last {
+            stable += 1;
+            if stable >= 200 {
+                break;
+            }
+        } else {
+            last = now;
+            stable = 0;
+        }
+    }
+    last
+}
+
 fn process_teardown_check(bin: &[u8]) {
     // Warm up once first — the loader's own one-time lazy setup shouldn't be
     // mistaken for a per-process leak.
@@ -1116,11 +1231,10 @@ fn process_teardown_check(bin: &[u8]) {
     while syscall::user_exits() < before_warmup + 1 {
         sched::yield_now();
     }
-    for _ in 0..40 {
-        sched::yield_now(); // let a still-switching-away thread finish (`finish_switch`
-        sched::reap(); // clears `running`) before reap() re-checks it — same pattern
-    } // the stress milestone's own reap-loop already uses.
-    let baseline = mm::FRAME_ALLOC.lock().free_frames();
+    // Wait until the free-frame count stops moving: with many CPUs, processes from the
+    // previous milestones can still be torn down in the background, and a baseline taken
+    // while they finish would read as a leak (or a negative one).
+    let baseline = settled_free_frames();
 
     const ROUNDS: u64 = 8;
     let start_exits = syscall::user_exits();
@@ -1134,11 +1248,7 @@ fn process_teardown_check(bin: &[u8]) {
     // is future work — see `sched::reap`'s doc comment); call it directly,
     // interleaved with `yield_now` so an exited thread's own CPU gets to run
     // `finish_switch` (clearing `running`) before reap() re-checks it.
-    for _ in 0..40 {
-        sched::yield_now();
-        sched::reap();
-    }
-    let after = mm::FRAME_ALLOC.lock().free_frames();
+    let after = settled_free_frames();
     assert_eq!(
         after, baseline,
         "process teardown leaked frames: {ROUNDS} processes spawned+exited, {baseline} -> {after} free frames"
@@ -1345,31 +1455,38 @@ fn storage_milestone() {
     // AHCI write: round-trip a known pattern through a scratch sector past the
     // ext2 image (LBA 50000 = ~25 MiB; the fs is the first 16 MiB). The host
     // side of `cargo xtask ahci-test` re-checks this landed in the disk file.
-    const SCRATCH_LBA: u64 = 50_000;
-    let mut wbuf = [0u8; ahci::SECTOR];
-    for (i, b) in wbuf.iter_mut().enumerate() {
-        *b = (i as u8) ^ 0xA5;
-    }
-    ahci::write(SCRATCH_LBA, &wbuf).expect("AHCI write");
-    let mut rbuf = [0u8; ahci::SECTOR];
-    ahci::read(SCRATCH_LBA, &mut rbuf).expect("AHCI read-back");
-    assert!(rbuf == wbuf, "AHCI write / read-back mismatch");
-    kprintln!("THOS: ahci write ok    LBA {} round-tripped (durable)", SCRATCH_LBA);
+    // Fixed-LBA scratch writes are test-image-only: on a real MBR disk those
+    // sectors lie inside the user's root partition.
+    if ext2::on_partition() {
+        kprintln!("THOS: ahci scratch skip real disk — destructive LBA tests not run");
+    } else {
+        const SCRATCH_LBA: u64 = 50_000;
+        let mut wbuf = [0u8; ahci::SECTOR];
+        for (i, b) in wbuf.iter_mut().enumerate() {
+            *b = (i as u8) ^ 0xA5;
+        }
+        ahci::write(SCRATCH_LBA, &wbuf).expect("AHCI write");
+        let mut rbuf = [0u8; ahci::SECTOR];
+        ahci::read(SCRATCH_LBA, &mut rbuf).expect("AHCI read-back");
+        assert!(rbuf == wbuf, "AHCI write / read-back mismatch");
+        kprintln!("THOS: ahci write ok    LBA {} round-tripped (durable)", SCRATCH_LBA);
 
-    // Concurrent NCQ: 8 threads hammer distinct scratch regions at once, so
-    // several tags are outstanding and the drive reorders them.
-    for i in 0..8 {
-        sched::spawn("ncq-io", ncq_io_worker, i);
+        // Concurrent NCQ: 8 threads hammer distinct scratch regions at once, so
+        // several tags are outstanding and the drive reorders them.
+        for i in 0..8 {
+            sched::spawn("ncq-io", ncq_io_worker, i);
+        }
+        while NCQ_DONE.load(Ordering::Relaxed) < 8 {
+            sched::yield_now();
+        }
+        assert_eq!(NCQ_BAD.load(Ordering::Relaxed), 0, "concurrent NCQ I/O corrupted data");
+        kprintln!(
+            "THOS: ahci ncq ok      8 concurrent readers/writers verified (depth {}, {} completion IRQs)",
+            ahci::queue_depth(),
+            ahci::irq_count(),
+        );
+
     }
-    while NCQ_DONE.load(Ordering::Relaxed) < 8 {
-        sched::yield_now();
-    }
-    assert_eq!(NCQ_BAD.load(Ordering::Relaxed), 0, "concurrent NCQ I/O corrupted data");
-    kprintln!(
-        "THOS: ahci ncq ok      8 concurrent readers/writers verified (depth {}, {} completion IRQs)",
-        ahci::queue_depth(),
-        ahci::irq_count(),
-    );
 
     // ext2 write: create a file + a dir + a nested file, read them back through
     // our own read path. `cargo xtask ext2-test` then e2fsck's the image and
@@ -1421,7 +1538,13 @@ fn storage_milestone() {
         );
     }
 
-    // USB keyboard via xHCI -> the line-disciplined console -> fd 0.
+    start_input_devices();
+}
+
+/// Bring up every input device that can feed the console: USB keyboard via
+/// xHCI (if the machine has one) and the i8042 PS/2 keyboard (the laptop
+/// path). Each runs a polling thread that feeds `console::feed_report`.
+fn start_input_devices() {
     match xhci::init() {
         Ok(x) => {
             *XHCI.lock() = Some(x);
@@ -1430,6 +1553,58 @@ fn storage_milestone() {
         }
         Err(e) => kprintln!("THOS: xhci             {}", e),
     }
+
+    // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).
+    match net::init() {
+        Ok(()) => {
+            sched::spawn("net", net::net_thread, 0);
+        }
+        Err(e) => kprintln!("THOS: net              {}", e),
+    }
+    sched::spawn("itimer", itimer::timer_thread, 0);
+
+    // PS/2 keyboard via the i8042 — the laptop target has no xHCI at all.
+    match ps2::init() {
+        Ok(()) => {
+            match ps2::init_mouse() {
+                Ok(()) => kprintln!("THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)"),
+                Err(e) => kprintln!("THOS: ps2 mouse        {}", e),
+            }
+            sched::spawn("ps2-poll", ps2_poll_thread, 0);
+            if ps2::enable_irqs() {
+                kprintln!("THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)");
+            } else {
+                kprintln!("THOS: ps2 ok           i8042 keyboard attached (poll thread up; no IRQ routing)");
+            }
+        }
+        Err(e) => kprintln!("THOS: ps2              {}", e),
+    }
+}
+
+/// Normal (non-`selftest`) boot after the scheduler is up: disk, root
+/// filesystem, registry hives, the Security Service, input devices.
+#[cfg(not(feature = "selftest"))]
+fn boot_system() {
+    if let Err(e) = ahci::init() {
+        fatal_boot("no usable SATA disk (BIOS SATA mode must be AHCI)", e);
+    }
+    let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
+    let hives = registry::load_hives(&fs);
+    kprintln!("THOS: registry ok      {}/3 hives loaded from disk", hives);
+    secsvc::spawn(&fs); // logs and degrades gracefully if /secsvc is absent
+    start_input_devices();
+}
+
+/// A boot failure the user can act on: say what is wrong, then stop. (This is
+/// the screen the user sees on a real machine now that the framebuffer console
+/// mirrors the kernel log — so it must not be a bare `expect` panic.)
+#[allow(dead_code)] // only the normal boot path and the interactive login use it
+fn fatal_boot(what: &str, why: &str) -> ! {
+    kprintln!("");
+    kprintln!("THOS: cannot continue — {what}");
+    kprintln!("THOS:   {why}");
+    exit_qemu(ExitCode::Failed);
+    hcf();
 }
 
 // --- concurrent NCQ I/O check (storage_milestone) ---
@@ -1474,6 +1649,24 @@ extern "C" fn xhci_poll_thread(_: usize) -> ! {
             console::feed_report(r);
         }
         sched::yield_now();
+    }
+}
+
+extern "C" fn ps2_poll_thread(_: usize) -> ! {
+    let mut dec = ps2::Decoder::new();
+    loop {
+        while let Some(b) = ps2::read_scancode() {
+            if let Some(r) = dec.feed(b) {
+                console::feed_report(&r);
+            }
+        }
+        // Poll every ~8 ms instead of spinning: a busy loop here would keep a core at 100 %
+        // on the 2010 laptop. (IRQ-driven input via the IO-APIC is the roadmap's B12.)
+        if ps2::mouse_mid_packet() {
+            sched::yield_now(); // the rest of the packet is ~1 ms away; don't lose it
+        } else {
+            ps2::wait_input(); // blocks until the keyboard/mouse interrupt (or a safety timeout)
+        }
     }
 }
 

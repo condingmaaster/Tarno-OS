@@ -31,6 +31,240 @@ fn main() {
             let iso = build_iso();
             run_qemu(&iso, gui);
         }
+        "bios-image" => {
+            // `--interactive`: the login/shell build (the plain one just halts).
+            build_kernel_prod(if args.iter().any(|a| a == "--interactive") { &["interactive"] } else { &[] });
+            bios_image();
+        }
+        "bios-test" => {
+            build_kernel_prod(&[]);
+            let img = bios_image();
+            bios_test(&img);
+        }
+        "bios-run" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let log = workspace_root().join("target/bios-run-serial.log");
+            println!("serial log: {}", log.display());
+            let _ = Command::new("qemu-system-x86_64")
+                .args(["-M", "pc", "-m", "512M", "-smp", "2", "-display", "gtk", "-vga", "std"])
+                .args([
+                    "-drive", &format!("id=disk0,if=none,format=raw,file={}", img.to_str().unwrap()),
+                    "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+                    "-serial", &format!("file:{}", log.to_str().unwrap()),
+                    "-monitor", &format!("unix:{},server,nowait", workspace_root().join("target/bios-run-mon.sock").to_str().unwrap()),
+                ])
+                .status();
+        }
+        "bios-power-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            for (cmd, needle) in [
+                ("reboot", "THOS: rebooting"),
+                ("poweroff", "THOS: powering off"),
+                ("poweroff -f", "THOS: powering off"),
+            ] {
+                bios_power_test(&img, cmd, needle);
+            }
+            println!("bios-power-test PASSED: reboot / poweroff / poweroff -f end the machine from the shell");
+        }
+        "shortcuts-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            shortcuts_test(&img);
+        }
+        "longcmd-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            longcmd_test(&img);
+        }
+        "mouse-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            mouse_test(&img);
+        }
+        "dyn-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "dyn", "dyntest", "dyn ", 90);
+            let ok = out.lines().find(|l| l.contains("dyn ok:")).map(str::trim);
+            match ok {
+                Some(l) => println!("dyn-test PASSED: {l}"),
+                None => {
+                    for l in out.lines().filter(|l| l.contains("dyn") || l.contains("unhandled") || l.contains("killed") || l.contains("trap") || l.contains("fault")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("dyn-test FAILED");
+                    exit(1);
+                }
+            }
+        }
+        "fb-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            fb_test(&img);
+        }
+        "real-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "real", "/usr/bin/bash /real.sh", "real-script-done", 150);
+            let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
+            let (bash, sed) = (has("bash-hello"), has("aXc"));
+            let grep_count = out.lines().any(|l| l.trim().parse::<u32>().map_or(false, |n| n >= 1))
+                && out.lines().any(|l| l.trim() == "busybox-links=1");
+            if bash && sed && grep_count {
+                println!("real-test PASSED: dynamically linked Debian bash, ls, grep and sed run (ld.so + libc/libtinfo/libselinux/libpcre2)");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(30) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real-test FAILED (bash {bash}, grep|ls {grep_count}, sed {sed})");
+                exit(1);
+            }
+        }
+        "mem-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
+            let ok = out.lines().find(|l| l.contains("mem ok:")).map(str::trim);
+            match ok {
+                Some(l) => println!("mem-test PASSED: {l}"),
+                None => {
+                    for l in out.lines().filter(|l| l.contains("mem ") || l.contains("page fault") || l.contains("unhandled") || l.contains("PANIC")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("mem-test FAILED");
+                    exit(1);
+                }
+            }
+        }
+        "fork-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "fork", "forktest; forktest-static; echo fk-after-$((11))", "fk-after-11", 90);
+            let oks = out.lines().filter(|l| l.contains("fork ok:")).count();
+            let ok = (oks == 2).then(|| "dynamic and static glibc: fork, atexit in the child, exit status");
+            match ok {
+                Some(l) => println!("fork-test PASSED: {l}"),
+                None => {
+                    for l in out.lines().filter(|l| l.contains("fork") || l.contains("atexit") || l.contains("page fault") || l.contains("unhandled")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("fork-test FAILED");
+                    exit(1);
+                }
+            }
+        }
+        "ping-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run_args(
+                &img,
+                "ping",
+                "ping -c 3 10.0.2.2; echo ping-after-$((11))",
+                "ping-after-11",
+                90,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            let replies = out.lines().filter(|l| l.contains("bytes from 10.0.2.2")).count();
+            if replies >= 2 {
+                println!("ping-test PASSED: BusyBox ping got {replies} of 3 echo replies from the gateway (raw ICMP socket)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("ping") || l.contains("PING") || l.contains("bytes") || l.contains("unhandled") || l.contains("packet")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("ping-test FAILED ({replies} replies)");
+                exit(1);
+            }
+        }
+        "dns-test" => {
+            // Needs the host to be online: QEMU's resolver (10.0.2.3) forwards to the host's.
+            use std::net::ToSocketAddrs;
+            if "example.com:80".to_socket_addrs().is_err() {
+                eprintln!("dns-test SKIPPED: the host cannot resolve example.com (offline?)");
+                exit(0);
+            }
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run_args(
+                &img,
+                "dns",
+                "busybox nslookup example.com 10.0.2.3; busybox wget -q -T 15 -O - http://example.com/; echo dns-after-$((11))",
+                "dns-after-11",
+                120,
+                &[
+                    "-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0",
+                    "-object", "filter-dump,id=cap,netdev=n0,file=target/dns.pcap",
+                ],
+            );
+            let fetched = out.lines().any(|l| l.contains("Example Domain"));
+            if fetched {
+                println!("dns-test: BusyBox wget fetched http://example.com/ by name over the internet");
+            }
+            let answered = out.lines().any(|l| l.trim_start().starts_with("Address") && l.contains('.') && !l.contains("10.0.2.3"));
+            if answered {
+                println!("dns-test PASSED: BusyBox nslookup resolved example.com through THOS's UDP stack");
+                for l in out.lines().filter(|l| l.contains("Address") || l.contains("Name")) {
+                    println!("    {}", l.trim());
+                }
+            } else {
+                for l in out.lines().filter(|l| l.contains("nslookup") || l.contains("Address") || l.contains("Name") || l.contains("error") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("dns-test FAILED");
+                exit(1);
+            }
+        }
+        "thr-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
+            let ok = out.lines().find(|l| l.contains("thr ok:")).map(str::trim);
+            let alive = out.lines().any(|l| l.trim() == "thr-after-11");
+            match (ok, alive) {
+                (Some(l), true) => println!("thr-test PASSED: {l}; the shell came back after exit with a running thread"),
+                _ => {
+                    for l in out.lines().filter(|l| l.contains("thr") || l.contains("unhandled") || l.contains("killed") || l.contains("trap") || l.contains("fault")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("thr-test FAILED (threads ok: {}, shell back: {alive})", ok.is_some());
+                    exit(1);
+                }
+            }
+        }
+        "proc-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = boot_and_run(&img, "proc", "cat /proc/version; free; ps; ps; ps; echo zzz-$((11))", "zzz-11", 90);
+            let has = |needle: &str| out.lines().any(|l| l.contains(needle));
+            let (ver, mem, ps_sh) = (has("Linux version"), has("Mem:"), out.lines().any(|l| l.contains("sh") && l.contains("/proc") == false && l.trim_start().starts_with(|c: char| c.is_ascii_digit())));
+            // Three forked `ps` runs must not fault at exit (B17: this used to crash in __run_exit_handlers).
+            let no_fault = !out.contains("page fault");
+            if ver && mem && ps_sh && no_fault {
+                println!("proc-test PASSED: /proc/version, `free` (reads /proc/meminfo) and `ps` (walks /proc/<pid>) work");
+            } else {
+                for l in out.lines().filter(|l| l.contains("Linux") || l.contains("Mem") || l.contains("PID") || l.contains("COMMAND") || l.contains("proc") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("proc-test FAILED (version: {ver}, free: {mem}, ps lists the shell: {ps_sh}, no user fault: {no_fault})");
+                exit(1);
+            }
+        }
+        "net-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            net_test(&img);
+        }
+        "random-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            random_test(&img);
+        }
+        "bios-kbd-test" => {
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            bios_kbd_test(&img);
+        }
         "kbd-test" => {
             build_kernel(&["interactive"]);
             let iso = build_iso();
@@ -105,7 +339,7 @@ fn main() {
         other => {
             eprintln!("unknown command: {other}");
             eprintln!(
-                "usage: cargo xtask [build|iso|run|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
+                "usage: cargo xtask [build|iso|run|bios-image|bios-test|bios-power-test|bios-run|bios-kbd-test|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
             );
             exit(2);
         }
@@ -130,7 +364,22 @@ fn run(cmd: &mut Command) {
     }
 }
 
+/// The kernel *with* the in-kernel self-test suite (`selftest`): what every
+/// legacy `cargo xtask *-test` boots. Needs the test binaries on the disk.
 fn build_kernel(features: &[&str]) {
+    let mut all = vec!["selftest"];
+    all.extend_from_slice(features);
+    build_kernel_raw(&all);
+}
+
+/// The kernel as a user boots it: no self-tests, just bring-up -> mount ->
+/// login -> shell. The `bios-*` commands use this so they exercise the real
+/// boot path.
+fn build_kernel_prod(features: &[&str]) {
+    build_kernel_raw(features);
+}
+
+fn build_kernel_raw(features: &[&str]) {
     let mut c = Command::new(env!("CARGO"));
     c.current_dir(workspace_root())
         .args(["build", "--package", "thos-kernel", "--release"]);
@@ -300,6 +549,27 @@ fn disk_image() -> PathBuf {
         // (`secsvc::spawn`) on every config, stdio wired to the
         // kernel<->service pipes instead of the console. Same recipe.
         ("secsvc.rs", "secsvc"),
+        // `poweroff`/`reboot`/`halt`: one binary, three names under /bin
+        // (dispatch on argv[0]); BusyBox's versions need /proc.
+        ("power.rs", "power"),
+        // Scheduler x87/SSE isolation test, typed in by `kbd-test`.
+        ("fputest.rs", "fputest"),
+        // User-pointer validation test, typed in by `kbd-test`.
+        ("ptrtest.rs", "ptrtest"),
+        // Clock / sleep / timestamp test, typed in by `kbd-test`.
+        ("clocktest.rs", "clocktest"),
+        // POSIX signals test, typed in by `kbd-test`.
+        ("sigtest.rs", "sigtest"),
+        // /dev/null, /dev/zero, /dev/urandom, /dev/tty — typed in by `kbd-test`.
+        ("devtest.rs", "devtest"),
+        // Streaming file I/O test, typed in by `kbd-test`.
+        ("streamtest.rs", "streamtest"),
+        // Socket test, run by `net-test` against host-side servers.
+        ("nettest.rs", "nettest"),
+        // PS/2 mouse test, run by `mouse-test`.
+        ("mousetest.rs", "mousetest"),
+        // getrandom quality test, run by `random-test`.
+        ("randtest.rs", "randtest"),
     ] {
         let rs = root.join("xtask/testdata").join(src);
         let bin = root.join("target").join(name);
@@ -316,6 +586,88 @@ fn disk_image() -> PathBuf {
             "-w", "-R", &format!("write {} {name}", bin.to_str().unwrap()),
             img.to_str().unwrap(),
         ]));
+    }
+
+    // A dynamically linked glibc program plus the host's loader and libc: exercises PIE +
+    // PT_INTERP loading and file-backed mmap. (Debian paths; skipped if gcc/glibc are absent.)
+    {
+        let src = root.join("xtask/testdata/dyntest.c");
+        let bin = root.join("target/dyntest");
+        let ld = "/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2";
+        let libc = "/lib/x86_64-linux-gnu/libc.so.6";
+        let built = Command::new("gcc")
+            .args(["-O1", "-o", bin.to_str().unwrap(), src.to_str().unwrap()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if built && std::path::Path::new(ld).exists() && std::path::Path::new(libc).exists() {
+            for dir in ["lib64", "lib", "lib/x86_64-linux-gnu"] {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("mkdir {dir}"), img.to_str().unwrap()]));
+            }
+            let thr = root.join("target/thrtest");
+            let thr_ok = Command::new("gcc")
+                .args(["-O1", "-pthread", "-o", thr.to_str().unwrap(), root.join("xtask/testdata/thrtest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            let fbd = root.join("target/fbdemo");
+            let fbd_ok = Command::new("gcc")
+                .args(["-O1", "-o", fbd.to_str().unwrap(), root.join("xtask/testdata/fbdemo.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if fbd_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} fbdemo", fbd.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // Real Debian programs, dynamically linked: bash, ls, grep, sed with all their libraries.
+            let mut dirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real.sh", root.join("xtask/testdata/real.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed"] {
+                if std::path::Path::new(prog).exists() {
+                    add_dynamic_program(&img, prog, &mut dirs);
+                }
+            }
+            let mt = root.join("target/memtest");
+            let mt_ok = Command::new("gcc")
+                .args(["-O1", "-o", mt.to_str().unwrap(), root.join("xtask/testdata/memtest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if mt_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} memtest", mt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let fk = root.join("target/forktest");
+            let fk_ok = Command::new("gcc")
+                .args(["-O1", "-o", fk.to_str().unwrap(), root.join("xtask/testdata/forktest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if fk_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} forktest", fk.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // The same program linked statically (like BusyBox): no ld.so, glibc's own startup.
+            let fks = root.join("target/forktest-static");
+            let fks_ok = Command::new("gcc")
+                .args(["-O1", "-static", "-o", fks.to_str().unwrap(), root.join("xtask/testdata/forktest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if fks_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} forktest-static", fks.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            if thr_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thrtest", thr.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            for (from, to) in [
+                (bin.to_str().unwrap(), "dyntest"),
+                (ld, "lib64/ld-linux-x86-64.so.2"),
+                (libc, "lib/x86_64-linux-gnu/libc.so.6"),
+            ] {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {from} {to}"), img.to_str().unwrap()]));
+            }
+        } else {
+            println!("note: gcc / glibc not found — the dynamic-loader test will not be in the image");
+        }
     }
 
     // A real, unmodified statically-linked BusyBox -> /busybox (Milestone 2:
@@ -408,6 +760,15 @@ fn disk_image() -> PathBuf {
         "busybox", "ls", "cat", "echo", "pwd", "mkdir", "rmdir", "rm", "cp", "mv",
         "ln", "touch", "head", "tail", "wc", "grep", "sort", "uniq", "true", "false",
         "env", "sleep", "clear", "sh",
+        // power + everyday tools (`reboot`/`poweroff`/`halt` are our own
+        // `power.rs` test binary below, not BusyBox's /proc-based ones)
+        "sync", "uname", "id", "whoami", "date", "ps",
+        "kill", "chmod", "chown", "df", "free", "find", "sed", "awk", "tr", "cut",
+        "basename", "dirname", "stat", "du", "od", "hexdump", "vi", "more", "less",
+        "which", "test", "expr", "tar", "reset", "hostname", "uptime", "xargs", "tee", "dd",
+        // network + archive tools
+        "wget", "nc", "nslookup", "ping", "telnet", "gzip", "gunzip", "zcat", "unzip", "bzip2", "xz",
+        "diff", "patch", "top",
     ];
     run(Command::new("debugfs").args(["-w", "-R", "mkdir /bin", img.to_str().unwrap()]));
     for app in APPLETS {
@@ -420,6 +781,40 @@ fn disk_image() -> PathBuf {
     let links = 1 + APPLETS.len();
     run(Command::new("debugfs").args([
         "-w", "-R", &format!("sif /busybox links_count {links}"),
+        img.to_str().unwrap(),
+    ]));
+    // Our own power tools (one binary, three names) — see `testdata/power.rs`.
+    let script = root.join("target/power-install.cmds");
+    let pbin = root.join("target/power");
+    std::fs::write(
+        &script,
+        format!(
+            "cd /bin\nwrite {p} reboot\nwrite {p} poweroff\nwrite {p} halt\n",
+            p = pbin.to_str().unwrap()
+        ),
+    )
+    .unwrap();
+    run(Command::new("debugfs").args(["-w", "-f", script.to_str().unwrap(), img.to_str().unwrap()]));
+
+    // Long-command-line fixture for `longcmd-test`: builds a ~22 KB and a ~180 KB
+    // argument list by repeated doubling and hands each to an external `/bin/echo`
+    // (an execve). The first must work, the second must fail with E2BIG.
+    let longargs = root.join("target/longargs.sh");
+    std::fs::write(
+        &longargs,
+        "a=abcdefghij\n\
+         big=$a; i=0\n\
+         while [ $i -lt 11 ]; do big=\"$big $big\"; i=$((i+1)); done\n\
+         echo \"LONGARGS-SMALL $(/bin/echo $big | /bin/wc -c)\"\n\
+         big=$a; i=0\n\
+         while [ $i -lt 14 ]; do big=\"$big $big\"; i=$((i+1)); done\n\
+         /bin/echo $big | /bin/wc -c\n\
+         echo \"LONGARGS-BIG-RC $?\"\n\
+         echo LONGARGS-DONE\n",
+    )
+    .unwrap();
+    run(Command::new("debugfs").args([
+        "-w", "-R", &format!("write {} longargs.sh", longargs.to_str().unwrap()),
         img.to_str().unwrap(),
     ]));
 
@@ -3121,8 +3516,20 @@ fn type_line(sock: &Path, text: &str) {
             '|' => "altgr-less", // DE: AltGr + the key left of Y
             '>' => "shift-less", // DE: Shift + the key left of Y (plain = `<`)
             '$' => "shift-4",
+            ';' => "shift-comma",
+            ':' => "shift-dot",
             '(' => "shift-8",
             ')' => "shift-9",
+            // QWERTZ: the physical Y and Z keys are swapped relative to the US
+            // names QEMU's `sendkey` uses, so typing `y` needs the `z` key.
+            'y' => "z",
+            'z' => "y",
+            'Y' => "shift-z",
+            'Z' => "shift-y",
+            c if c.is_ascii_uppercase() => {
+                mon(sock, &format!("sendkey shift-{}", c.to_ascii_lowercase()));
+                continue;
+            }
             _ => {
                 mon(sock, &format!("sendkey {c}"));
                 continue;
@@ -3187,6 +3594,41 @@ fn kbd_test(iso: &Path) {
     // Wait for the last command's output rather than a fixed sleep — the host
     // running CI can be slow enough that a 2 MiB BusyBox applet takes seconds.
     let _ = wait_for(&log, "hello a file read via open+lseek+read", 30);
+
+    // x87/SSE isolation: 12 forked children (more than the 4 vCPUs) each hold
+    // a private pattern in xmm0-7 while the timer preempts them.
+    type_line(&sock, "fputest");
+    let _ = wait_for(&log, "fpu ", 150);
+
+    // User-pointer validation: kernel / unmapped addresses as buffers, paths,
+    // argv, out-parameters must all be refused with EFAULT, never dereferenced.
+    type_line(&sock, "ptrtest");
+    let _ = wait_for(&log, "ptr ", 60);
+
+    // A real clock: RTC-backed wall time (compared with the host's), monotonic
+    // time that matches nanosleep, and file timestamps.
+    type_line(&sock, "clocktest");
+    let _ = wait_for(&log, "clock ", 90);
+
+    // POSIX signals: handlers, masks, SIGKILL on a busy loop, EINTR, SA_RESTART, SIGPIPE.
+    type_line(&sock, "sigtest");
+    let _ = wait_for(&log, "sig ", 90);
+
+    // Character devices under /dev.
+    type_line(&sock, "devtest");
+    let _ = wait_for(&log, "dev ", 60);
+
+    // Streaming file I/O: a 1 MiB file written in 4 KiB steps and read back piecewise.
+    type_line(&sock, "streamtest");
+    let _ = wait_for(&log, "stream ", 120);
+
+    // Ctrl+C reaches the foreground process: `sleep 100` is interrupted, the shell lives on.
+    type_line(&sock, "sleep 100");
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    mon(&sock, "sendkey ctrl-c");
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    type_line(&sock, "echo ctrlc-$((1+1))");
+    let _ = wait_for(&log, "ctrlc-2", 20);
 
     // Capability policy: the logged-in session is uid 1000 (`thos`, per
     // `drive_login`); `/etc/thos/admin.cred` is owned by uid 0 (the system
@@ -3259,6 +3701,22 @@ fn kbd_test(iso: &Path) {
         let tail = after.rsplit("thos$ ls\n").next().unwrap_or("");
         tail.contains("newfile") && tail.contains("newdir")
     };
+    let fpu_ok = after.contains("fpu ok");
+    let ptr_ok = after.contains("ptr ok");
+    // The guest's wall clock must be within two minutes of the host's.
+    let clock_ok = after.contains("clock ok") && {
+        let guest = after
+            .split("clock ok: real=")
+            .nth(1)
+            .and_then(|r| r.split_whitespace().next())
+            .and_then(|n| n.parse::<i64>().ok())
+            .unwrap_or(0);
+        let host = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        (host - guest).abs() < 120
+    };
     let elevate_ok = after.contains("elevated-check uid=0");
     let sak_denied_ok = after.contains("THOS: SAK denied");
     let sak_accepted_ok = after.contains("THOS: SAK accepted");
@@ -3270,6 +3728,9 @@ fn kbd_test(iso: &Path) {
         && ls_ok
         && cwd_ok
         && cat_ok
+        && fpu_ok
+        && ptr_ok
+        && clock_ok
         && perm_ok
         && create_ok
         && elevate_ok
@@ -3278,11 +3739,11 @@ fn kbd_test(iso: &Path) {
         && sak_spawn_ok
     {
         println!(
-            "kbd-test: OK — `init`, BusyBox applets, per-process cwd (cd/pwd/ls), DAC write denial, O_CREAT/mkdir, elevate(), SAK trusted path"
+            "kbd-test: OK — `init`, BusyBox applets, per-process cwd (cd/pwd/ls), private x87/SSE state across preemption, user-pointer validation (EFAULT), RTC-backed clock + sleep + file mtimes, DAC write denial, O_CREAT/mkdir, elevate(), SAK trusted path"
         );
     } else {
         eprintln!(
-            "kbd-test: FAIL (shell_ok={shell_ok} ls_ok={ls_ok} cwd_ok={cwd_ok} cat_ok={cat_ok} perm_ok={perm_ok} create_ok={create_ok} elevate_ok={elevate_ok} sak_denied_ok={sak_denied_ok} sak_accepted_ok={sak_accepted_ok} sak_spawn_ok={sak_spawn_ok})\n---\n{after}\n---"
+            "kbd-test: FAIL (shell_ok={shell_ok} ls_ok={ls_ok} cwd_ok={cwd_ok} cat_ok={cat_ok} fpu_ok={fpu_ok} ptr_ok={ptr_ok} clock_ok={clock_ok} perm_ok={perm_ok} create_ok={create_ok} elevate_ok={elevate_ok} sak_denied_ok={sak_denied_ok} sak_accepted_ok={sak_accepted_ok} sak_spawn_ok={sak_spawn_ok})\n---\n{after}\n---"
         );
         exit(1);
     }
@@ -3333,6 +3794,673 @@ fn login_test(iso: &Path) {
         eprintln!("login-test: FAIL — ok2={ok2}, setup_ran_again={}", full2.contains("first-run setup"));
         exit(1);
     }
+}
+
+/// A legacy-BIOS / MBR disk image — the Acer Aspire 5742G boot path (no UEFI,
+/// no CSM, MS-DOS partition table). Layout: 1 MiB gap (MBR + Limine stage 2 via
+/// `limine bios-install`), partition 1 = 64 MiB FAT32 `/boot` (active; Limine's
+/// stage 3 `limine-bios.sys`, `limine.conf`, the kernel — Limine does not read
+/// our ext2 here), partition 2 = type-0x83 ext2 root FS (same content as
+/// `disk.img`). Needs `mkfs.fat` (dosfstools), `mtools` and e2fsprogs on PATH.
+fn bios_image() -> PathBuf {
+    const GAP_SECTORS: u64 = 2048;
+    const BOOT_MIB: u64 = 64;
+    let root = workspace_root();
+    let limine = root.join("third_party/limine");
+    if !limine.join("limine-bios.sys").exists() {
+        eprintln!("Limine not vendored. Run:");
+        eprintln!("  git submodule update --init third_party/limine && make -C third_party/limine");
+        exit(1);
+    }
+    let boot = root.join("target/bios-boot.img");
+    let b = boot.to_str().unwrap();
+    let _ = std::fs::remove_file(&boot);
+    std::fs::write(&boot, vec![0u8; (BOOT_MIB << 20) as usize]).expect("create boot partition");
+    run(Command::new("mkfs.fat").args(["-F", "32", "-n", "THOSBOOT", b]));
+    run(Command::new("mmd").args(["-i", b, "::boot", "::boot/limine"]));
+    for (src, dst) in [
+        (limine.join("limine-bios.sys"), "::boot/"),
+        (kernel_elf(), "::boot/"),
+        (root.join("boot/limine.conf"), "::boot/limine/"),
+    ] {
+        run(Command::new("mcopy").args(["-i", b, src.to_str().unwrap(), dst]));
+    }
+
+    // Always start from a pristine root FS: other tests (`kbd-test`, ...) boot
+    // `target/disk.img` itself and leave an admin account / hives behind, which
+    // would turn the next first-run setup into a login prompt.
+    let _ = std::fs::remove_file(root.join("target/disk.img"));
+    let rootfs = std::fs::read(disk_image()).expect("read disk.img");
+    let boot_bytes = std::fs::read(&boot).expect("read boot partition");
+    let boot_secs = boot_bytes.len() as u64 / 512;
+    let root_secs = rootfs.len() as u64 / 512;
+    let root_start = GAP_SECTORS + boot_secs;
+
+    let mut disk = vec![0u8; (GAP_SECTORS * 512) as usize];
+    // Entries: CHS left at the 0xFE 0xFF 0xFF "use LBA" sentinel.
+    for (i, (active, ptype, start, len)) in [
+        (0x80u8, 0x0Cu8, GAP_SECTORS, boot_secs),
+        (0x00, 0x83, root_start, root_secs),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let e = 0x1BE + i * 16;
+        disk[e] = active;
+        disk[e + 1..e + 4].copy_from_slice(&[0xFE, 0xFF, 0xFF]);
+        disk[e + 4] = ptype;
+        disk[e + 5..e + 8].copy_from_slice(&[0xFE, 0xFF, 0xFF]);
+        disk[e + 8..e + 12].copy_from_slice(&(start as u32).to_le_bytes());
+        disk[e + 12..e + 16].copy_from_slice(&(len as u32).to_le_bytes());
+    }
+    disk[510] = 0x55;
+    disk[511] = 0xAA;
+    disk.extend_from_slice(&boot_bytes);
+    disk.extend_from_slice(&rootfs);
+
+    let img = root.join("target/thos-bios.img");
+    std::fs::write(&img, &disk).expect("write bios image");
+    // Stage 1 into the MBR code area (partition table preserved), stage 2 into
+    // the gap.
+    run(Command::new(limine.join("limine")).arg("bios-install").arg(&img));
+    img
+}
+
+/// Boot the MBR image under SeaBIOS (no OVMF, no UEFI) on an AHCI disk with a
+/// PS/2 keyboard and assert the legacy path works end to end.
+fn bios_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/bios-test.log");
+    let _ = std::fs::remove_file(&log);
+    let mut qemu = Command::new("qemu-system-x86_64");
+    // `-cpu max`: the richest TCG model (SMEP, SMAP, RDRAND, ...), so the feature
+    // paths the default qemu64 model skips (SMEP enabled, RDRAND salts) also boot.
+    qemu.args(["-M", "pc", "-cpu", "max", "-m", "512M", "-smp", "2"]);
+    qemu.args([
+        "-drive", &format!("id=disk0,if=none,format=raw,file={}", img.to_str().unwrap()),
+        "-device", "ahci,id=ahci0",
+        "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+        "-serial", &format!("file:{}", log.to_str().unwrap()),
+        "-display", "none", "-no-reboot",
+        "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
+    ]);
+    let status = qemu.status().unwrap_or_else(|e| {
+        eprintln!("failed to spawn qemu: {e}");
+        exit(1);
+    });
+    let out = std::fs::read_to_string(&log).unwrap_or_default();
+    let mut ok = status.code() == Some(QEMU_SUCCESS);
+    for needle in ["THOS: ext2 part", "THOS: ps2 ok", "THOS: ahci ident", "THOS: SMEP             enabled"] {
+        let hit = out.contains(needle);
+        println!("  {} {needle}", if hit { "ok  " } else { "FAIL" });
+        ok &= hit;
+    }
+    if !ok {
+        eprintln!("bios-test FAILED (qemu status {status:?}); serial log: {}", log.display());
+        exit(1);
+    }
+    println!("bios-test PASSED: BIOS/MBR boot, root FS in a partition, PS/2 keyboard up");
+}
+
+/// Boot, log in over PS/2, run `cmd` in the shell and require that the machine
+/// goes away by itself (QEMU exits — `-no-reboot` turns a reset into an exit) and
+/// that the ACPI path was used, not the emulator-port fallback.
+fn bios_power_test(img: &Path, cmd: &str, needle: &str) {
+    let root = workspace_root();
+    let log = root.join("target/bios-power-serial.log");
+    let sock = root.join("target/bios-power-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    // Each run starts from a pristine copy so first-run setup appears again.
+    let run_img = root.join("target/bios-power.img");
+    std::fs::copy(img, &run_img).expect("copy image");
+    let mut child = Command::new("qemu-system-x86_64")
+        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args([
+            "-drive", &format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+            "-display", "none", "-no-reboot",
+            "-serial", &format!("file:{}", log.to_str().unwrap()),
+            "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
+        ])
+        .spawn()
+        .expect("spawn qemu");
+    if !wait_for(&log, "THOS first-run setup", 90) {
+        kill(&mut child, "bios-power-test", "kernel never reached first-run setup", &log);
+    }
+    drive_login(&sock, &log, &mut child, "bios-power-test");
+    if !wait_for(&log, "interactive hold", 90) {
+        kill(&mut child, "bios-power-test", "never reached the shell after login", &log);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    type_line(&sock, cmd);
+    if !wait_for(&log, needle, 20) {
+        kill(&mut child, "bios-power-test", &format!("`{cmd}` never reached the kernel"), &log);
+    }
+    let start = std::time::Instant::now();
+    let exited = loop {
+        if let Ok(Some(_)) = child.try_wait() {
+            break true;
+        }
+        if start.elapsed().as_secs() > 15 {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    let out = std::fs::read_to_string(&log).unwrap_or_default();
+    // The *only* reliable evidence that the ACPI S5 path (FADT PM1 control block
+    // + `\_S5_` from the DSDT) was used is the kernel having found it at boot.
+    // (Checking for the "safe to switch off" fallback message is a race: QEMU
+    // stops the guest asynchronously, so it may or may not get printed. Also,
+    // under QEMU's PIIX4 the emulator fallback port *is* the PM1a control port.)
+    let acpi = out.contains("THOS: power ok");
+    if !exited {
+        let _ = child.kill();
+        let _ = child.wait();
+        eprintln!("bios-power-test FAILED: `{cmd}` did not end the machine; log: {}", log.display());
+        exit(1);
+    }
+    if cmd.starts_with("poweroff") && !acpi {
+        eprintln!("bios-power-test FAILED: the kernel found no ACPI S5 data, `{cmd}` can only have used an emulator port; log: {}", log.display());
+        exit(1);
+    }
+    println!("  ok   `{cmd}`");
+}
+
+/// Console keyboard shortcuts, end to end on the real boot path: PS/2 chords go
+/// through the i8042 decoder -> `console::feed_report` -> line discipline /
+/// framebuffer text model. Checks Ctrl+U (kill line), mark mode + copy + paste
+/// (Ctrl+Shift+Space / arrows / Enter / Ctrl+Shift+V), select-all + copy +
+/// paste, and Ctrl+D (end the session -> back to the login prompt).
+fn shortcuts_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/shortcuts-serial.log");
+    let sock = root.join("target/shortcuts-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let run_img = root.join("target/shortcuts.img");
+    std::fs::copy(img, &run_img).expect("copy image");
+    let mut child = Command::new("qemu-system-x86_64")
+        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args([
+            "-drive", &format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+            "-display", "none", "-no-reboot",
+            "-serial", &format!("file:{}", log.to_str().unwrap()),
+            "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
+        ])
+        .spawn()
+        .expect("spawn qemu");
+    let key = |k: &str| mon(&sock, &format!("sendkey {k}"));
+    let settle = |ms: u64| std::thread::sleep(std::time::Duration::from_millis(ms));
+    let text = |l: &Path| std::fs::read_to_string(l).unwrap_or_default();
+
+    if !wait_for(&log, "THOS first-run setup", 90) {
+        kill(&mut child, "shortcuts-test", "no first-run setup", &log);
+    }
+    drive_login(&sock, &log, &mut child, "shortcuts-test");
+    if !wait_for(&log, "interactive hold", 90) {
+        kill(&mut child, "shortcuts-test", "no shell", &log);
+    }
+    settle(800);
+    let mut fails: Vec<String> = Vec::new();
+
+    // 1. Ctrl+U discards the half-typed line: "abc" is gone, so `echo uok42`
+    //    runs as itself and prints uok42 at the start of a line.
+    for c in ["a", "b", "c"] { key(c); }
+    key("ctrl-u");
+    settle(300);
+    type_line(&sock, "echo uok42");
+    if !wait_for(&log, "\nuok42", 15) || text(&log).contains("abcecho") {
+        fails.push("Ctrl+U did not discard the typed line".into());
+    }
+
+    // 2. Mark mode: start at the cursor (prompt row), Up to the output line,
+    //    Home, Enter copies; then Ctrl+Shift+V types it back in.
+    type_line(&sock, "echo pasteme");
+    wait_for(&log, "\npasteme", 15);
+    settle(500);
+    let before = text(&log).matches("pasteme").count();
+    key("ctrl-shift-spc");
+    key("up");
+    key("home");
+    key("ret");
+    settle(300);
+    key("ctrl-shift-v");
+    settle(800);
+    let after = text(&log).matches("pasteme").count();
+    if after <= before {
+        fails.push(format!("mark+copy+paste typed nothing back (pasteme x{before} -> x{after})"));
+    }
+    key("ctrl-u");
+    settle(300);
+
+    // 3. Select all + copy + paste: the whole text model comes back as typed
+    //    input, which includes an early boot line a second time. (The first two
+    //    boot lines predate the framebuffer console, so they are not in its model.)
+    let boots = text(&log).matches("THOS: GDT + IDT loaded").count();
+    key("ctrl-shift-a");
+    key("ctrl-shift-c");
+    settle(300);
+    key("ctrl-shift-v");
+    settle(1500);
+    let boots2 = text(&log).matches("THOS: GDT + IDT loaded").count();
+    if boots2 <= boots {
+        fails.push(format!("select-all+copy+paste did not reproduce the scrollback ({boots} -> {boots2})"));
+    }
+    key("ctrl-u");
+    settle(500);
+
+    // 4. Ctrl+D on an empty line ends the shell; the session returns to login.
+    let logins = text(&log).matches("THOS login:").count();
+    key("ctrl-d");
+    if !wait_for(&log, "THOS: session ended", 20) || text(&log).matches("THOS login:").count() <= logins {
+        fails.push("Ctrl+D did not end the session / return to the login prompt".into());
+    }
+
+    let _ = child.kill();
+    let _ = child.wait();
+    if fails.is_empty() {
+        println!("shortcuts-test PASSED: Ctrl+U, mark/copy/paste, select-all/copy/paste, Ctrl+D -> login");
+    } else {
+        for f in &fails {
+            eprintln!("  FAIL {f}");
+        }
+        eprintln!("shortcuts-test FAILED; log: {}", log.display());
+        exit(1);
+    }
+}
+
+/// Very long command lines against the kernel's exec limits (real boot path):
+/// a ~22 KB argument list must be delivered intact, a ~180 KB one must be
+/// refused with E2BIG ("Argument list too long") — not truncated silently, not a
+/// kernel panic — and the system must still be alive afterwards.
+fn longcmd_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/longcmd-serial.log");
+    let sock = root.join("target/longcmd-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let run_img = root.join("target/longcmd.img");
+    std::fs::copy(img, &run_img).expect("copy image");
+    let mut child = Command::new("qemu-system-x86_64")
+        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args([
+            "-drive", &format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+            "-display", "none", "-no-reboot",
+            "-serial", &format!("file:{}", log.to_str().unwrap()),
+            "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
+        ])
+        .spawn()
+        .expect("spawn qemu");
+    if !wait_for(&log, "THOS first-run setup", 90) {
+        kill(&mut child, "longcmd-test", "no first-run setup", &log);
+    }
+    drive_login(&sock, &log, &mut child, "longcmd-test");
+    if !wait_for(&log, "interactive hold", 90) {
+        kill(&mut child, "longcmd-test", "no shell", &log);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    type_line(&sock, "/busybox sh /longargs.sh");
+    let done = wait_for(&log, "LONGARGS-DONE", 120);
+    let out = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let mut fails: Vec<String> = Vec::new();
+    if !done {
+        // (`THOS trap: #BP` is the benign breakpoint self-check at every boot.)
+        let crashed = out.contains("THOS PANIC")
+            || out.lines().any(|l| l.contains("THOS trap:") && !l.contains("#BP"));
+        fails.push(if crashed {
+            "the kernel crashed on a very long command line".into()
+        } else {
+            "the script never finished (hang)".into()
+        });
+    }
+    // 2048 words of 10 chars + 2047 blanks + newline = 22528 bytes, intact.
+    if !out.contains("LONGARGS-SMALL 22528") {
+        fails.push("the ~22 KB argument list was not delivered intact (truncated?)".into());
+    }
+    if !out.contains("Argument list too long") {
+        fails.push("the ~180 KB argument list was not refused with E2BIG".into());
+    }
+    if fails.is_empty() {
+        println!("longcmd-test PASSED: 22 KB argv intact, 180 KB argv refused with E2BIG, kernel alive");
+    } else {
+        for f in &fails {
+            eprintln!("  FAIL {f}");
+        }
+        eprintln!("longcmd-test FAILED; log: {}", log.display());
+        exit(1);
+    }
+}
+
+/// Boot the real boot path, log in over PS/2, run `cmd`, and return the serial log once
+/// `needle` appears (or after `secs`). Each call is a fresh boot of a pristine copy.
+fn boot_and_run(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64) -> String {
+    boot_and_run_args(img, tag, cmd, needle, secs, &[])
+}
+
+/// [`boot_and_run`] with extra QEMU arguments (e.g. a NIC).
+fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, extra: &[&str]) -> String {
+    let root = workspace_root();
+    let log = root.join(format!("target/{tag}-serial.log"));
+    let sock = root.join(format!("target/{tag}-mon.sock"));
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let run_img = root.join(format!("target/{tag}.img"));
+    std::fs::copy(img, &run_img).expect("copy image");
+    let mut child = Command::new("qemu-system-x86_64")
+        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args([
+            "-drive", &format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+            "-display", "none", "-no-reboot",
+            "-serial", &format!("file:{}", log.to_str().unwrap()),
+            "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
+        ])
+        .args(extra)
+        .spawn()
+        .expect("spawn qemu");
+    if !wait_for(&log, "THOS first-run setup", 90) {
+        kill(&mut child, tag, "no first-run setup", &log);
+    }
+    drive_login(&sock, &log, &mut child, tag);
+    if !wait_for(&log, "interactive hold", 90) {
+        kill(&mut child, tag, "no shell", &log);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    type_line(&sock, cmd);
+    let _ = wait_for(&log, needle, secs);
+    let out = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = child.kill();
+    let _ = child.wait();
+    out
+}
+
+/// `getrandom` quality, and that two boots do not produce the same stream.
+/// virtio-net + smoltcp: boot with QEMU user-mode networking; the kernel's net thread must
+/// find the NIC, resolve the gateway by ARP and get an ICMP echo reply from it.
+fn net_test(img: &Path) {
+    use std::io::{Read, Write};
+    // Host-side servers the guest reaches as 10.0.2.2 (QEMU user networking = host loopback).
+    let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("tcp bind");
+    let udp = std::net::UdpSocket::bind("127.0.0.1:0").expect("udp bind");
+    let (tcp_port, udp_port) = (tcp.local_addr().unwrap().port(), udp.local_addr().unwrap().port());
+    // QEMU's user networking reaches the host through its loopback interface. If `lo` is
+    // down (it happens: some network tools take it down) every host-bound connection times
+    // out, which looks like a guest bug. Say so instead.
+    if std::net::TcpStream::connect_timeout(&tcp.local_addr().unwrap(), std::time::Duration::from_secs(2)).is_err() {
+        eprintln!("net-test SKIPPED: the host's loopback interface cannot reach its own listener (is `lo` down?).");
+        eprintln!("                  Fix with: sudo ip link set lo up    (QEMU user networking needs it)");
+        exit(0);
+    }
+    std::thread::spawn(move || {
+        for conn in tcp.incoming() {
+            if let Ok(mut c) = conn {
+                let mut buf = [0u8; 256];
+                let _ = c.read(&mut buf);
+                let _ = c.write_all(b"HTTP/1.0 200 OK\r\n\r\nTHOS-NET-OK-TCP\n");
+            }
+        }
+    });
+    std::thread::spawn(move || {
+        let mut buf = [0u8; 512];
+        while let Ok((n, from)) = udp.recv_from(&mut buf) {
+            let mut reply = b"echo:".to_vec();
+            reply.extend_from_slice(&buf[..n]);
+            let _ = udp.send_to(&reply, from);
+        }
+    });
+    // Westmere-class CPU, small RAM: the reference machine is a 2010 laptop.
+    let out = boot_and_run_args(
+        img,
+        "net",
+        &format!("nettest {tcp_port} {udp_port}; busybox wget -q -O - http://10.0.2.2:{tcp_port}/; cat /etc/resolv.conf"),
+        "nameserver",
+        90,
+        &[
+            "-cpu", "Westmere",
+            "-netdev", "user,id=n0",
+            "-device", "virtio-net-pci,netdev=n0",
+            // Keep a capture of the guest's traffic: the first thing to look at when a socket test fails.
+            "-object", "filter-dump,id=cap,netdev=n0,file=target/net.pcap",
+        ],
+    );
+    let gw = out.lines().find(|l| l.contains("THOS: net ok")).map(str::trim);
+    let sock = out.lines().find(|l| l.contains("net-sock ok")).map(str::trim);
+    // The HTTP body must also appear as the *output* of BusyBox wget (a line of its own).
+    let wget = out.lines().any(|l| l.trim() == "THOS-NET-OK-TCP");
+    let dns = out.lines().any(|l| l.trim() == "nameserver 10.0.2.3");
+    if gw.is_some() && sock.is_some() && wget && dns {
+        println!("net-test PASSED: {}", gw.unwrap());
+        println!("                 {}", sock.unwrap());
+        println!("                 BusyBox wget fetched the page from the host; DHCP lease + resolv.conf (nameserver 10.0.2.3)");
+    } else {
+        for l in out.lines().filter(|l| l.contains("net")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("net-test FAILED (gateway ping: {}, sockets: {}, wget: {})", gw.is_some(), sock.is_some(), wget);
+        exit(1);
+    }
+}
+
+/// PS/2 mouse: the guest reads /dev/input/mice while the host moves the pointer and presses
+/// the left button through the QEMU monitor.
+fn mouse_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/mouse-serial.log");
+    let sock = root.join("target/mouse-mon.sock");
+    let (tlog, tsock) = (log.clone(), sock.clone());
+    std::thread::spawn(move || {
+        if wait_for(&tlog, "mouse ready", 200) {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            for _ in 0..6 {
+                mon(&tsock, "mouse_move 12 6");
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+            mon(&tsock, "mouse_button 1");
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            mon(&tsock, "mouse_button 0");
+            for _ in 0..3 {
+                mon(&tsock, "mouse_move -5 -5");
+                std::thread::sleep(std::time::Duration::from_millis(80));
+            }
+        }
+    });
+    let out = boot_and_run(img, "mouse", "mousetest", "mouse ok:", 60);
+    let ok = out.lines().find(|l| l.contains("mouse ok:")).map(str::trim);
+    if let Some(l) = ok {
+        println!("mouse-test PASSED: {l}");
+    } else {
+        for l in out.lines().filter(|l| l.contains("mouse")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("mouse-test FAILED");
+        exit(1);
+    }
+}
+
+/// Desktop stage 2: a userspace program draws on /dev/fb0 and a cursor follows the PS/2 mouse.
+/// The host moves the pointer through the QEMU monitor, takes a screendump and checks the pixels.
+fn fb_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/fb-serial.log");
+    let sock = root.join("target/fb-mon.sock");
+    let shot = root.join("target/fb-screen.ppm");
+    let _ = std::fs::remove_file(&shot);
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        if wait_for(&tlog, "fb ready", 200) {
+            std::thread::sleep(std::time::Duration::from_millis(2500)); // the demo draws after a second
+            for _ in 0..6 {
+                mon(&tsock, "mouse_move 10 6");
+                std::thread::sleep(std::time::Duration::from_millis(120));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(800));
+            mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            mon(&tsock, "sendkey ret"); // lets the demo finish and print its result
+        }
+    });
+    let out = boot_and_run(img, "fb", "fbdemo", "fb ok:", 90);
+    // parse the PPM (P6)
+    let data = std::fs::read(&shot).unwrap_or_default();
+    let mut it = data.splitn(2, |&b| b == b'\n');
+    let magic = it.next().unwrap_or(&[]).to_vec();
+    let rest = it.next().unwrap_or(&[]);
+    let mut hdr_end = 0;
+    let mut nl = 0;
+    for (i, &b) in rest.iter().enumerate() {
+        if b == b'\n' {
+            nl += 1;
+            if nl == 2 {
+                hdr_end = i + 1;
+                break;
+            }
+        }
+    }
+    let header = String::from_utf8_lossy(&rest[..hdr_end]).to_string();
+    let nums: Vec<usize> = header.split_whitespace().filter_map(|t| t.parse().ok()).collect();
+    let pixels = &rest[hdr_end..];
+    let pix = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h) = (*nums.first()?, *nums.get(1)?);
+        if x >= w || y >= h {
+            return None;
+        }
+        let i = (y * w + x) * 3;
+        Some((*pixels.get(i)?, *pixels.get(i + 1)?, *pixels.get(i + 2)?))
+    };
+    let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| {
+        a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24)
+    };
+    let cursor_end = out.lines().find(|l| l.contains("fb ok:")).map(str::trim);
+    let mmap_ok = out.lines().any(|l| l.trim() == "fb mmap ok");
+    // the cursor starts at (400,300) and the mouse moved +60 right and +36 down
+    let rect_ok = &magic == b"P6" && near(pix(200, 500), (255, 136, 0));
+    let cursor_ok = near(pix(400 + 60 + 4, 300 + 36 + 4), (255, 0, 255)) && near(pix(404, 304), (0, 0, 0));
+    if rect_ok && cursor_ok && mmap_ok && cursor_end.is_some() {
+        println!("fb-test PASSED: {}", cursor_end.unwrap());
+        println!("                orange rectangle (drawn through an mmap of the framebuffer) and the magenta cursor (write) are on screen where the mouse put them");
+    } else {
+        eprintln!("  screendump header {:?}, demo said {:?}", header.trim(), cursor_end);
+        eprintln!("  rectangle pixel {:?}, cursor pixel {:?}, old cursor spot {:?}", pix(200, 500), pix(464, 340), pix(404, 304));
+        eprintln!("fb-test FAILED (rectangle {rect_ok}, cursor {cursor_ok}, mmap {mmap_ok})");
+        exit(1);
+    }
+}
+
+/// Copy a dynamically linked host program and every library `ldd` lists for it into the image
+/// at the same paths (so `ld.so`'s default search finds them). Returns the libraries copied.
+fn add_dynamic_program(img: &Path, host_path: &str, dirs_done: &mut std::collections::BTreeSet<String>) -> usize {
+    let out = Command::new("env")
+        .args(["-u", "LD_PRELOAD", "ldd", host_path])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_default();
+    let mut files: Vec<String> = vec![host_path.to_string()];
+    for tok in out.split_whitespace() {
+        if tok.starts_with('/') && std::path::Path::new(tok).exists() {
+            files.push(tok.to_string());
+        }
+    }
+    files.sort();
+    files.dedup();
+    let mk = |dir: &str, dirs_done: &mut std::collections::BTreeSet<String>| {
+        // debugfs has no `mkdir -p`: create every prefix once
+        let mut cur = String::new();
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            cur.push('/');
+            cur.push_str(part);
+            if dirs_done.insert(cur.clone()) {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {cur}"), img.to_str().unwrap()]).output();
+            }
+        }
+    };
+    let mut n = 0;
+    for f in &files {
+        let real = std::fs::canonicalize(f).unwrap_or_else(|_| f.into());
+        // the image path keeps the *name the program asks for* (the symlink), the bytes come from the real file
+        let dest = if f.starts_with("/lib64/") { f.clone() } else { f.clone() };
+        if let Some(dir) = std::path::Path::new(&dest).parent() {
+            mk(dir.to_str().unwrap(), dirs_done);
+        }
+        let _ = Command::new("debugfs").args(["-w", "-R", &format!("rm {dest}"), img.to_str().unwrap()]).output();
+        let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} {dest}", real.to_str().unwrap()), img.to_str().unwrap()]).output();
+        n += 1;
+    }
+    n
+}
+
+fn random_test(img: &Path) {
+    let first = |out: &str| {
+        out.split("first=").nth(1).and_then(|r| r.split_whitespace().next()).map(String::from)
+    };
+    let a = boot_and_run(img, "rand-a", "randtest", "rand ", 60);
+    let b = boot_and_run(img, "rand-b", "randtest", "rand ", 60);
+    let (fa, fb) = (first(&a), first(&b));
+    let mut fails: Vec<String> = Vec::new();
+    for (n, out) in [("boot A", &a), ("boot B", &b)] {
+        if !out.contains("rand ok") {
+            fails.push(format!("{n}: statistical checks failed or randtest did not run"));
+        }
+        if !out.contains("ChaCha20 CSPRNG seeded") {
+            fails.push(format!("{n}: kernel did not report seeding the CSPRNG"));
+        }
+    }
+    if fa.is_none() || fa == fb {
+        fails.push(format!("the two boots produced the same random stream ({fa:?} vs {fb:?})"));
+    }
+    if fails.is_empty() {
+        println!("random-test PASSED: CSPRNG seeded, statistics sane, boots differ ({} vs {})", fa.unwrap(), fb.unwrap());
+    } else {
+        for f in &fails {
+            eprintln!("  FAIL {f}");
+        }
+        eprintln!("random-test FAILED");
+        exit(1);
+    }
+}
+
+/// BIOS/MBR boot with **only** a PS/2 keyboard (no USB controller at all, like
+/// the Acer): QEMU `sendkey` goes through the i8042, first-run setup + login +
+/// `init` are typed on it and must work.
+fn bios_kbd_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/bios-kbd-serial.log");
+    let sock = root.join("target/bios-kbd-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let mut child = Command::new("qemu-system-x86_64")
+        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args([
+            "-drive", &format!("id=disk0,if=none,format=raw,file={}", img.to_str().unwrap()),
+            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
+            "-display", "none", "-no-reboot",
+            "-serial", &format!("file:{}", log.to_str().unwrap()),
+            "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
+        ])
+        .spawn()
+        .expect("spawn qemu");
+    if !wait_for(&log, "THOS first-run setup", 90) {
+        kill(&mut child, "bios-kbd-test", "kernel never reached first-run setup", &log);
+    }
+    drive_login(&sock, &log, &mut child, "bios-kbd-test");
+    if !wait_for(&log, "interactive hold", 90) {
+        kill(&mut child, "bios-kbd-test", "never reached the shell after login", &log);
+    }
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    type_line(&sock, "cat /message");
+    let ok = wait_for(&log, "hello a file read via open+lseek+read", 30);
+    let _ = child.kill();
+    let _ = child.wait();
+    if !ok {
+        eprintln!("bios-kbd-test FAILED: typed command had no effect; log: {}", log.display());
+        exit(1);
+    }
+    println!("bios-kbd-test PASSED: BIOS/MBR boot, PS/2 typing -> login -> shell -> cat from the root partition");
 }
 
 fn run_qemu(iso: &Path, gui: bool) {

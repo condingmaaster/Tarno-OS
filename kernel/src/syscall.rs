@@ -21,7 +21,8 @@ use x86_64::VirtAddr;
 
 #[cfg(feature = "interactive")]
 use crate::cred;
-use crate::{ext2, gdt, kprintln, process, sched, smp};
+use crate::usercopy::{self, EFAULT};
+use crate::{ext2, gdt, kprintln, power, process, sched, signal, smp, sock_sys};
 
 static USER_EXITS: AtomicU64 = AtomicU64::new(0);
 
@@ -113,11 +114,49 @@ const SYS_MPROTECT: u64 = 10;
 const SYS_MADVISE: u64 = 28;
 const SYS_MUNMAP: u64 = 11;
 const SYS_KILL: u64 = 62;
+const SYS_REBOOT: u64 = 169;
+const SYS_GETTIMEOFDAY: u64 = 96;
 const SYS_UNAME: u64 = 63;
 const SYS_GETCWD: u64 = 79;
 const SYS_READLINK: u64 = 89;
 const SYS_RT_SIGRETURN: u64 = 15;
 const SYS_SIGALTSTACK: u64 = 131;
+const SYS_SOCKET: u64 = 41;
+const SYS_SENDMSG: u64 = 46;
+const SYS_RECVMSG: u64 = 47;
+const SYS_RECVMMSG: u64 = 299;
+const SYS_SENDMMSG: u64 = 307;
+const SYS_CONNECT: u64 = 42;
+const SYS_ACCEPT: u64 = 43;
+const SYS_SENDTO: u64 = 44;
+const SYS_RECVFROM: u64 = 45;
+const SYS_SHUTDOWN: u64 = 48;
+const SYS_BIND: u64 = 49;
+const SYS_LISTEN: u64 = 50;
+const SYS_GETSOCKNAME: u64 = 51;
+const SYS_GETPEERNAME: u64 = 52;
+const SYS_SETSOCKOPT: u64 = 54;
+const SYS_GETSOCKOPT: u64 = 55;
+const SYS_ACCEPT4: u64 = 288;
+const SYS_PAUSE: u64 = 34;
+const SYS_MINCORE: u64 = 27;
+const SYS_STATFS: u64 = 137;
+const SYS_FSTATFS: u64 = 138;
+const SYS_STATX: u64 = 332;
+const SYS_FSYNC: u64 = 74;
+const SYS_FDATASYNC: u64 = 75;
+const SYS_SELECT: u64 = 23;
+const SYS_PSELECT6: u64 = 270;
+const SYS_ALARM: u64 = 37;
+const SYS_GETITIMER: u64 = 36;
+const SYS_SETITIMER: u64 = 38;
+const SYS_GETRLIMIT: u64 = 97;
+const SYS_ACCESS: u64 = 21;
+const SYS_FACCESSAT: u64 = 269;
+const SYS_PREAD64: u64 = 17;
+const SYS_RT_SIGPENDING: u64 = 127;
+const SYS_RT_SIGSUSPEND: u64 = 130;
+const SYS_GETSID: u64 = 124;
 const SYS_GETTID: u64 = 186;
 const SYS_FUTEX: u64 = 202;
 const SYS_SCHED_GETAFFINITY: u64 = 204;
@@ -128,6 +167,8 @@ const SYS_PPOLL: u64 = 271;
 const SYS_READLINKAT: u64 = 267;
 
 const ENOSYS: i64 = -38;
+const ENOEXEC: i64 = -8;
+const E2BIG: i64 = -7;
 const EBADF: i64 = -9;
 const ECHILD: i64 = -10;
 #[allow(dead_code)]
@@ -291,18 +332,252 @@ fn cur_fd(fd: u64) -> Option<alloc::sync::Arc<dyn crate::file::FileOps>> {
 fn sys_write(fd: u64, ptr: u64, len: u64) -> i64 {
     match cur_fd(fd) {
         Some(f) => {
-            let bytes = unsafe { core::slice::from_raw_parts(ptr as *const u8, len as usize) };
-            f.write(bytes)
+            match usercopy::slice(ptr, len as usize) {
+                Ok(bytes) => f.write(bytes),
+                Err(e) => e,
+            }
         }
         None => EBADF,
     }
 }
 
+/// `mmap(addr, len, prot, flags, fd, off)`: anonymous or file-backed (private copy),
+/// optionally at a fixed address. Enough for `ld.so` and for `malloc`.
+fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i64 {
+    const MAP_FIXED: u64 = 0x10;
+    const MAP_ANON: u64 = 0x20;
+    const ENOMEM: i64 = -12;
+    if len == 0 || len > 1 << 36 {
+        return EINVAL;
+    }
+    let fixed = flags & MAP_FIXED != 0;
+    if fixed && (addr & 0xFFF != 0 || addr < 0x10000 || addr.saturating_add(len) >= usercopy::USER_TOP) {
+        return EINVAL;
+    }
+    if off & 0xFFF != 0 {
+        return EINVAL;
+    }
+    let Some(proc) = sched::current_proc() else { return EINVAL };
+    // A real memory limit would go here; for now refuse absurd requests of free RAM.
+    if len > crate::mm::FRAME_ALLOC.lock().free_frames() * 4096 && prot != 0 {
+        return ENOMEM;
+    }
+    let data: Option<alloc::vec::Vec<u8>> = if flags & MAP_ANON != 0 {
+        None
+    } else {
+        let Some(f) = cur_fd(fd) else { return EBADF };
+        if let Some((phys, dev_len)) = f.device_phys() {
+            // device memory (the framebuffer): shared, not copied
+            if off >= dev_len {
+                return EINVAL;
+            }
+            return proc.mmap_device(addr, fixed, len.min(dev_len - off), prot, phys + off) as i64;
+        }
+        let save = f.seek(0, 1);
+        if f.seek(off as i64, 0) < 0 {
+            return EINVAL;
+        }
+        let mut buf = alloc::vec![0u8; len as usize];
+        let mut got = 0usize;
+        while got < buf.len() {
+            let n = f.read(&mut buf[got..]);
+            if n <= 0 {
+                break;
+            }
+            got += n as usize;
+        }
+        buf.truncate(got);
+        if save >= 0 {
+            f.seek(save, 0);
+        }
+        Some(buf)
+    };
+    proc.mmap_region(addr, fixed, len, prot, data.as_deref()) as i64
+}
+
+/// `prlimit64(pid, resource, new, old)` / `getrlimit(resource, rlim)`: report the limits (new
+/// limits are accepted and ignored). The numbers matter: glibc sizes thread stacks from
+/// `RLIMIT_STACK`, so garbage here means absurd allocations.
+fn sys_prlimit(resource: u64, _new: u64, old: u64) -> i64 {
+    const INF: u64 = u64::MAX;
+    let (cur, max) = match resource {
+        3 => (8 << 20, INF),     // RLIMIT_STACK: 8 MiB
+        7 => (1024, 4096),       // RLIMIT_NOFILE
+        4 => (0, INF),           // RLIMIT_CORE
+        6 => (4096, 4096),       // RLIMIT_NPROC (small: no fork bombs)
+        _ => (INF, INF),
+    };
+    if old != 0 {
+        if let Err(e) = usercopy::write_u64(old, cur) {
+            return e;
+        }
+        if let Err(e) = usercopy::write_u64(old.wrapping_add(8), max) {
+            return e;
+        }
+    }
+    0
+}
+
+/// `readlink(path, buf, size)`: only `/proc/<pid>/exe` is a symlink here.
+fn sys_readlink(path_ptr: u64, buf: u64, size: u64) -> i64 {
+    let raw = match usercopy::cstr(path_ptr, 4096) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let path = process::resolve_path(&raw);
+    match crate::procfs::readlink(&path) {
+        Some(target) => {
+            let n = target.len().min(size as usize);
+            match usercopy::slice_mut(buf, n) {
+                Ok(b) => {
+                    b.copy_from_slice(&target.as_bytes()[..n]);
+                    n as i64
+                }
+                Err(e) => e,
+            }
+        }
+        None => EINVAL,
+    }
+}
+
+/// `mincore(addr, len, vec)`: for every page of the range, 1 if it is mapped (everything mapped is
+/// resident — THOS never swaps), and `ENOMEM` as soon as a page is not mapped. Programs use that
+/// error to probe whether an address range is valid, so it must be real.
+fn sys_mincore(addr: u64, len: u64, vec: u64) -> i64 {
+    if addr & 0xFFF != 0 {
+        return EINVAL;
+    }
+    let Some(proc) = sched::current_proc() else { return EINVAL };
+    let pages = (len as usize).div_ceil(4096);
+    let Ok(out) = usercopy::slice_mut(vec, pages) else { return EFAULT };
+    for (i, b) in out.iter_mut().enumerate() {
+        if proc.translate(addr + 4096 * i as u64).is_none() {
+            return -12; // ENOMEM: part of the range is not mapped
+        }
+        *b = 1;
+    }
+    0
+}
+
+/// `statfs(path, buf)` / `fstatfs(fd, buf)`: the root filesystem's numbers (one filesystem).
+fn sys_statfs(buf: u64) -> i64 {
+    let Some(fs) = ext2::open().ok() else { return -5 };
+    let (bs, blocks, free, inodes, free_inodes) = fs.stats();
+    match usercopy::slice_mut(buf, 120) {
+        Ok(b) => {
+            b.fill(0);
+            let put = |b: &mut [u8], off: usize, v: u64| b[off..off + 8].copy_from_slice(&v.to_le_bytes());
+            put(b, 0, 0xEF53); // f_type: ext2
+            put(b, 8, bs as u64);
+            put(b, 16, blocks as u64);
+            put(b, 24, free as u64);
+            put(b, 32, free as u64); // f_bavail
+            put(b, 40, inodes as u64);
+            put(b, 48, free_inodes as u64);
+            put(b, 64, 255); // f_namelen
+            put(b, 72, bs as u64); // f_frsize
+            0
+        }
+        Err(e) => e,
+    }
+}
+
+/// `statx(dirfd, path, flags, mask, buf)` — the same information as `stat`, in `struct statx`
+/// (256 bytes). Paths are resolved against the cwd (`dirfd` only matters with `AT_EMPTY_PATH`).
+fn sys_statx(dirfd: u64, path_ptr: u64, flags: u64, buf: u64) -> i64 {
+    const AT_EMPTY_PATH: u64 = 0x1000;
+    let raw = match usercopy::cstr(path_ptr, 4096) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
+    // (mode, size, ino, uid, gid, atime, mtime, ctime)
+    let info: (u32, u64, u64, u32, u32, u32, u32, u32) = if raw.is_empty() && flags & AT_EMPTY_PATH != 0 {
+        let Some(f) = cur_fd(dirfd) else { return EBADF };
+        let (mode, size) = f.stat();
+        let (a, m, c) = f.times();
+        (mode, size, f.ino(), 0, 0, a, m, c)
+    } else {
+        let path = process::resolve_path(&raw);
+        if crate::procfs::is_proc(&path) {
+            let Some(f) = crate::procfs::open(&path) else { return ENOENT };
+            let (mode, size) = f.stat();
+            (mode, size, 0, 0, 0, 0, 0, 0)
+        } else if path.starts_with("/dev/") {
+            let Some(f) = crate::file::open_device(&path, true, false) else { return ENOENT };
+            let (mode, size) = f.stat();
+            (mode, size, 0, 0, 0, 0, 0, 0)
+        } else {
+            let Some(fs) = ext2::open().ok() else { return -5 };
+            let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+            let n = fs.read_inode(ino);
+            (n.mode as u32, n.size, ino as u64, n.uid, n.gid, n.atime, n.mtime, n.ctime)
+        }
+    };
+    match usercopy::slice_mut(buf, 256) {
+        Ok(b) => {
+            b.fill(0);
+            b[0..4].copy_from_slice(&0x7ffu32.to_le_bytes()); // stx_mask: the basic stats
+            b[4..8].copy_from_slice(&4096u32.to_le_bytes()); // stx_blksize
+            b[16..20].copy_from_slice(&1u32.to_le_bytes()); // stx_nlink
+            b[20..24].copy_from_slice(&info.3.to_le_bytes());
+            b[24..28].copy_from_slice(&info.4.to_le_bytes());
+            b[28..30].copy_from_slice(&(info.0 as u16).to_le_bytes());
+            b[32..40].copy_from_slice(&info.2.to_le_bytes());
+            b[40..48].copy_from_slice(&info.1.to_le_bytes());
+            b[48..56].copy_from_slice(&info.1.div_ceil(512).to_le_bytes());
+            b[64..72].copy_from_slice(&(info.5 as i64).to_le_bytes()); // atime
+            b[96..104].copy_from_slice(&(info.7 as i64).to_le_bytes()); // ctime
+            b[112..120].copy_from_slice(&(info.6 as i64).to_le_bytes()); // mtime
+            b[136..140].copy_from_slice(&0u32.to_le_bytes()); // dev major
+            b[140..144].copy_from_slice(&1u32.to_le_bytes()); // dev minor
+            0
+        }
+        Err(e) => e,
+    }
+}
+
+/// `access(path, mode)` / `faccessat`: does the path exist, and may the caller use it so?
+fn sys_access(path_ptr: u64, mode: u64) -> i64 {
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if path.starts_with("/dev/") {
+        return if crate::file::open_device(&path, true, false).is_some() { 0 } else { ENOENT };
+    }
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return -5 };
+    let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+    let node = fs.read_inode(ino);
+    // mode bits: R_OK 4, W_OK 2, X_OK 1 (F_OK 0 only asks for existence)
+    if (mode & 4 != 0 && !node.access_ok(task.uid, task.gid, false))
+        || (mode & 2 != 0 && !node.access_ok(task.uid, task.gid, true))
+    {
+        return EACCES;
+    }
+    0
+}
+
+/// `pread64(fd, buf, count, offset)`: read at an offset without moving the file position.
+fn sys_pread64(fd: u64, ptr: u64, len: u64, off: u64) -> i64 {
+    let Some(f) = cur_fd(fd) else { return EBADF };
+    let Ok(buf) = usercopy::slice_mut(ptr, len as usize) else { return EFAULT };
+    let save = f.seek(0, 1);
+    if save < 0 || f.seek(off as i64, 0) < 0 {
+        return -29; // ESPIPE
+    }
+    let n = f.read(buf);
+    f.seek(save, 0);
+    n
+}
+
 fn sys_read(fd: u64, ptr: u64, len: u64) -> i64 {
     match cur_fd(fd) {
         Some(f) => {
-            let buf = unsafe { core::slice::from_raw_parts_mut(ptr as *mut u8, len as usize) };
-            f.read(buf)
+            match usercopy::slice_mut(ptr, len as usize) {
+                Ok(buf) => f.read(buf),
+                Err(e) => e,
+            }
         }
         None => EBADF,
     }
@@ -313,6 +588,9 @@ fn sys_read(fd: u64, ptr: u64, len: u64) -> i64 {
 /// `flags` marks both fds close-on-exec.
 fn sys_pipe(fds_ptr: u64, flags: u64) -> i64 {
     let Some(task) = sched::current().task() else { return EBADF };
+    if !usercopy::user_ok(fds_ptr, 8, true) {
+        return EFAULT;
+    }
     let cloexec = flags & 0o2000000 != 0;
     let (r, w) = crate::file::pipe();
     let rf: alloc::sync::Arc<dyn crate::file::FileOps> = r;
@@ -327,7 +605,10 @@ fn sys_pipe(fds_ptr: u64, flags: u64) -> i64 {
 }
 
 fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
-    let path = process::resolve_path(&user_cstr(path_ptr));
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let Some(fs) = ext2::open().ok() else { return EIO };
     let r = if dir { fs.rmdir_path(&path) } else { fs.unlink_path(&path) };
     match r {
@@ -341,7 +622,10 @@ fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
 }
 
 fn sys_open(path_ptr: u64, flags: u64) -> i64 {
-    open_resolved(&process::resolve_path(&user_cstr(path_ptr)), flags)
+    match user_path(path_ptr) {
+        Ok(p) => open_resolved(&p, flags),
+        Err(e) => e,
+    }
 }
 
 /// `mkdir(path, mode)` — `mode` isn't honoured yet (new directories are
@@ -349,7 +633,10 @@ fn sys_open(path_ptr: u64, flags: u64) -> i64 {
 /// what's new here is a real owner (the calling task's uid) instead of the
 /// permanent system uid every directory got before this increment.
 fn sys_mkdir(path_ptr: u64) -> i64 {
-    let path = process::resolve_path(&user_cstr(path_ptr));
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
     // Same rule as O_CREAT in `open_resolved`: creating an entry is a write
@@ -374,7 +661,10 @@ fn sys_mkdir(path_ptr: u64) -> i64 {
 /// permission bits, checked here (`ext2::chmod_path` itself does no check —
 /// see its doc comment).
 fn sys_chmod(path_ptr: u64, mode: u64) -> i64 {
-    let path = process::resolve_path(&user_cstr(path_ptr));
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
     let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
@@ -390,7 +680,10 @@ fn sys_chmod(path_ptr: u64, mode: u64) -> i64 {
 /// `chown(path, uid, gid)` — root-only (matches modern Unix: even the owner
 /// can't give a file away), stricter than `chmod`'s owner-or-root.
 fn sys_chown(path_ptr: u64, uid: u64, gid: u64) -> i64 {
-    let path = process::resolve_path(&user_cstr(path_ptr));
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let Some(task) = sched::current().task() else { return EBADF };
     if task.uid != 0 {
         return EPERM;
@@ -436,7 +729,10 @@ fn sys_elevate(path_ptr: u64, argv_ptr: u64, password_ptr: u64) -> i64 {
     if !stored.verify(&stored.name, &password) {
         return EACCES;
     }
-    let path = process::resolve_path(&user_cstr(path_ptr));
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let Some(bytes) = fs.read_path(&path) else { return ENOENT };
     let argv = user_cstr_array(argv_ptr);
     let argv_refs: alloc::vec::Vec<&str> = argv.iter().map(alloc::string::String::as_str).collect();
@@ -461,6 +757,12 @@ const O_EXCL: u64 = 0o200;
 /// path is `EEXIST`, same as Linux. `O_CREAT` against an existing path with
 /// no `O_EXCL` is a no-op (POSIX: the flag is ignored).
 pub fn open_resolved(path: &str, flags: u64) -> i64 {
+    if crate::procfs::is_proc(path) && flags & 0x3 == 0 {
+        return open_proc(path);
+    }
+    if let Some(r) = open_dev(path, flags & 0x3 != 1, flags & 0x3 != 0) {
+        return r;
+    }
     if flags & O_CREAT != 0 {
         let Some(task) = sched::current().task() else {
             return EBADF;
@@ -487,6 +789,22 @@ pub fn open_resolved(path: &str, flags: u64) -> i64 {
     open_resolved_access(path, accmode != 1, accmode != 0)
 }
 
+/// A path under `/proc`: a generated file or directory.
+fn open_proc(path: &str) -> i64 {
+    let Some(task) = sched::current().task() else { return EBADF };
+    match crate::procfs::open(path) {
+        Some(f) => task.fd_alloc(f) as i64,
+        None => ENOENT,
+    }
+}
+
+/// `/dev/null` & co: `Some(fd)` if `path` is a virtual device node.
+fn open_dev(path: &str, want_read: bool, want_write: bool) -> Option<i64> {
+    let dev = crate::file::open_device(path, want_read, want_write)?;
+    let task = sched::current().task()?;
+    Some(task.fd_alloc(dev) as i64)
+}
+
 /// The directory component of an absolute path (`"/"` for a top-level name).
 fn parent_of(path: &str) -> Option<&str> {
     let idx = path.rfind('/')?;
@@ -501,9 +819,21 @@ fn parent_of(path: &str) -> Option<&str> {
 /// (`Inode::access_ok`) — the DAC check every file open goes through now,
 /// not just a mode-bits-ignored lookup.
 pub fn open_resolved_access(path: &str, want_read: bool, want_write: bool) -> i64 {
+    if crate::procfs::is_proc(path) && !want_write {
+        return open_proc(path);
+    }
+    if let Some(r) = open_dev(path, want_read, want_write) {
+        return r;
+    }
     let Some(task) = sched::current().task() else {
         return EBADF;
     };
+    // The resolver configuration is generated from the DHCP lease (read-only, virtual).
+    if path == "/etc/resolv.conf" && !want_write {
+        if let Some(text) = crate::net::resolv_conf() {
+            return task.fd_alloc(crate::file::Ext2File::new(path.into(), text.into_bytes())) as i64;
+        }
+    }
     let Some(fs) = ext2::open().ok() else { return EIO };
     let Some(ino) = fs.path_lookup(path) else { return ENOENT };
     let node = fs.read_inode(ino);
@@ -518,7 +848,11 @@ pub fn open_resolved_access(path: &str, want_read: bool, want_write: bool) -> i6
             fs.read_dir(ino).into_iter().map(|(i, t, n)| (i as u64, t, n)).collect();
         task.fd_alloc(crate::file::DirFile::new(&entries)) as i64
     } else {
-        task.fd_alloc(crate::file::Ext2File::new(path.into(), fs.read_file(&node))) as i64
+        if !want_write && node.size > crate::file::STREAM_THRESHOLD {
+            // big and read-only: stream it instead of loading it all
+            return task.fd_alloc(crate::file::Ext2Stream::new(fs, ino, &node)) as i64;
+        }
+        task.fd_alloc(crate::file::Ext2File::new(path.into(), fs.read_file(&node)).with_ino(ino as u64)) as i64
     }
 }
 
@@ -526,16 +860,37 @@ pub fn open_resolved_access(path: &str, want_read: bool, want_write: bool) -> i6
 /// blksize @56, blocks @64. Everything else zero.
 fn sys_fstat(fd: u64, buf: u64) -> i64 {
     let Some(f) = cur_fd(fd) else { return EBADF };
+    fstat_into(&*f, buf)
+}
+
+fn fstat_into(f: &dyn crate::file::FileOps, buf: u64) -> i64 {
+    if !usercopy::user_ok(buf, 144, true) {
+        return EFAULT;
+    }
     let (mode, size) = f.stat();
     unsafe {
         core::ptr::write_bytes(buf as *mut u8, 0, 144);
+        *(buf as *mut u64) = 1; // st_dev: one filesystem
+        *((buf + 8) as *mut u64) = f.ino(); // st_ino
         *((buf + 16) as *mut u64) = 1; // st_nlink
         *((buf + 24) as *mut u32) = mode;
         *((buf + 48) as *mut i64) = size as i64;
         *((buf + 56) as *mut i64) = 4096; // st_blksize
         *((buf + 64) as *mut i64) = ((size + 511) / 512) as i64;
     }
+    let (a, m, c) = f.times();
+    fill_stat_times(buf, a, m, c);
     0
+}
+
+/// `st_atim` / `st_mtim` / `st_ctim` of the x86-64 `struct stat` (each a
+/// `timespec`: seconds at +0, nanoseconds at +8) at offsets 72 / 88 / 104.
+fn fill_stat_times(buf: u64, atime: u32, mtime: u32, ctime: u32) {
+    unsafe {
+        *((buf + 72) as *mut i64) = atime as i64;
+        *((buf + 88) as *mut i64) = mtime as i64;
+        *((buf + 104) as *mut i64) = ctime as i64;
+    }
 }
 
 /// Minimal terminal `ioctl`: report a canonical-mode line discipline with the
@@ -545,6 +900,19 @@ fn sys_fstat(fd: u64, buf: u64) -> i64 {
 fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
     if cur_fd(fd).is_none() {
         return EBADF;
+    }
+    // Every command below writes a fixed-size struct through `arg`.
+    let need = match cmd {
+        0x4600 | 0x4602 => 0, // checked by the device
+        0x5401 => 36,
+        0x5413 => 8,
+        0x5421 => 4,
+        0x540f => 4,
+        _ => 0,
+    };
+    let need = if cmd == 0x5410 { 0 } else { need };
+    if need > 0 && !usercopy::user_ok(arg, need, true) {
+        return EFAULT;
     }
     match cmd {
         0x5401 => unsafe {
@@ -566,16 +934,33 @@ fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
         },
         0x5402 | 0x5403 | 0x5404 => 0, // TCSETS / TCSETSW / TCSETSF
         0x5413 => unsafe {
-            // TIOCGWINSZ
-            *(arg as *mut [u16; 4]) = [25, 80, 0, 0];
+            // TIOCGWINSZ: rows, cols of the framebuffer console (25x80 without one)
+            let (cols, rows) = crate::fbcon::size();
+            *(arg as *mut [u16; 4]) = [rows as u16, cols as u16, 0, 0];
             0
         },
         0x540f => unsafe {
-            // TIOCGPGRP
-            *(arg as *mut u32) = process::current_pid() as u32;
+            // TIOCGPGRP: the foreground process group of the console
+            *(arg as *mut u32) = signal::FG_PGRP.load(Ordering::Relaxed) as u32;
             0
         },
-        0x5410 => 0, // TIOCSPGRP
+        0x4600 | 0x4602 => cur_fd(fd).map_or(EBADF, |f| f.ioctl(cmd, arg)), // fbdev geometry
+        0x5421 => {
+            // FIONBIO
+            let on = usercopy::read_u32(arg).unwrap_or(0) != 0;
+            if let Some(f) = cur_fd(fd) {
+                f.set_nonblock(on);
+            }
+            0
+        }
+        0x5410 => match usercopy::read_u32(arg) {
+            // TIOCSPGRP (job-control shells make a child's group the foreground one)
+            Ok(g) => {
+                signal::FG_PGRP.store(g as u64, Ordering::Relaxed);
+                0
+            }
+            Err(e) => e,
+        },
         _ => ENOTTY,
     }
 }
@@ -588,6 +973,9 @@ fn sys_sendfile(out_fd: u64, in_fd: u64, off_ptr: u64, count: u64) -> i64 {
     let (Some(src), Some(dst)) = (cur_fd(in_fd), cur_fd(out_fd)) else {
         return EBADF;
     };
+    if off_ptr != 0 && !usercopy::user_ok(off_ptr, 8, true) {
+        return EFAULT;
+    }
     if off_ptr != 0 {
         let start = unsafe { *(off_ptr as *const i64) };
         if src.seek(start, crate::file::SEEK_SET) < 0 {
@@ -633,54 +1021,170 @@ fn sys_sendfile(out_fd: u64, in_fd: u64, off_ptr: u64, count: u64) -> i64 {
 /// cwd (a real `dirfd` other than `AT_FDCWD` is not honoured), plus
 /// `AT_EMPTY_PATH` fstat.
 fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
-    let raw = user_cstr(path_ptr);
+    let raw = match usercopy::cstr(path_ptr, 4096) {
+        Ok(r) => r,
+        Err(e) => return e,
+    };
     if raw.is_empty() && flags & 0x1000 != 0 {
         return sys_fstat(dirfd, buf);
     }
     let path = process::resolve_path(&raw);
+    if !usercopy::user_ok(buf, 144, true) {
+        return EFAULT;
+    }
+    if crate::procfs::is_proc(&path) {
+        let Some(f) = crate::procfs::open(&path) else { return ENOENT };
+        return fstat_into(&*f, buf);
+    }
     let Some(fs) = ext2::open().ok() else { return -5 /* EIO */ };
     let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
     let node = fs.read_inode(ino);
     unsafe {
         core::ptr::write_bytes(buf as *mut u8, 0, 144);
+        *(buf as *mut u64) = 1; // st_dev
+        *((buf + 8) as *mut u64) = ino as u64; // st_ino
         *((buf + 16) as *mut u64) = 1;
         *((buf + 24) as *mut u32) = node.mode as u32;
         *((buf + 48) as *mut i64) = node.size as i64;
         *((buf + 56) as *mut i64) = 4096;
         *((buf + 64) as *mut i64) = ((node.size + 511) / 512) as i64;
     }
+    fill_stat_times(buf, node.atime, node.mtime, node.ctime);
     0
 }
 
-/// Read a NUL-terminated string from user memory (we're under the caller's CR3).
-fn user_cstr(ptr: u64) -> alloc::string::String {
-    let mut s = alloc::vec::Vec::new();
-    let mut p = ptr as *const u8;
-    for _ in 0..4096 {
-        let b = unsafe { *p };
-        if b == 0 {
-            break;
-        }
-        s.push(b);
-        p = unsafe { p.add(1) };
-    }
-    alloc::string::String::from_utf8_lossy(&s).into_owned()
+/// A path argument, resolved against the cwd. A pointer that is not valid user
+/// memory is `EFAULT` — **not** the empty string, which would silently mean "the
+/// current directory".
+fn user_path(ptr: u64) -> Result<alloc::string::String, i64> {
+    Ok(process::resolve_path(&usercopy::cstr(ptr, 4096)?))
 }
 
-/// Read a NULL-terminated array of user string pointers.
+/// Read a NUL-terminated string from user memory (at most 4 KiB; a bad pointer
+/// reads as the empty string, which every caller already treats as "no such
+/// file" — nothing outside the user half is ever touched).
+fn user_cstr(ptr: u64) -> alloc::string::String {
+    usercopy::cstr(ptr, 4096).unwrap_or_default()
+}
+
+/// Most bytes `execve` accepts for argv + envp together (strings, their NULs and
+/// the pointer arrays). The initial process stack is 64 KiB and also has to hold
+/// the auxiliary vector and leave the program room to run, so this is 48 KiB —
+/// Linux's equivalent is a quarter of the stack limit, up to `ARG_MAX`.
+const EXEC_ARG_LIMIT: usize = 48 * 1024;
+/// Most entries in argv or envp.
+const EXEC_ARGC_MAX: usize = 8192;
+/// Longest single argument string.
+const EXEC_STR_MAX: usize = 32 * 1024;
+
+/// Read a NULL-terminated array of user string pointers for `execve`, charging
+/// every string against `budget`. Unlike [`user_cstr_array`] this never truncates:
+/// a list that does not fit is `E2BIG`, so the new program can't silently see a
+/// shortened command line (and `init_stack` can never be asked to write past the
+/// stack it mapped).
+fn user_exec_args(ptr: u64, budget: &mut usize) -> Result<alloc::vec::Vec<alloc::string::String>, i64> {
+    let mut out = alloc::vec::Vec::new();
+    if ptr == 0 {
+        return Ok(out);
+    }
+    for i in 0..=EXEC_ARGC_MAX as u64 {
+        let sp = usercopy::read_u64(ptr.checked_add(i * 8).ok_or(EFAULT)?)?;
+        if sp == 0 {
+            return Ok(out);
+        }
+        if out.len() == EXEC_ARGC_MAX {
+            return Err(E2BIG);
+        }
+        let bytes = match usercopy::cstr_bytes(sp, EXEC_STR_MAX) {
+            Ok(b) => b,
+            Err(-36) => return Err(E2BIG), // longer than EXEC_STR_MAX
+            Err(e) => return Err(e),
+        };
+        let cost = bytes.len() + 1 + 8; // string + NUL + its pointer slot
+        if cost > *budget {
+            return Err(E2BIG);
+        }
+        *budget -= cost;
+        out.push(alloc::string::String::from_utf8_lossy(&bytes).into_owned());
+    }
+    Err(E2BIG)
+}
+
+/// Nanoseconds on Linux clock `id`, or `None` for an unknown clock. Realtime-like
+/// clocks (REALTIME, REALTIME_COARSE, REALTIME_ALARM, TAI) give wall-clock time; all
+/// the others (MONOTONIC*, BOOTTIME*, the CPU-time clocks — approximated) count from boot.
+fn clock_ns(id: u64) -> Option<u64> {
+    match id {
+        0 | 5 | 8 | 11 => Some(crate::timer::realtime_ns()),
+        1 | 2 | 3 | 4 | 6 | 7 | 9 => Some(crate::timer::monotonic_ns()),
+        _ => None,
+    }
+}
+
+/// `nanosleep` / `clock_nanosleep` (`flags & 1` = `TIMER_ABSTIME`).
+fn sys_nanosleep(clock: u64, flags: u64, req: u64, rem: u64) -> i64 {
+    let (Ok(sec), Ok(nsec)) = (usercopy::read_u64(req), usercopy::read_u64(req.wrapping_add(8))) else {
+        return EFAULT;
+    };
+    let (sec, nsec) = (sec as i64, nsec as i64);
+    if sec < 0 || !(0..1_000_000_000).contains(&nsec) {
+        return EINVAL;
+    }
+    let want = (sec as u64).saturating_mul(1_000_000_000).saturating_add(nsec as u64);
+    let ns = if flags & 1 != 0 {
+        let Some(now) = clock_ns(clock) else { return EINVAL };
+        want.saturating_sub(now) // absolute deadline
+    } else {
+        if clock_ns(clock).is_none() {
+            return EINVAL;
+        }
+        want
+    };
+    let left = crate::timer::sleep_ns(ns);
+    if rem != 0 && flags & 1 == 0 {
+        let _ = usercopy::write_u64(rem, left / 1_000_000_000);
+        let _ = usercopy::write_u64(rem.wrapping_add(8), left % 1_000_000_000);
+    }
+    if left > 0 { signal::EINTR } else { 0 }
+}
+
+/// `execve(path, argv, envp)`. Does not return on success.
+fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let mut budget = EXEC_ARG_LIMIT;
+    let argv = match user_exec_args(argv_ptr, &mut budget) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    let envp = match user_exec_args(envp_ptr, &mut budget) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match ext2::open().ok().and_then(|fs| fs.read_path(&path)) {
+        // Not something we can run (a script, a text file, a truncated
+        // binary): ENOEXEC lets the shell fall back instead of the kernel dying
+        // inside `execve`'s own `expect`.
+        Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
+        Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
+        None => ENOENT,
+    }
+}
+
+/// Read a NULL-terminated array of user string pointers (at most 256 entries;
+/// used by `elevate`, whose argv is tiny).
 fn user_cstr_array(ptr: u64) -> alloc::vec::Vec<alloc::string::String> {
     let mut out = alloc::vec::Vec::new();
     if ptr == 0 {
         return out;
     }
-    let mut p = ptr as *const u64;
-    for _ in 0..256 {
-        let sp = unsafe { *p };
-        if sp == 0 {
-            break;
+    for i in 0..256u64 {
+        match usercopy::read_u64(ptr + i * 8) {
+            Ok(0) | Err(_) => break,
+            Ok(sp) => out.push(user_cstr(sp)),
         }
-        out.push(user_cstr(sp));
-        p = unsafe { p.add(1) };
     }
     out
 }
@@ -696,6 +1200,14 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_READ => sys_read(a1, a2, a3),
 
         SYS_WRITEV => {
+            if a3 > 1024 {
+                frame.rax = EINVAL as u64;
+                return;
+            }
+            if !usercopy::user_ok(a2, a3 as usize * 16, false) {
+                frame.rax = EFAULT as u64;
+                return;
+            }
             let iov = unsafe { core::slice::from_raw_parts(a2 as *const [u64; 2], a3 as usize) };
             let mut total = 0i64;
             for &[base, len] in iov {
@@ -734,10 +1246,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             if a2 == 0 {
                 0
             } else {
-                let path = process::resolve_path(&user_cstr(a2));
-                match ext2::open().ok().and_then(|fs| fs.path_lookup(&path)) {
-                    Some(_) => 0,
-                    None => ENOENT,
+                match user_path(a2) {
+                    Err(e) => e,
+                    Ok(path) => match ext2::open().ok().and_then(|fs| fs.path_lookup(&path)) {
+                        Some(_) => 0,
+                        None => ENOENT,
+                    },
                 }
             }
         }
@@ -750,14 +1264,34 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
         SYS_LSEEK => cur_fd(a1).map(|f| f.seek(a2 as i64, a3 as u32)).unwrap_or(EBADF),
 
-        // time(2): seconds since the epoch. No RTC yet — a fixed plausible value
-        // keeps `ls` and friends from tripping the unhandled-syscall path.
+        // time(2): seconds since the epoch, from the RTC + the TSC clock.
         SYS_TIME => {
-            let t: i64 = 1_735_689_600; // 2025-01-01
-            if a1 != 0 {
-                unsafe { *(a1 as *mut i64) = t };
+            let t = crate::timer::unix_secs() as i64;
+            if a1 != 0 && usercopy::write_u64(a1, t as u64).is_err() {
+                EFAULT
+            } else {
+                t
             }
-            t
+        }
+
+        SYS_GETTIMEOFDAY => {
+            let ns = crate::timer::realtime_ns();
+            if a1 != 0 {
+                match usercopy::slice_mut(a1, 16) {
+                    Ok(b) => {
+                        b[..8].copy_from_slice(&(ns / 1_000_000_000).to_le_bytes());
+                        b[8..].copy_from_slice(&((ns % 1_000_000_000) / 1000).to_le_bytes());
+                    }
+                    Err(e) => {
+                        frame.rax = e as u64;
+                        return;
+                    }
+                }
+            }
+            if a2 != 0 {
+                let _ = usercopy::slice_mut(a2, 8).map(|b| b.fill(0)); // struct timezone: UTC
+            }
+            0
         }
 
         // sendfile(out, in, *offset, count): plain copy loop through a bounce
@@ -765,10 +1299,10 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_SENDFILE => sys_sendfile(a1, a2, a3, a4),
 
         SYS_GETDENTS64 => match cur_fd(a1) {
-            Some(f) => {
-                let buf = unsafe { core::slice::from_raw_parts_mut(a2 as *mut u8, a3 as usize) };
-                f.getdents64(buf)
-            }
+            Some(f) => match usercopy::slice_mut(a2, a3 as usize) {
+                Ok(buf) => f.getdents64(buf),
+                Err(e) => e,
+            },
             None => EBADF,
         },
         SYS_FSTAT => sys_fstat(a1, a2),
@@ -779,42 +1313,80 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 sched::current().set_fsbase(a2); // survive context switches
                 0
             }
-            ARCH_GET_FS => {
-                unsafe { *(a2 as *mut u64) = FsBase::read().as_u64() };
-                0
-            }
+            ARCH_GET_FS => match usercopy::write_u64(a2, FsBase::read().as_u64()) {
+                Ok(()) => 0,
+                Err(e) => e,
+            },
             _ => EINVAL,
         },
 
         SYS_BRK => sched::current_proc().map(|p| p.brk(a1) as i64).unwrap_or(EINVAL),
-        SYS_MMAP => sched::current_proc().map(|p| p.mmap_anon(a2) as i64).unwrap_or(EINVAL),
-
-        SYS_GETRANDOM => {
-            let buf = unsafe { core::slice::from_raw_parts_mut(a1 as *mut u8, a2 as usize) };
-            let mut x = RNG.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
-            for b in buf.iter_mut() {
-                x ^= x << 13;
-                x ^= x >> 7;
-                x ^= x << 17;
-                *b = x as u8;
+        SYS_MMAP => sys_mmap(a1, a2, a3, a4, a5, frame.r9),
+        SYS_MUNMAP => match sched::current_proc() {
+            Some(p) if a1 & 0xFFF == 0 && a2 > 0 && a1.saturating_add(a2) < usercopy::USER_TOP => {
+                p.munmap(a1, a2);
+                0
             }
-            a2 as i64
-        }
+            _ => EINVAL,
+        },
+        SYS_MPROTECT => match sched::current_proc() {
+            Some(p) if a1 & 0xFFF == 0 && a1.saturating_add(a2) < usercopy::USER_TOP => p.mprotect(a1, a2, a3),
+            _ => EINVAL,
+        },
+        SYS_PREAD64 => sys_pread64(a1, a2, a3, a4),
+        SYS_ACCESS => sys_access(a1, a2),
+        SYS_FACCESSAT => sys_access(a2, a3),
 
-        SYS_GETPID | SYS_GETTID => process::current_pid() as i64,
+        SYS_GETRANDOM => match usercopy::slice_mut(a1, a2 as usize) {
+            Ok(buf) => {
+                crate::random::fill(buf);
+                a2 as i64
+            }
+            Err(e) => e,
+        },
+
+        SYS_GETPID => process::current_pid() as i64,
+        SYS_GETTID => process::posix_tid() as i64,
         SYS_GETPPID => process::current_ppid() as i64,
         SYS_GETUID | SYS_GETEUID => process::current_uid() as i64,
         SYS_GETGID | SYS_GETEGID => process::current_gid() as i64,
-        SYS_SET_TID_ADDRESS => process::current_pid() as i64,
+        SYS_SET_TID_ADDRESS => process::set_clear_tid(a1) as i64,
         SYS_IOCTL => sys_ioctl(a1, a2, a3),
-        SYS_RT_SIGACTION | SYS_RT_SIGPROCMASK | SYS_RT_SIGRETURN | SYS_SET_ROBUST_LIST
-        | SYS_PRLIMIT64 | SYS_SIGALTSTACK | SYS_MPROTECT | SYS_MADVISE | SYS_MUNMAP | SYS_FUTEX
-        | SYS_PRCTL | SYS_FCHDIR | SYS_SETPGID | SYS_SETSID => 0,
+        SYS_RT_SIGACTION => signal::sys_sigaction(a1, a2, a3, a4),
+        SYS_RT_SIGPROCMASK => signal::sys_sigprocmask(a1, a2, a3, a4),
+        SYS_RT_SIGRETURN => signal::sys_sigreturn(frame),
+        SYS_RT_SIGPENDING => signal::sys_sigpending(a1, a2),
+        SYS_RT_SIGSUSPEND => signal::sys_sigsuspend(a1, a2),
+        SYS_PAUSE => signal::sys_pause(),
+        SYS_MINCORE => sys_mincore(a1, a2, a3),
+        SYS_STATFS | SYS_FSTATFS => sys_statfs(a2),
+        SYS_STATX => sys_statx(a1, a2, a3, a5),
+        SYS_FSYNC | SYS_FDATASYNC => cur_fd(a1).map_or(EBADF, |f| f.sync()),
+        SYS_ALARM => crate::itimer::sys_alarm(a1),
+        SYS_SETITIMER => crate::itimer::sys_setitimer(a1, a2, a3),
+        SYS_GETITIMER => crate::itimer::sys_getitimer(a1, a2),
+        SYS_SETPGID => sys_setpgid(a1, a2),
+        SYS_SETSID => sys_setsid(),
+        SYS_GETSID => match if a1 == 0 { sched::current().task() } else { process::find_task(a1) } {
+            Some(t) => t.sid() as i64,
+            None => -3, // ESRCH
+        },
+        SYS_PRLIMIT64 => sys_prlimit(a2, a3, a4),
+        SYS_GETRLIMIT => sys_prlimit(a1, 0, a2),
+        SYS_SET_ROBUST_LIST | SYS_SIGALTSTACK | SYS_MADVISE
+        | SYS_PRCTL | SYS_FCHDIR => 0,
+        SYS_FUTEX => crate::futex::sys_futex(a1, a2, a3, a4, a5, frame.r9),
         SYS_RSEQ => ENOSYS,
 
         // chdir: normalise against the cwd, verify it names a directory in ext2.
         SYS_CHDIR => {
-            let path = process::resolve_path(&user_cstr(a1));
+            let path = match user_path(a1) {
+                Ok(p) => p,
+                Err(e) => {
+                    frame.rax = e as u64;
+                    return;
+                }
+            };
             match ext2::open().ok().and_then(|fs| {
                 fs.path_lookup(&path).map(|ino| fs.read_inode(ino).mode)
             }) {
@@ -828,7 +1400,11 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
 
         // No process groups; job-control shells just want a plausible answer.
-        SYS_GETPGRP | SYS_GETPGID => process::current_pid() as i64,
+        SYS_GETPGRP => sched::current().task().map_or(0, |t| t.pgid() as i64),
+        SYS_GETPGID => match if a1 == 0 { sched::current().task() } else { process::find_task(a1) } {
+            Some(t) => t.pgid() as i64,
+            None => -3,
+        },
 
         SYS_PIPE => sys_pipe(a1, 0),
         SYS_PIPE2 => sys_pipe(a1, a2),
@@ -857,65 +1433,160 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             }
             1 => process::current_fd_get_cloexec(a1 as i32) as i64,
             2 => process::current_fd_set_cloexec(a1 as i32, a3 & 1 != 0) as i64,
-            3 => 0o2, // F_GETFL -> O_RDWR
-            4 => 0,   // F_SETFL
+            3 => 0o2 | cur_fd(a1).map_or(0, |f| if f.is_nonblock() { 0o4000 } else { 0 }), // F_GETFL
+            4 => {
+                // F_SETFL: only O_NONBLOCK (0o4000) is honoured, and only by sockets
+                if let Some(f) = cur_fd(a1) {
+                    f.set_nonblock(a3 & 0o4000 != 0);
+                }
+                0
+            }
             _ => 0,
         },
 
-        SYS_NANOSLEEP | SYS_CLOCK_NANOSLEEP => {
-            for _ in 0..1000 {
-                sched::yield_now();
-            }
-            0
-        }
+        // nanosleep(req, rem) / clock_nanosleep(clock, flags, req, rem): a real timed
+        // block on the timer wheel (10 ms resolution, never shorter than asked).
+        SYS_NANOSLEEP => sys_nanosleep(0, 0, a1, a2),
+        SYS_CLOCK_NANOSLEEP => sys_nanosleep(a1, a2, a3, a4),
 
-        SYS_SYSINFO => {
-            unsafe { core::ptr::write_bytes(a1 as *mut u8, 0, 112) };
-            0
-        }
+        SYS_SYSINFO => match usercopy::slice_mut(a1, 112) {
+            Ok(b) => {
+                b.fill(0);
+                let free = crate::mm::FRAME_ALLOC.lock().free_frames() * 4096;
+                let total = crate::mm::total_frames() * 4096;
+                b[0..8].copy_from_slice(&(crate::timer::monotonic_ns() / 1_000_000_000).to_le_bytes()); // uptime
+                b[32..40].copy_from_slice(&total.to_le_bytes()); // totalram
+                b[40..48].copy_from_slice(&free.to_le_bytes()); // freeram
+                b[80..82].copy_from_slice(&1u16.to_le_bytes()); // procs (not tracked)
+                b[104..108].copy_from_slice(&1u32.to_le_bytes()); // mem_unit
+                0
+            }
+            Err(e) => e,
+        },
 
         SYS_WAITID => ECHILD,
 
-        // poll: mark valid fds as "no events", invalid as POLLNVAL.
-        SYS_POLL | SYS_PPOLL => {
-            let n = a2 as usize;
-            let fds = unsafe { core::slice::from_raw_parts_mut(a1 as *mut [u8; 8], n) };
-            let mut ready = 0i64;
-            for pfd in fds.iter_mut() {
-                let fd = i32::from_le_bytes([pfd[0], pfd[1], pfd[2], pfd[3]]);
-                let revents: u16 = if cur_fd(fd as u64).is_some() { 0 } else { 0x20 /* POLLNVAL */ };
-                pfd[6] = revents as u8;
-                pfd[7] = (revents >> 8) as u8;
-                if revents != 0 {
-                    ready += 1;
+        SYS_POLL => sock_sys::sys_poll(a1, a2, if (a3 as i32) < 0 { -1 } else { (a3 as i64) * 1_000_000 }),
+        SYS_PPOLL => {
+            // a3 = *timespec or NULL (forever)
+            let ns = if a3 == 0 {
+                -1
+            } else {
+                match (usercopy::read_u64(a3), usercopy::read_u64(a3.wrapping_add(8))) {
+                    (Ok(s), Ok(n)) => (s as i64).saturating_mul(1_000_000_000).saturating_add(n as i64),
+                    _ => {
+                        frame.rax = EFAULT as u64;
+                        return;
+                    }
                 }
-            }
-            ready
+            };
+            sock_sys::sys_poll(a1, a2, ns)
         }
 
-        SYS_CLOCK_GETTIME => {
-            unsafe { core::ptr::write_bytes(a2 as *mut u8, 0, 16) };
-            0
+        SYS_SELECT => {
+            // a5 = *timeval (sec, usec) or NULL
+            let ns = if a5 == 0 {
+                -1
+            } else {
+                match (usercopy::read_u64(a5), usercopy::read_u64(a5.wrapping_add(8))) {
+                    (Ok(s), Ok(u)) => (s as i64).saturating_mul(1_000_000_000).saturating_add((u as i64) * 1000),
+                    _ => {
+                        frame.rax = EFAULT as u64;
+                        return;
+                    }
+                }
+            };
+            sock_sys::sys_select(a1, a2, a3, a4, ns)
         }
+        SYS_PSELECT6 => {
+            // a5 = *timespec or NULL
+            let ns = if a5 == 0 {
+                -1
+            } else {
+                match (usercopy::read_u64(a5), usercopy::read_u64(a5.wrapping_add(8))) {
+                    (Ok(s), Ok(n)) => (s as i64).saturating_mul(1_000_000_000).saturating_add(n as i64),
+                    _ => {
+                        frame.rax = EFAULT as u64;
+                        return;
+                    }
+                }
+            };
+            sock_sys::sys_select(a1, a2, a3, a4, ns)
+        }
+        SYS_SOCKET => sock_sys::sys_socket(a1, a2, a3),
+        SYS_BIND => sock_sys::sys_bind(a1, a2, a3),
+        SYS_LISTEN => sock_sys::sys_listen(a1),
+        SYS_CONNECT => sock_sys::sys_connect(a1, a2, a3),
+        SYS_ACCEPT => sock_sys::sys_accept(a1, a2, a3, 0),
+        SYS_ACCEPT4 => sock_sys::sys_accept(a1, a2, a3, a4),
+        SYS_SENDTO => sock_sys::sys_sendto(a1, a2, a3, a5, frame.r9),
+        SYS_RECVFROM => sock_sys::sys_recvfrom(a1, a2, a3, a5, frame.r9),
+        SYS_SHUTDOWN => sock_sys::sys_shutdown(a1, a2),
+        SYS_SENDMSG => sock_sys::sys_sendmsg(a1, a2),
+        SYS_RECVMSG => sock_sys::sys_recvmsg(a1, a2),
+        SYS_SENDMMSG => sock_sys::sys_sendmmsg(a1, a2, a3),
+        SYS_RECVMMSG => sock_sys::sys_recvmmsg(a1, a2, a3),
+        SYS_GETSOCKNAME => sock_sys::sys_getsockname(a1, a2, a3),
+        SYS_GETPEERNAME => sock_sys::sys_getpeername(a1, a2, a3),
+        SYS_SETSOCKOPT => sock_sys::sys_setsockopt(a1),
+        SYS_GETSOCKOPT => sock_sys::sys_getsockopt(a1, a2, a3, a4, a5),
+
+        SYS_CLOCK_GETTIME => match clock_ns(a1) {
+            None => EINVAL,
+            Some(ns) => match usercopy::slice_mut(a2, 16) {
+                Ok(b) => {
+                    b[..8].copy_from_slice(&(ns / 1_000_000_000).to_le_bytes());
+                    b[8..].copy_from_slice(&(ns % 1_000_000_000).to_le_bytes());
+                    0
+                }
+                Err(e) => e,
+            },
+        },
 
         SYS_SCHED_GETAFFINITY => {
             // report the online CPUs as a bitmask
             let len = (a2 as usize).min(8);
             let mask = ((1u64 << smp::cpu_count().min(64)) - 1).to_le_bytes();
-            unsafe { core::ptr::copy_nonoverlapping(mask.as_ptr(), a3 as *mut u8, len) };
-            len as i64
+            match usercopy::slice_mut(a3, len) {
+                Ok(b) => {
+                    b.copy_from_slice(&mask[..len]);
+                    len as i64
+                }
+                Err(e) => e,
+            }
         }
 
-        SYS_KILL | SYS_TKILL | SYS_TGKILL => {
-            // deliver only fatal signals; everything else is a no-op for now
-            let sig = if nr == SYS_TGKILL { a3 } else { a2 };
-            if sig == 6 || sig == 9 || sig == 15 {
-                process::set_exit_status(128 + sig as i32);
-                USER_EXITS.fetch_add(1, Ordering::Release);
-                sched::exit()
+        // reboot(magic1, magic2, cmd, arg): the Linux numbers BusyBox uses for
+        // `poweroff -f` / `reboot -f` / `halt -f`. Any console user may do this
+        // (a single-seat machine, like logind's local-session rule).
+        SYS_REBOOT => {
+            if a1 != 0xfee1_dead {
+                EINVAL
+            } else {
+                match a3 {
+                    0x4321_FEDC => power::poweroff(),
+                    0x0123_4567 => power::reboot(),
+                    0xCDEF_0123 => power::halt(),
+                    0 | 0x89AB_CDEF => 0, // CAD off/on: accepted, no effect
+                    _ => EINVAL,
+                }
             }
-            0
         }
+
+        // BusyBox's plain `poweroff` / `reboot` / `halt` signal init (pid 1):
+        // SIGUSR2 = poweroff, SIGTERM = reboot, SIGUSR1 = halt. THOS has no
+        // userspace init, so the kernel plays that role for pid 1.
+        SYS_KILL if a1 == 1 => match a2 {
+            12 => power::poweroff(),
+            15 => power::reboot(),
+            10 => power::halt(),
+            _ => 0,
+        },
+
+        SYS_KILL => signal::sys_kill(a1 as i64, a2),
+        // THOS has one thread per task, so a tid is a pid.
+        SYS_TKILL => signal::sys_tkill(a1, a2),
+        SYS_TGKILL => signal::sys_tkill(a2, a3),
 
         // getcwd(buf, size): write the path + NUL, return its length incl. NUL.
         SYS_GETCWD => {
@@ -924,18 +1595,25 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             if a1 == 0 || (a2 as usize) < need {
                 -34 // ERANGE
             } else {
-                unsafe {
-                    core::ptr::copy_nonoverlapping(cwd.as_ptr(), a1 as *mut u8, cwd.len());
-                    *((a1 + cwd.len() as u64) as *mut u8) = 0;
+                match usercopy::slice_mut(a1, need) {
+                    Ok(b) => {
+                        b[..cwd.len()].copy_from_slice(cwd.as_bytes());
+                        b[cwd.len()] = 0;
+                        need as i64
+                    }
+                    Err(e) => e,
                 }
-                need as i64
             }
         }
-        SYS_READLINK | SYS_READLINKAT => EINVAL,
-        SYS_UNAME => {
-            unsafe { core::ptr::write_bytes(a1 as *mut u8, 0, 6 * 65) };
-            0
-        }
+        SYS_READLINK => sys_readlink(a1, a2, a3),
+        SYS_READLINKAT => sys_readlink(a2, a3, a4),
+        SYS_UNAME => match usercopy::slice_mut(a1, 6 * 65) {
+            Ok(b) => {
+                b.fill(0);
+                0
+            }
+            Err(e) => e,
+        },
 
         SYS_FORK => process::fork(frame),
 
@@ -943,8 +1621,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         // A shared-VM clone (threads) isn't supported yet.
         SYS_CLONE => {
             const CLONE_VM: u64 = 0x100;
-            if a1 & CLONE_VM != 0 {
-                ENOSYS
+            const CLONE_THREAD: u64 = 0x10000;
+            if a1 & CLONE_THREAD != 0 {
+                if a1 & CLONE_VM == 0 {
+                    EINVAL
+                } else {
+                    process::clone_thread(frame, a1, a2, a3, a4, a5)
+                }
+            } else if a1 & CLONE_VM != 0 {
+                ENOSYS // vfork-style shared-VM processes are not supported
             } else {
                 process::fork(frame)
             }
@@ -953,21 +1638,28 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_NEWFSTATAT => sys_newfstatat(a1, a2, a3, a4),
         SYS_SETUID | SYS_SETGID => 0,
 
-        SYS_EXECVE => {
-            let path = process::resolve_path(&user_cstr(a1));
-            let argv = user_cstr_array(a2);
-            let envp = user_cstr_array(a3);
-            match ext2::open().ok().and_then(|fs| fs.read_path(&path)) {
-                Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
-                None => ENOENT,
-            }
-        }
+        SYS_EXECVE => sys_execve(a1, a2, a3),
 
         SYS_WAIT4 => process::wait4(a1 as i64, a2),
 
-        SYS_EXIT | SYS_EXIT_GROUP => {
+        // exit_group ends the whole process (the other threads notice and follow).
+        SYS_EXIT_GROUP => {
+            process::thread_exit_cleanup();
             process::set_exit_status(a1 as i32);
             USER_EXITS.fetch_add(1, Ordering::Release);
+            if let Some(t) = sched::current().task() {
+                t.thread_leaving();
+            }
+            sched::exit()
+        }
+        // exit ends only this thread; the last one to leave ends the process.
+        SYS_EXIT => {
+            let last = sched::current().task().map_or(true, |t| t.thread_leaving());
+            process::thread_exit_cleanup();
+            if last {
+                process::set_exit_status(a1 as i32);
+                USER_EXITS.fetch_add(1, Ordering::Release);
+            }
             sched::exit()
         }
 
@@ -989,7 +1681,48 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
     };
 
+    if sched::current().task().map_or(false, |t| t.trace.load(Ordering::Relaxed)) {
+        let path = match nr {
+            2 | 21 | 4 | 6 | 89 => usercopy::cstr(a1, 200).unwrap_or_default(),
+            257 | 262 => usercopy::cstr(a2, 200).unwrap_or_default(),
+            _ => alloc::string::String::new(),
+        };
+        kprintln!("THOS: trace {} ({:#x}, {:#x}, {:#x}, {:#x}) {} -> {}", nr, a1, a2, a3, a4, path, ret);
+    }
+    let mut ret = ret;
+    // A write to a pipe nobody reads raises SIGPIPE — here, in the syscall layer, so
+    // the kernel's own pipe writes (the security service) never kill their caller.
+    if ret == -32 && matches!(nr, SYS_WRITE | SYS_WRITEV) {
+        signal::send_current(signal::SIGPIPE);
+    }
+    signal::deliver_at_syscall_exit(frame, nr, &mut ret);
     frame.rax = ret as u64;
 }
 
-static RNG: AtomicU64 = AtomicU64::new(0x1234_5678_9abc_def0);
+/// `setpgid(pid, pgid)`: 0 means "the caller" for both arguments. Only the caller
+/// itself or a child of the same session may be moved.
+fn sys_setpgid(pid: u64, pgid: u64) -> i64 {
+    let Some(me) = sched::current().task() else { return -3 };
+    let target = if pid == 0 || pid == me.pid { me.clone() } else {
+        match process::find_task(pid) {
+            Some(t) if t.ppid == me.pid && t.sid() == me.sid() => t,
+            Some(_) => return -1, // EPERM
+            None => return -3,
+        }
+    };
+    let g = if pgid == 0 { target.pid } else { pgid };
+    target.set_pgid(g);
+    0
+}
+
+/// `setsid()`: a new session and process group led by the caller.
+fn sys_setsid() -> i64 {
+    let Some(me) = sched::current().task() else { return -3 };
+    if me.pgid() == me.pid && me.sid() == me.pid {
+        return -1; // already a group leader (EPERM)
+    }
+    me.set_sid(me.pid);
+    me.set_pgid(me.pid);
+    me.pid as i64
+}
+

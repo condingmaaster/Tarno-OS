@@ -10,7 +10,7 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use spin::Mutex;
 
@@ -34,11 +34,228 @@ pub trait FileOps: Send + Sync {
     fn seek(&self, offset: i64, whence: u32) -> i64;
     /// (mode bits for `st_mode`, size for `st_size`).
     fn stat(&self) -> (u32, u64);
+    /// `(atime, mtime, ctime)` in seconds since the epoch; zeros if unknown.
+    fn times(&self) -> (u32, u32, u32) {
+        (0, 0, 0)
+    }
     /// Fill `buf` with `struct linux_dirent64` records; `0` at end-of-dir,
     /// `-EINVAL` if `buf` is too small for even one record. Not a directory by
     /// default.
     fn getdents64(&self, _buf: &mut [u8]) -> i64 {
         ENOTDIR
+    }
+    /// `poll(2)` readiness for the events in `want` (`POLLIN`=1, `POLLOUT`=4, ...). Plain
+    /// files and devices are always ready.
+    fn poll_mask(&self, want: u16) -> u16 {
+        want & (POLLIN | POLLOUT)
+    }
+    /// `st_ino`: the inode number for files on the root filesystem (0 elsewhere). Programs —
+    /// `ld.so` above all — use (dev, ino) to tell whether two paths are the same file.
+    fn ino(&self) -> u64 {
+        0
+    }
+    /// `fsync`: make sure everything written reached the disk.
+    fn sync(&self) -> i64 {
+        0
+    }
+    /// The socket behind this file, if it is one.
+    fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
+        None
+    }
+    /// For `mmap`: the device memory this file maps (`(physical base, length)`), if any.
+    fn device_phys(&self) -> Option<(u64, u64)> {
+        None
+    }
+    /// A device-specific `ioctl`; `ENOTTY` for devices that have none.
+    fn ioctl(&self, _cmd: u64, _arg: u64) -> i64 {
+        -25
+    }
+    /// `O_NONBLOCK` via `fcntl(F_SETFL)` / `FIONBIO`; only sockets honour it for now.
+    fn set_nonblock(&self, _on: bool) {}
+    fn is_nonblock(&self) -> bool {
+        false
+    }
+}
+
+pub const POLLIN: u16 = 0x1;
+pub const POLLOUT: u16 = 0x4;
+pub const POLLERR: u16 = 0x8;
+pub const POLLHUP: u16 = 0x10;
+
+// --- /dev ---
+
+/// The few character devices every Unix program expects under `/dev`. They are virtual:
+/// `open` recognises the paths before it looks at the filesystem, so they exist even on
+/// a root image that has no `/dev` directory.
+pub enum DevKind {
+    Null,
+    Zero,
+    /// `/dev/random` and `/dev/urandom` — both the CSPRNG (never blocks once seeded).
+    Random,
+    /// `/dev/input/mice`: raw PS/2 mouse packets.
+    Mice,
+}
+
+pub struct DevFile(pub DevKind);
+
+impl FileOps for DevFile {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        match self.0 {
+            DevKind::Null => 0, // always EOF
+            DevKind::Zero => {
+                buf.fill(0);
+                buf.len() as i64
+            }
+            DevKind::Random => {
+                crate::random::fill(buf);
+                buf.len() as i64
+            }
+            DevKind::Mice => crate::ps2::mouse_read(buf),
+        }
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        match self.0 {
+            DevKind::Mice => {
+                if want & POLLIN != 0 && crate::ps2::mouse_ready() { POLLIN } else { 0 }
+            }
+            _ => want & (POLLIN | POLLOUT),
+        }
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        // Everything is accepted. Writes to the random devices would only stir the pool;
+        // THOS ignores them rather than trusting user-supplied "entropy".
+        buf.len() as i64
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+}
+
+/// A character device by absolute path, if `path` names one. `/dev/tty` and
+/// `/dev/console` are the console: read = the keyboard line discipline, write = the
+/// screen (the same objects fds 0/1 are made of).
+pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<dyn FileOps>> {
+    Some(match path {
+        "/dev/null" => Arc::new(DevFile(DevKind::Null)),
+        "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
+        "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
+        "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/fb0" => {
+            if crate::gdi::fb_geometry().is_none() {
+                return None;
+            }
+            Arc::new(FbFile { pos: AtomicU64::new(0) })
+        }
+        "/dev/tty" | "/dev/console" => {
+            if want_read && !want_write {
+                Arc::new(KeyboardFile)
+            } else if want_write && !want_read {
+                Arc::new(ConsoleFile { writable: true })
+            } else {
+                Arc::new(TtyFile)
+            }
+        }
+        _ => return None,
+    })
+}
+
+/// `/dev/fb0`: the boot framebuffer as a Linux-style fbdev — `read`/`write`/`lseek` at byte
+/// offsets, `FBIOGET_VSCREENINFO` / `FBIOGET_FSCREENINFO` for its geometry. (No `mmap` yet.)
+pub struct FbFile {
+    pos: AtomicU64,
+}
+
+impl FileOps for FbFile {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        let pos = self.pos.load(Ordering::Relaxed) as usize;
+        let n = crate::gdi::fb_read(pos, buf);
+        self.pos.store((pos + n) as u64, Ordering::Relaxed);
+        n as i64
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        let pos = self.pos.load(Ordering::Relaxed) as usize;
+        let n = crate::gdi::fb_write(pos, buf);
+        self.pos.store((pos + n) as u64, Ordering::Relaxed);
+        if n == 0 && !buf.is_empty() { -28 } else { n as i64 } // ENOSPC past the end
+    }
+    fn seek(&self, offset: i64, whence: u32) -> i64 {
+        let size = crate::gdi::fb_geometry().map_or(0, |g| g.2 as i64 * g.1 as i64);
+        let base = match whence {
+            SEEK_SET => 0,
+            SEEK_CUR => self.pos.load(Ordering::Relaxed) as i64,
+            SEEK_END => size,
+            _ => return EINVAL,
+        };
+        let np = base + offset;
+        if np < 0 {
+            return EINVAL;
+        }
+        self.pos.store(np as u64, Ordering::Relaxed);
+        np
+    }
+    fn stat(&self) -> (u32, u64) {
+        let size = crate::gdi::fb_geometry().map_or(0, |g| g.2 as u64 * g.1 as u64);
+        (S_IFCHR | 0o666, size)
+    }
+    fn device_phys(&self) -> Option<(u64, u64)> {
+        crate::gdi::fb_phys()
+    }
+    fn ioctl(&self, cmd: u64, arg: u64) -> i64 {
+        let Some((w, h, pitch, rs, gs, bs)) = crate::gdi::fb_geometry() else { return -19 };
+        match cmd {
+            0x4600 => {
+                // FBIOGET_VSCREENINFO (struct fb_var_screeninfo, 160 bytes)
+                let Ok(b) = crate::usercopy::slice_mut(arg, 160) else { return crate::usercopy::EFAULT };
+                b.fill(0);
+                let put = |b: &mut [u8], off: usize, v: u32| b[off..off + 4].copy_from_slice(&v.to_le_bytes());
+                put(b, 0, w);
+                put(b, 4, h);
+                put(b, 8, w);
+                put(b, 12, h);
+                put(b, 24, 32); // bits_per_pixel
+                put(b, 32, rs as u32);
+                put(b, 36, 8);
+                put(b, 44, gs as u32);
+                put(b, 48, 8);
+                put(b, 56, bs as u32);
+                put(b, 60, 8);
+                put(b, 88, 0xFFFF_FFFF); // height / width in mm: unknown
+                put(b, 92, 0xFFFF_FFFF);
+                0
+            }
+            0x4602 => {
+                // FBIOGET_FSCREENINFO (struct fb_fix_screeninfo, 80 bytes)
+                let Ok(b) = crate::usercopy::slice_mut(arg, 80) else { return crate::usercopy::EFAULT };
+                b.fill(0);
+                b[..7].copy_from_slice(b"THOS FB");
+                b[24..28].copy_from_slice(&(pitch * h).to_le_bytes()); // smem_len
+                b[36..40].copy_from_slice(&2u32.to_le_bytes()); // visual = TRUECOLOR
+                b[48..52].copy_from_slice(&pitch.to_le_bytes()); // line_length
+                0
+            }
+            _ => -25,
+        }
+    }
+}
+
+/// `/dev/tty` opened read-write: keyboard in, screen out.
+pub struct TtyFile;
+
+impl FileOps for TtyFile {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        KeyboardFile.read(buf)
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        ConsoleFile { writable: true }.write(buf)
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        ESPIPE
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
     }
 }
 
@@ -63,6 +280,12 @@ impl FileOps for KeyboardFile {
             if n > 0 {
                 return n as i64;
             }
+            if crate::console::take_eof() {
+                return 0; // Ctrl+D on an empty line
+            }
+            if crate::signal::interrupted() {
+                return -4; // EINTR
+            }
             crate::console::wait_for_input();
         }
     }
@@ -74,6 +297,13 @@ impl FileOps for KeyboardFile {
     }
     fn stat(&self) -> (u32, u64) {
         (S_IFCHR | 0o620, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        let mut r = want & POLLOUT;
+        if want & POLLIN != 0 && (crate::console::has_input() || crate::console::eof_pending()) {
+            r |= POLLIN;
+        }
+        r
     }
 }
 
@@ -100,10 +330,9 @@ impl FileOps for ConsoleFile {
 
 /// A real ext2 file, opened by path. Like `MemFile`, the whole file is
 /// slurped into memory on open — but `write()` mutates that buffer *and*
-/// re-persists the whole thing back to ext2 immediately via `write_path`
-/// (the same "rewrite it all, synchronously, on every mutation" pattern
-/// [`crate::registry`]'s hives use). No partial/streaming writeback, no
-/// dirty-range tracking — simple and correct, not the fastest.
+/// persists the whole thing back to ext2 via `write_path` — **write-back**: on `fsync`, on
+/// close, and every 64 KiB written, not on every `write` call (the old rewrite-everything-per-
+/// call was quadratic for big files). No dirty-range tracking — simple and correct.
 ///
 /// This is what makes a file-backed [`crate::process::Section`] able to
 /// actually flush to disk: `Section::flush` writes through whatever
@@ -113,15 +342,171 @@ pub struct Ext2File {
     path: String,
     buf: Mutex<Vec<u8>>,
     pos: AtomicUsize,
+    ino: core::sync::atomic::AtomicU64,
+    /// Write-back state: bytes written since the last flush, and whether the file on disk
+    /// is behind the buffer. Writes go to the buffer; the disk is written on close, `fsync`
+    /// and every 64 KiB — not on every `write` call.
+    unflushed: AtomicUsize,
+    dirty: AtomicBool,
+    /// Byte range written since the last flush (`lo > hi` = nothing), so a flush can update
+    /// just those blocks on disk.
+    dirty_lo: AtomicUsize,
+    dirty_hi: AtomicUsize,
 }
 
+/// Bytes of writes after which the buffer is written to disk without waiting for a close.
+const FLUSH_EVERY: usize = 64 * 1024;
+
 impl Ext2File {
+    /// Write the buffer to disk if it is behind (the caller holds the buffer lock).
+    fn flush_locked(&self, data: &[u8]) -> i64 {
+        if !self.dirty.swap(false, Ordering::AcqRel) {
+            return 0;
+        }
+        self.unflushed.store(0, Ordering::Relaxed);
+        let (lo, hi) = (self.dirty_lo.swap(usize::MAX, Ordering::Relaxed), self.dirty_hi.swap(0, Ordering::Relaxed));
+        let Some(fs) = crate::ext2::open().ok() else { return EIO };
+        // Fast path: a file we opened by inode and only grew or overwrote — write just the
+        // changed blocks. Anything else (it shrank, created without an inode, no space for
+        // the incremental form) rewrites the whole file.
+        let ino = self.ino.load(Ordering::Relaxed);
+        if ino != 0 && fs.write_at(ino as u32, data, lo, hi).is_ok() {
+            return 0;
+        }
+        if fs.write_path(&self.path, data).is_err() {
+            self.dirty.store(true, Ordering::Release);
+            self.dirty_lo.fetch_min(lo, Ordering::Relaxed);
+            self.dirty_hi.fetch_max(hi, Ordering::Relaxed);
+            return EIO;
+        }
+        0
+    }
+
     pub fn new(path: String, data: Vec<u8>) -> Arc<Self> {
-        Arc::new(Self { path, buf: Mutex::new(data), pos: AtomicUsize::new(0) })
+        Arc::new(Self {
+            path,
+            buf: Mutex::new(data),
+            pos: AtomicUsize::new(0),
+            ino: core::sync::atomic::AtomicU64::new(0),
+            unflushed: AtomicUsize::new(0),
+            dirty: AtomicBool::new(false),
+            dirty_lo: AtomicUsize::new(usize::MAX),
+            dirty_hi: AtomicUsize::new(0),
+        })
+    }
+    pub fn with_ino(self: Arc<Self>, ino: u64) -> Arc<Self> {
+        self.ino.store(ino, Ordering::Relaxed);
+        self
+    }
+}
+
+impl Drop for Ext2File {
+    fn drop(&mut self) {
+        // The last close: whatever was written but not yet flushed goes to disk now.
+        let data = self.buf.lock();
+        let _ = self.flush_locked(&data);
+    }
+}
+
+/// A large read-only file on the root filesystem, read on demand in 64 KiB chunks — opening
+/// a multi-gigabyte file costs its block map (4 bytes per 4 KiB), not its size.
+pub struct Ext2Stream {
+    ino: u64,
+    fs: crate::ext2::Ext2,
+    blocks: Vec<u32>,
+    size: u64,
+    pos: AtomicU64,
+    /// The last chunk read: `(file offset, bytes)`.
+    cache: Mutex<(u64, Vec<u8>)>,
+}
+
+const STREAM_CHUNK: usize = 64 * 1024;
+/// Files larger than this are streamed when opened read-only.
+pub const STREAM_THRESHOLD: u64 = 256 * 1024;
+
+impl Ext2Stream {
+    pub fn new(fs: crate::ext2::Ext2, ino: u32, inode: &crate::ext2::Inode) -> Arc<Self> {
+        let blocks = fs.file_blocks(inode);
+        Arc::new(Self {
+            ino: ino as u64,
+            fs,
+            blocks,
+            size: inode.size,
+            pos: AtomicU64::new(0),
+            cache: Mutex::new((0, Vec::new())),
+        })
+    }
+}
+
+impl FileOps for Ext2Stream {
+    fn ino(&self) -> u64 {
+        self.ino
+    }
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        let pos = self.pos.load(Ordering::Relaxed);
+        if pos >= self.size || buf.is_empty() {
+            return 0;
+        }
+        let n = buf.len().min((self.size - pos) as usize);
+        if n >= STREAM_CHUNK {
+            // big read: straight into the caller's buffer, no copy through the cache
+            let got = self.fs.read_at(&self.blocks, self.size, pos, &mut buf[..n]);
+            self.pos.store(pos + got as u64, Ordering::Relaxed);
+            return got as i64;
+        }
+        let mut done = 0usize;
+        let mut cache = self.cache.lock();
+        while done < n {
+            let p = pos + done as u64;
+            let (start, ref data) = *cache;
+            if !(p >= start && p < start + data.len() as u64) {
+                let aligned = p & !(STREAM_CHUNK as u64 - 1);
+                let want = STREAM_CHUNK.min((self.size - aligned) as usize);
+                let mut chunk = alloc::vec![0u8; want];
+                let got = self.fs.read_at(&self.blocks, self.size, aligned, &mut chunk);
+                chunk.truncate(got);
+                *cache = (aligned, chunk);
+                continue;
+            }
+            let off = (p - start) as usize;
+            let take = (data.len() - off).min(n - done);
+            buf[done..done + take].copy_from_slice(&data[off..off + take]);
+            done += take;
+        }
+        self.pos.store(pos + done as u64, Ordering::Relaxed);
+        done as i64
+    }
+    fn write(&self, _buf: &[u8]) -> i64 {
+        EBADF // opened read-only
+    }
+    fn seek(&self, offset: i64, whence: u32) -> i64 {
+        let pos = self.pos.load(Ordering::Relaxed) as i64;
+        let base = match whence {
+            SEEK_SET => 0i64,
+            SEEK_CUR => pos,
+            SEEK_END => self.size as i64,
+            _ => return EINVAL,
+        };
+        let np = base + offset;
+        if np < 0 {
+            return EINVAL;
+        }
+        self.pos.store(np as u64, Ordering::Relaxed);
+        np
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFREG | 0o644, self.size)
+    }
+    fn times(&self) -> (u32, u32, u32) {
+        let n = self.fs.read_inode(self.ino as u32);
+        (n.atime, n.mtime, n.ctime)
     }
 }
 
 impl FileOps for Ext2File {
+    fn ino(&self) -> u64 {
+        self.ino.load(Ordering::Relaxed)
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let data = self.buf.lock();
         let pos = self.pos.load(Ordering::Relaxed);
@@ -141,13 +526,20 @@ impl FileOps for Ext2File {
         }
         data[pos..pos + src.len()].copy_from_slice(src);
         self.pos.store(pos + src.len(), Ordering::Relaxed);
-        let Some(fs) = crate::ext2::open().ok() else {
-            return EIO;
-        };
-        if fs.write_path(&self.path, &data).is_err() {
+        self.dirty.store(true, Ordering::Release);
+        self.dirty_lo.fetch_min(pos, Ordering::Relaxed);
+        self.dirty_hi.fetch_max(pos + src.len(), Ordering::Relaxed);
+        let total = self.unflushed.fetch_add(src.len(), Ordering::Relaxed) + src.len();
+        // Flush after 64 KiB, or after half the file's size once it is bigger — so the number
+        // of whole-file rewrites grows with log(size), not with size.
+        if total >= FLUSH_EVERY.max(data.len() / 2) && self.flush_locked(&data) < 0 {
             return EIO;
         }
         src.len() as i64
+    }
+    fn sync(&self) -> i64 {
+        let data = self.buf.lock();
+        self.flush_locked(&data)
     }
     fn seek(&self, offset: i64, whence: u32) -> i64 {
         let len = self.buf.lock().len() as i64;
@@ -167,6 +559,16 @@ impl FileOps for Ext2File {
     }
     fn stat(&self) -> (u32, u64) {
         (S_IFREG | 0o644, self.buf.lock().len() as u64)
+    }
+    fn times(&self) -> (u32, u32, u32) {
+        let Some(fs) = crate::ext2::open().ok() else { return (0, 0, 0) };
+        match fs.path_lookup(&self.path) {
+            Some(ino) => {
+                let n = fs.read_inode(ino);
+                (n.atime, n.mtime, n.ctime)
+            }
+            None => (0, 0, 0),
+        }
     }
 }
 
@@ -353,7 +755,10 @@ impl FileOps for PipeReadEnd {
                     return 0; // EOF — no writers left
                 }
             }
-            self.0.wq.wait_if(|| {
+            if crate::signal::interrupted() {
+                return -4; // EINTR
+            }
+            self.0.wq.wait_if_intr(|| {
                 self.0.buf.lock().is_empty() && self.0.writers.load(Ordering::Acquire) != 0
             });
         }
@@ -367,6 +772,16 @@ impl FileOps for PipeReadEnd {
     fn stat(&self) -> (u32, u64) {
         (S_IFIFO | 0o600, 0)
     }
+    fn poll_mask(&self, want: u16) -> u16 {
+        let mut r = 0;
+        if want & POLLIN != 0 && !self.0.buf.lock().is_empty() {
+            r |= POLLIN;
+        }
+        if self.0.writers.load(Ordering::Acquire) == 0 {
+            r |= POLLHUP | (want & POLLIN); // EOF is "readable" (read returns 0)
+        }
+        r
+    }
 }
 
 impl FileOps for PipeWriteEnd {
@@ -378,6 +793,9 @@ impl FileOps for PipeWriteEnd {
         while done < data.len() {
             if self.0.readers.load(Ordering::Acquire) == 0 {
                 return if done == 0 { EPIPE } else { done as i64 };
+            }
+            if crate::signal::interrupted() {
+                return if done == 0 { -4 } else { done as i64 };
             }
             {
                 let mut q = self.0.buf.lock();
@@ -391,7 +809,7 @@ impl FileOps for PipeWriteEnd {
                     continue;
                 }
             }
-            self.0.wq.wait_if(|| {
+            self.0.wq.wait_if_intr(|| {
                 self.0.buf.lock().len() == PIPE_CAP && self.0.readers.load(Ordering::Acquire) != 0
             });
         }

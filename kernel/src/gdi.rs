@@ -16,6 +16,7 @@ use spin::{Mutex, Once};
 
 struct FbInfo {
     virt: u64,
+    phys: u64,
     width: u32,
     height: u32,
     pitch: u32,
@@ -57,6 +58,7 @@ pub fn init(fb: &limine::framebuffer::Framebuffer, hhdm: u64) {
     let virt = crate::vmm::map_mmio(phys, len);
     FB.call_once(|| FbInfo {
         virt,
+        phys,
         width: fb.width as u32,
         height: fb.height as u32,
         pitch: fb.pitch as u32,
@@ -72,6 +74,42 @@ pub fn init(fb: &limine::framebuffer::Framebuffer, hhdm: u64) {
 
 fn fb() -> Option<&'static FbInfo> {
     FB.get()
+}
+
+/// Geometry of the boot framebuffer for `/dev/fb0`: `(width, height, pitch, r_shift, g_shift, b_shift)`.
+pub fn fb_geometry() -> Option<(u32, u32, u32, u8, u8, u8)> {
+    let f = fb()?;
+    Some((f.width, f.height, f.pitch, f.r_shift, f.g_shift, f.b_shift))
+}
+
+/// `(physical base, length)` of the framebuffer, for `mmap` of `/dev/fb0`.
+pub fn fb_phys() -> Option<(u64, u64)> {
+    let f = fb()?;
+    Some((f.phys, f.pitch as u64 * f.height as u64))
+}
+
+/// Copy `data` into the framebuffer at byte offset `off` (clipped to its size); bytes written.
+pub fn fb_write(off: usize, data: &[u8]) -> usize {
+    let Some(f) = fb() else { return 0 };
+    let size = f.pitch as usize * f.height as usize;
+    if off >= size {
+        return 0;
+    }
+    let n = data.len().min(size - off);
+    unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), (f.virt as usize + off) as *mut u8, n) };
+    n
+}
+
+/// Copy framebuffer bytes at `off` into `out`; bytes read.
+pub fn fb_read(off: usize, out: &mut [u8]) -> usize {
+    let Some(f) = fb() else { return 0 };
+    let size = f.pitch as usize * f.height as usize;
+    if off >= size {
+        return 0;
+    }
+    let n = out.len().min(size - off);
+    unsafe { core::ptr::copy_nonoverlapping((f.virt as usize + off) as *const u8, out.as_mut_ptr(), n) };
+    n
 }
 
 /// `GetSystemMetrics(SM_CXSCREEN|SM_CYSCREEN)`'s backing data.
