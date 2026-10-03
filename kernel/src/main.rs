@@ -37,6 +37,7 @@ mod cpu;
 #[cfg(feature = "interactive")]
 mod cred;
 mod device;
+mod e1000;
 mod elf;
 mod execgate;
 mod ext2;

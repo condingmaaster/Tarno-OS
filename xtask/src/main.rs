@@ -208,6 +208,29 @@ fn main() {
                 exit(1);
             }
         }
+        "e1000-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "e1000",
+                "ping -c 3 10.0.2.2; echo e1000-after-$((11))",
+                "e1000-after-11",
+                90,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "e1000,netdev=n0"],
+            );
+            let replies = out.lines().filter(|l| l.contains("bytes from 10.0.2.2")).count();
+            let log = std::fs::read(workspace_root().join("target/e1000-serial.log")).unwrap_or_default();
+            let nic = String::from_utf8_lossy(&log).contains("net nic          e1000");
+            if replies >= 2 && nic {
+                println!("e1000-test PASSED: the Intel e1000 driver brought the stack up (DHCP/ARP) and BusyBox ping got {replies} of 3 replies");
+            } else {
+                for l in out.lines().filter(|l| l.contains("ping") || l.contains("PING") || l.contains("bytes") || l.contains("net") || l.contains("packet")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("e1000-test FAILED ({replies} replies, e1000 driver in use: {nic})");
+                exit(1);
+            }
+        }
         "dns-test" => {
             // Needs the host to be online: QEMU's resolver (10.0.2.3) forwards to the host's.
             use std::net::ToSocketAddrs;
@@ -3982,7 +4005,7 @@ fn suite(args: &[String]) {
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
         "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
-        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
+        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
     const ISO: &[&str] = &[

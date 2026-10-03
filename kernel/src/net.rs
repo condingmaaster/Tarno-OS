@@ -17,17 +17,63 @@ use smoltcp::wire::{
 use spin::Mutex;
 
 use crate::kprintln;
+use crate::e1000::E1000;
 use crate::virtio_net::{VirtioNet, MTU};
+
+/// The NIC drivers behind one interface.
+enum Driver {
+    Virtio(VirtioNet),
+    E1000(E1000),
+}
+
+impl Driver {
+    fn poll_rx(&mut self) {
+        match self {
+            Driver::Virtio(d) => d.poll_rx(),
+            Driver::E1000(d) => d.poll_rx(),
+        }
+    }
+    fn pop_rx(&mut self) -> Option<Vec<u8>> {
+        match self {
+            Driver::Virtio(d) => d.rx_queue.pop_front(),
+            Driver::E1000(d) => d.rx_queue.pop_front(),
+        }
+    }
+    fn tx_ready(&mut self) -> bool {
+        match self {
+            Driver::Virtio(d) => d.tx_ready(),
+            Driver::E1000(d) => d.tx_ready(),
+        }
+    }
+    fn transmit<F: FnOnce(&mut [u8])>(&mut self, len: usize, fill: F) -> bool {
+        match self {
+            Driver::Virtio(d) => d.transmit(len, fill),
+            Driver::E1000(d) => d.transmit(len, fill),
+        }
+    }
+    fn mac(&self) -> [u8; 6] {
+        match self {
+            Driver::Virtio(d) => d.mac,
+            Driver::E1000(d) => d.mac,
+        }
+    }
+    fn name(&self) -> &'static str {
+        match self {
+            Driver::Virtio(_) => "virtio-net",
+            Driver::E1000(_) => "e1000",
+        }
+    }
+}
 
 /// QEMU user-mode networking (`-nic user`): guest 10.0.2.15/24, gateway 10.0.2.2.
 const STATIC_IP: [u8; 4] = [10, 0, 2, 15];
 const GATEWAY: [u8; 4] = [10, 0, 2, 2];
 
 /// The stack's `Device` — the driver plus the smoltcp token plumbing.
-struct Nic(VirtioNet);
+struct Nic(Driver);
 
 struct RxTok(Vec<u8>);
-struct TxTok<'a>(&'a mut VirtioNet);
+struct TxTok<'a>(&'a mut Driver);
 
 impl phy::RxToken for RxTok {
     fn consume<R, F: FnOnce(&[u8]) -> R>(self, f: F) -> R {
@@ -55,7 +101,7 @@ impl Device for Nic {
 
     fn receive(&mut self, _t: Instant) -> Option<(RxTok, TxTok<'_>)> {
         self.0.poll_rx();
-        let frame = self.0.rx_queue.pop_front()?;
+        let frame = self.0.pop_rx()?;
         Some((RxTok(frame), TxTok(&mut self.0)))
     }
     fn transmit(&mut self, _t: Instant) -> Option<TxTok<'_>> {
@@ -185,13 +231,17 @@ pub fn local_ip() -> [u8; 4] {
 /// Bring the NIC and the stack up. `Err` (no virtio-net device) is normal on real hardware
 /// until its driver exists.
 pub fn init() -> Result<(), &'static str> {
-    let mut dev = Nic(VirtioNet::probe()?);
-    let mac = dev.0.mac;
+    let drv = match VirtioNet::probe() {
+        Ok(d) => Driver::Virtio(d),
+        Err(_) => Driver::E1000(E1000::probe()?),
+    };
+    let mut dev = Nic(drv);
+    let mac = dev.0.mac();
     let cfg = Config::new(HardwareAddress::Ethernet(EthernetAddress(mac)));
     let iface = Interface::new(cfg, &mut dev, now());
     kprintln!(
-        "THOS: net nic          virtio-net {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-        mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        "THOS: net nic          {} {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+        dev.0.name(), mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
     );
     let mut sockets = SocketSet::new(Vec::new());
     let dhcp = sockets.add(dhcpv4::Socket::new());
