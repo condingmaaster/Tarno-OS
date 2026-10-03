@@ -355,6 +355,9 @@ pub fn on_irq() {
     if p != 0 {
         hba.pw(P_IS, p);
     }
+    if p & IS_TFES != 0 {
+        PORT_ERR.store(true, Ordering::Release); // the waiters must still see the error after we cleared PxIS
+    }
     wake_parked();
 }
 
@@ -364,6 +367,9 @@ pub fn poll_wake() {
         wake_parked();
     }
 }
+
+/// Set by the interrupt handler when the port reported a task-file error (it clears `PxIS` itself).
+static PORT_ERR: AtomicBool = AtomicBool::new(false);
 
 fn wake_parked() {
     let mut m = INFLIGHT.load(Ordering::Acquire);
@@ -437,7 +443,7 @@ fn wait(tag: u8, ncq: bool, blocking: bool) -> Result<(), &'static str> {
             if TAG_ERR.fetch_and(!mask, Ordering::AcqRel) & mask != 0 {
                 return Err("AHCI I/O error");
             }
-            if hba.pr(P_IS) & IS_TFES != 0 || hba.pr(P_TFD) & TFD_ERR != 0 {
+            if hba.pr(P_IS) & IS_TFES != 0 || hba.pr(P_TFD) & TFD_ERR != 0 || PORT_ERR.load(Ordering::Acquire) {
                 match RECOVER.try_lock() {
                     Some(_g) => recover(&hba),
                     None => sched::yield_now(), // another thread is recovering
@@ -478,6 +484,7 @@ fn wait(tag: u8, ncq: bool, blocking: bool) -> Result<(), &'static str> {
 /// for the failing tag, then fail that tag and re-issue every other aborted one.
 fn recover(hba: &Hba) {
     RECOVER_COUNT.fetch_add(1, Ordering::Relaxed);
+    PORT_ERR.store(false, Ordering::Release);
     // Aborted tags — captured before the reset clears PxSACT/PxCI.
     let aborted = hba.pr(P_SACT) | hba.pr(P_CI);
 
@@ -536,6 +543,7 @@ fn recover(hba: &Hba) {
         }
     }
     drop(pend);
+    PORT_ERR.store(false, Ordering::Release);
     wake_parked();
     crate::kprintln!("THOS: ahci recover     port restarted; failing NCQ tag {:?}", failed);
 }
@@ -544,8 +552,11 @@ fn recover(hba: &Hba) {
 /// not itself trigger recovery). Short budget — this is best-effort diagnostics.
 fn poll_tag0() -> Result<(), &'static str> {
     let hba = Hba::cur();
-    for _ in 0..500_000 {
-        if hba.pr(P_IS) & IS_TFES != 0 {
+    // Time-bounded (not iteration-bounded: a yield can be slow). The IRQ handler clears PxIS, so
+    // its latch `PORT_ERR` is what reliably tells us the command errored.
+    let deadline = crate::timer::monotonic_ns() + 300_000_000;
+    while crate::timer::monotonic_ns() < deadline {
+        if hba.pr(P_IS) & IS_TFES != 0 || PORT_ERR.load(Ordering::Acquire) {
             return Err("READ LOG EXT errored");
         }
         if hba.pr(P_CI) & 1 == 0 {
@@ -560,6 +571,12 @@ fn poll_tag0() -> Result<(), &'static str> {
 /// called from `recover` (queue drained), so tag 0's bounce buffer is free.
 fn read_log_ext(page: u8) -> Result<[u8; 512], &'static str> {
     let phys = tag_bounce(0);
+    // Tag 0 may be an aborted WRITE that recovery will re-issue: its first sector shares this
+    // bounce buffer with the log page, so save it and put it back afterwards.
+    let mut saved = [0u8; 512];
+    unsafe {
+        core::ptr::copy_nonoverlapping(phys_to_virt(x86_64::PhysAddr::new(phys)).as_ptr::<u8>(), saved.as_mut_ptr(), 512);
+    }
     {
         wait_ready(&Hba::cur());
         let _s = SUBMIT.lock();
@@ -574,14 +591,11 @@ fn read_log_ext(page: u8) -> Result<[u8; 512], &'static str> {
     }
     let r = poll_tag0();
     let mut buf = [0u8; 512];
-    if r.is_ok() {
-        unsafe {
-            core::ptr::copy_nonoverlapping(
-                phys_to_virt(x86_64::PhysAddr::new(phys)).as_ptr::<u8>(),
-                buf.as_mut_ptr(),
-                512,
-            );
+    unsafe {
+        if r.is_ok() {
+            core::ptr::copy_nonoverlapping(phys_to_virt(x86_64::PhysAddr::new(phys)).as_ptr::<u8>(), buf.as_mut_ptr(), 512);
         }
+        core::ptr::copy_nonoverlapping(saved.as_ptr(), phys_to_virt(x86_64::PhysAddr::new(phys)).as_mut_ptr::<u8>(), 512);
     }
     r.map(|()| buf)
 }
