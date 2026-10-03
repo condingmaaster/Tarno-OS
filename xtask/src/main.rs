@@ -143,6 +143,19 @@ fn main() {
                 exit(1);
             }
         }
+        "real4-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real4", "/usr/bin/bash /real4.sh", "real4-done", 250);
+            if out.lines().any(|l| l.trim().ends_with(" first")) {
+                println!("real4-test PASSED: git init / add / commit / log work");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real4-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -679,10 +692,11 @@ fn disk_image() -> PathBuf {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {host} usr/lib/python3.13/{f}"), img.to_str().unwrap()]));
                 }
             }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real4.sh", root.join("xtask/testdata/real4.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3"] {
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
@@ -3934,7 +3948,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

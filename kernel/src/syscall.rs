@@ -114,6 +114,12 @@ const SYS_MPROTECT: u64 = 10;
 const SYS_MADVISE: u64 = 28;
 const SYS_MUNMAP: u64 = 11;
 const SYS_CREAT: u64 = 85;
+const SYS_RENAME: u64 = 82;
+const SYS_LINK: u64 = 86;
+const SYS_SYMLINK: u64 = 88;
+const SYS_LINKAT: u64 = 265;
+const SYS_RENAMEAT: u64 = 264;
+const SYS_RENAMEAT2: u64 = 316;
 const SYS_UMASK: u64 = 95;
 const SYS_GETGROUPS: u64 = 115;
 const SYS_SHMGET: u64 = 29;
@@ -653,6 +659,54 @@ fn sys_open(dirfd: u64, path_ptr: u64, flags: u64) -> i64 {
 /// The process-wide `umask` (stored and returned; file creation still uses fixed modes).
 static UMASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0o022);
 
+/// `rename` / `renameat` / `renameat2` (flags other than 0 are refused).
+fn sys_rename(olddirfd: u64, old: u64, newdirfd: u64, new: u64) -> i64 {
+    let (from, to) = match (user_path_at(olddirfd, old), user_path_at(newdirfd, new)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    for p in [&from, &to] {
+        if let Some(parent) = parent_of(p) {
+            if let Some(pino) = fs.path_lookup(parent) {
+                if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+                    return EACCES;
+                }
+            }
+        }
+    }
+    match fs.rename_path(&from, &to) {
+        Ok(()) => 0,
+        Err("no such file") | Err("parent dir missing") => ENOENT,
+        Err("is a directory") => EISDIR,
+        Err("not a directory") => ENOTDIR,
+        Err("directory not empty") => ENOTEMPTY,
+        Err(_) => EINVAL,
+    }
+}
+
+fn sys_link(olddirfd: u64, old: u64, newdirfd: u64, new: u64) -> i64 {
+    let (from, to) = match (user_path_at(olddirfd, old), user_path_at(newdirfd, new)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    if let Some(pino) = parent_of(&to).and_then(|p| fs.path_lookup(p)) {
+        if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+            return EACCES;
+        }
+    }
+    match fs.link_path(&from, &to) {
+        Ok(()) => 0,
+        Err("no such file") | Err("parent dir missing") => ENOENT,
+        Err("is a directory") => -1, // EPERM
+        Err("already exists") => EEXIST,
+        Err(_) => EINVAL,
+    }
+}
+
 fn sys_mkdir(dirfd: u64, path_ptr: u64) -> i64 {
     let path = match user_path_at(dirfd, path_ptr) {
         Ok(p) => p,
@@ -904,6 +958,16 @@ fn fstat_into(f: &dyn crate::file::FileOps, buf: u64) -> i64 {
     }
     let (a, m, c) = f.times();
     fill_stat_times(buf, a, m, c);
+    // owner of files on the root filesystem (st_uid @28, st_gid @32)
+    if f.ino() != 0 {
+        if let Some(fs) = ext2::open().ok() {
+            let n = fs.read_inode(f.ino() as u32);
+            unsafe {
+                *((buf + 28) as *mut u32) = n.uid as u32;
+                *((buf + 32) as *mut u32) = n.gid as u32;
+            }
+        }
+    }
     0
 }
 
@@ -1077,6 +1141,8 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
         *((buf + 8) as *mut u64) = ino as u64; // st_ino
         *((buf + 16) as *mut u64) = 1;
         *((buf + 24) as *mut u32) = node.mode as u32;
+        *((buf + 28) as *mut u32) = node.uid as u32;
+        *((buf + 32) as *mut u32) = node.gid as u32;
         *((buf + 48) as *mut i64) = node.size as i64;
         *((buf + 56) as *mut i64) = 4096;
         *((buf + 64) as *mut i64) = ((node.size + 511) / 512) as i64;
@@ -1290,6 +1356,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_GETGROUPS => 0, // no supplementary groups
         SYS_OPENAT => sys_open(a1, a2, a3),
 
+        SYS_LINK => sys_link((-100i64) as u64, a1, (-100i64) as u64, a2),
+        SYS_LINKAT => sys_link(a1, a2, a3, a4),
+        SYS_SYMLINK => -1, // EPERM: symbolic links are not supported yet
+        SYS_RENAME => sys_rename((-100i64) as u64, a1, (-100i64) as u64, a2),
+        SYS_RENAMEAT => sys_rename(a1, a2, a3, a4),
+        SYS_RENAMEAT2 => if a5 != 0 { EINVAL } else { sys_rename(a1, a2, a3, a4) },
         SYS_UNLINK => sys_unlink((-100i64) as u64, a1, false),
         SYS_RMDIR => sys_unlink((-100i64) as u64, a1, true),
         SYS_UNLINKAT => sys_unlink(a1, a2, a3 & 0x200 != 0), // flags=a3; AT_REMOVEDIR=0x200

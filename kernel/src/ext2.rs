@@ -1114,6 +1114,10 @@ impl Ext2 {
     /// Unlink a regular file: drop its last link and free it.
     pub fn unlink_path(&self, path: &str) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
+        self.unlink_inner(path)
+    }
+
+    fn unlink_inner(&self, path: &str) -> Result<(), &'static str> {
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such file")?;
@@ -1133,9 +1137,74 @@ impl Ext2 {
         Ok(())
     }
 
+    /// `link(2)`: a new directory entry for an existing regular file.
+    pub fn link_path(&self, old: &str, new: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        let ino = self.path_lookup(old).ok_or("no such file")?;
+        if self.read_inode(ino).mode & 0xF000 == 0x4000 {
+            return Err("is a directory");
+        }
+        let (np, nname) = split_parent(new).ok_or("bad path")?;
+        let nparent = self.path_lookup(np).ok_or("parent dir missing")?;
+        if self.lookup(nparent, nname).is_some() {
+            return Err("already exists");
+        }
+        self.dir_insert(nparent, nname, ino, false)?;
+        self.bump_links(ino, 1);
+        self.sync_backups();
+        Ok(())
+    }
+
+    /// `rename(2)`: move/rename `from` to `to` (replacing an existing file, or an empty directory
+    /// by a directory). Hard links are not involved — the same inode gets a new directory entry.
+    pub fn rename_path(&self, from: &str, to: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        if from == to {
+            return Ok(());
+        }
+        let (fp, fname) = split_parent(from).ok_or("bad path")?;
+        let (tp, tname) = split_parent(to).ok_or("bad path")?;
+        let fparent = self.path_lookup(fp).ok_or("parent dir missing")?;
+        let tparent = self.path_lookup(tp).ok_or("parent dir missing")?;
+        let ino = self.lookup(fparent, fname).ok_or("no such file")?;
+        let is_dir = self.read_inode(ino).mode & 0xF000 == 0x4000;
+        if is_dir && (to.starts_with(from) && to[from.len()..].starts_with('/')) {
+            return Err("invalid");
+        }
+        if let Some(dst) = self.lookup(tparent, tname) {
+            if dst == ino {
+                return Ok(());
+            }
+            let dir_dst = self.read_inode(dst).mode & 0xF000 == 0x4000;
+            match (is_dir, dir_dst) {
+                (true, true) => self.rmdir_inner(to)?,
+                (false, false) => self.unlink_inner(to)?,
+                (false, true) => return Err("is a directory"),
+                (true, false) => return Err("not a directory"),
+            }
+        }
+        self.dir_insert(tparent, tname, ino, is_dir)?;
+        self.dir_remove(fparent, fname).ok_or("dirent vanished")?;
+        if is_dir && fparent != tparent {
+            // the moved directory's ".." now names the new parent
+            let node = self.read_inode(ino);
+            let mut blk = self.block(node.block[0]);
+            blk[12..16].copy_from_slice(&tparent.to_le_bytes());
+            self.write_block(node.block[0], &blk);
+            self.bump_links(fparent, -1);
+            self.bump_links(tparent, 1);
+        }
+        self.sync_backups();
+        Ok(())
+    }
+
     /// Remove an empty directory.
     pub fn rmdir_path(&self, path: &str) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
+        self.rmdir_inner(path)
+    }
+
+    fn rmdir_inner(&self, path: &str) -> Result<(), &'static str> {
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such directory")?;
