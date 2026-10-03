@@ -42,8 +42,7 @@ fn main() {
             bios_test(&img);
         }
         "bios-run" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let log = workspace_root().join("target/bios-run-serial.log");
             println!("serial log: {}", log.display());
             let _ = Command::new("qemu-system-x86_64")
@@ -57,8 +56,7 @@ fn main() {
                 .status();
         }
         "bios-power-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             for (cmd, needle) in [
                 ("reboot", "THOS: rebooting"),
                 ("poweroff", "THOS: powering off"),
@@ -69,23 +67,19 @@ fn main() {
             println!("bios-power-test PASSED: reboot / poweroff / poweroff -f end the machine from the shell");
         }
         "shortcuts-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             shortcuts_test(&img);
         }
         "longcmd-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             longcmd_test(&img);
         }
         "mouse-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             mouse_test(&img);
         }
         "dyn-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "dyn", "dyntest", "dyn ", 90);
             let ok = out.lines().find(|l| l.contains("dyn ok:")).map(str::trim);
             match ok {
@@ -99,14 +93,13 @@ fn main() {
                 }
             }
         }
+        "suite" => suite(&args[1..]),
         "fb-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             fb_test(&img);
         }
         "real-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "real", "/usr/bin/bash /real.sh", "real-script-done", 150);
             let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
             let (bash, sed) = (has("bash-hello"), has("aXc"));
@@ -123,8 +116,7 @@ fn main() {
             }
         }
         "mem-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
             let ok = out.lines().find(|l| l.contains("mem ok:")).map(str::trim);
             match ok {
@@ -139,8 +131,7 @@ fn main() {
             }
         }
         "fork-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "fork", "forktest; forktest-static; echo fk-after-$((11))", "fk-after-11", 90);
             let oks = out.lines().filter(|l| l.contains("fork ok:")).count();
             let ok = (oks == 2).then(|| "dynamic and static glibc: fork, atexit in the child, exit status");
@@ -156,8 +147,7 @@ fn main() {
             }
         }
         "ping-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run_args(
                 &img,
                 "ping",
@@ -184,8 +174,7 @@ fn main() {
                 eprintln!("dns-test SKIPPED: the host cannot resolve example.com (offline?)");
                 exit(0);
             }
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run_args(
                 &img,
                 "dns",
@@ -216,8 +205,7 @@ fn main() {
             }
         }
         "thr-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
             let ok = out.lines().find(|l| l.contains("thr ok:")).map(str::trim);
             let alive = out.lines().any(|l| l.trim() == "thr-after-11");
@@ -233,8 +221,7 @@ fn main() {
             }
         }
         "proc-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "proc", "cat /proc/version; free; ps; ps; ps; echo zzz-$((11))", "zzz-11", 90);
             let has = |needle: &str| out.lines().any(|l| l.contains(needle));
             let (ver, mem, ps_sh) = (has("Linux version"), has("Mem:"), out.lines().any(|l| l.contains("sh") && l.contains("/proc") == false && l.trim_start().starts_with(|c: char| c.is_ascii_digit())));
@@ -251,18 +238,15 @@ fn main() {
             }
         }
         "net-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             net_test(&img);
         }
         "random-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             random_test(&img);
         }
         "bios-kbd-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             bios_kbd_test(&img);
         }
         "kbd-test" => {
@@ -339,7 +323,7 @@ fn main() {
         other => {
             eprintln!("unknown command: {other}");
             eprintln!(
-                "usage: cargo xtask [build|iso|run|bios-image|bios-test|bios-power-test|bios-run|bios-kbd-test|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
+                "usage: cargo xtask [suite [--jobs N] [--only a,b] [--skip-iso]|build|iso|run|bios-image|bios-test|bios-power-test|bios-run|bios-kbd-test|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
             );
             exit(2);
         }
@@ -3802,6 +3786,122 @@ fn login_test(iso: &Path) {
 /// stage 3 `limine-bios.sys`, `limine.conf`, the kernel — Limine does not read
 /// our ext2 here), partition 2 = type-0x83 ext2 root FS (same content as
 /// `disk.img`). Needs `mkfs.fat` (dosfstools), `mtools` and e2fsprogs on PATH.
+/// The production (non-selftest, `interactive`) BIOS image the many boot-and-type tests share.
+/// Normally builds it. Under `cargo xtask suite` the runner has already built it once
+/// (`THOS_PREBUILT_IMG`): each test then works on its **own copy**, because QEMU writes to the disk
+/// (first-run setup creates the admin account in it) and parallel tests must not share a disk.
+fn prod_interactive_image(tag: &str) -> PathBuf {
+    if let Ok(shared) = std::env::var("THOS_PREBUILT_IMG") {
+        let own = workspace_root().join(format!("target/priv-{tag}.img"));
+        std::fs::copy(&shared, &own).expect("copy the prebuilt image");
+        return own;
+    }
+    build_kernel_prod(&["interactive"]);
+    bios_image()
+}
+
+/// `cargo xtask suite [--jobs N] [--only a,b] [--skip-iso]`: build once, then run the tests that
+/// share the production image in parallel (one subprocess each, a private image copy each), then
+/// the ISO tests (each needs its own kernel feature set, so they stay one after another).
+fn suite(args: &[String]) {
+    use std::time::Instant;
+    let root = workspace_root();
+    let jobs: usize = args
+        .iter()
+        .position(|a| a == "--jobs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+        .max(1);
+    let only: Option<Vec<String>> = args
+        .iter()
+        .position(|a| a == "--only")
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.split(',').map(String::from).collect());
+    let skip_iso = args.iter().any(|a| a == "--skip-iso");
+    let keep = |t: &str| only.as_ref().map_or(true, |o| o.iter().any(|x| x == t));
+
+    // tests that boot the shared production image (the slowest first, so the pool stays busy)
+    const SHARED: &[&str] = &[
+        "real-test", "dyn-test", "thr-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
+        "net-test", "random-test", "bios-power-test",
+    ];
+    const ISO: &[&str] = &[
+        "kbd-test", "ahci-test", "ext2-test", "fat-test", "integrity-test", "registry-crash-test",
+        "smp-test", "busybox-test", "pipe-test", "pe-test",
+    ];
+    let out_dir = root.join("target/suite");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let exe = std::env::current_exe().expect("current exe");
+
+    let run_one = |name: String, shared_img: Option<PathBuf>| -> (String, &'static str, f64) {
+        let t0 = Instant::now();
+        let out = std::fs::File::create(out_dir.join(format!("{name}.out"))).unwrap();
+        let err = out.try_clone().unwrap();
+        let mut cmd = Command::new(&exe);
+        cmd.arg(&name).stdout(out).stderr(err);
+        if let Some(img) = &shared_img {
+            cmd.env("THOS_PREBUILT_IMG", img);
+        }
+        let status = cmd.status();
+        let text = std::fs::read_to_string(out_dir.join(format!("{name}.out"))).unwrap_or_default();
+        let verdict = match status {
+            Ok(s) if s.success() && text.contains("SKIPPED") => "SKIPPED",
+            Ok(s) if s.success() => "PASS",
+            _ => "FAIL",
+        };
+        let _ = std::fs::remove_file(root.join(format!("target/priv-{name}.img")));
+        (name, verdict, t0.elapsed().as_secs_f64())
+    };
+
+    let mut results: Vec<(String, &'static str, f64)> = Vec::new();
+    let started = Instant::now();
+
+    let shared: Vec<String> = SHARED.iter().filter(|t| keep(t)).map(|t| t.to_string()).collect();
+    if !shared.is_empty() {
+        println!("suite: building the shared production image once ...");
+        build_kernel_prod(&["interactive"]);
+        let img = bios_image();
+        println!("suite: running {} tests, {} at a time", shared.len(), jobs);
+        let queue = std::sync::Mutex::new(shared.into_iter().collect::<std::collections::VecDeque<_>>());
+        let done = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|sc| {
+            for _ in 0..jobs {
+                sc.spawn(|| loop {
+                    let next = queue.lock().unwrap().pop_front();
+                    let Some(name) = next else { break };
+                    let r = run_one(name, Some(img.clone()));
+                    println!("  {:7} {} ({:.0}s)", r.1, r.0, r.2);
+                    done.lock().unwrap().push(r);
+                });
+            }
+        });
+        results.extend(done.into_inner().unwrap());
+    }
+    if !skip_iso {
+        for t in ISO.iter().filter(|t| keep(t)) {
+            let r = run_one(t.to_string(), None);
+            println!("  {:7} {} ({:.0}s)", r.1, r.0, r.2);
+            results.push(r);
+        }
+    }
+    let fails: Vec<&str> = results.iter().filter(|r| r.1 == "FAIL").map(|r| r.0.as_str()).collect();
+    let skipped = results.iter().filter(|r| r.1 == "SKIPPED").count();
+    println!(
+        "suite: {} run, {} passed, {} skipped, {} failed in {:.0}s",
+        results.len(),
+        results.iter().filter(|r| r.1 == "PASS").count(),
+        skipped,
+        fails.len(),
+        started.elapsed().as_secs_f64()
+    );
+    if !fails.is_empty() {
+        eprintln!("suite FAILED: {} (output in target/suite/<test>.out)", fails.join(", "));
+        exit(1);
+    }
+}
+
 fn bios_image() -> PathBuf {
     const GAP_SECTORS: u64 = 2048;
     const BOOT_MIB: u64 = 64;
