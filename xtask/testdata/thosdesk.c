@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <sys/mman.h>
@@ -199,6 +200,7 @@ static void on_new_client(int ls) {
 
 int main(void) {
     gfx_load_font();
+    signal(SIGCHLD, SIG_IGN);
     int fb = open("/dev/fb0", O_RDWR), mice = open("/dev/input/mice", O_RDONLY);
     int kbd = open("/dev/input/kbd", O_RDONLY);
     wsfd = open("/dev/winsys", O_RDWR);
@@ -235,7 +237,24 @@ int main(void) {
             unsigned char ev[8];
             int t = nwin - 1;
             while (t >= 0 && !wins[t].deco) t--;
-            if (read(kbd, ev, 8) == 8 && t >= 0) {
+            ssize_t kn = read(kbd, ev, 8);
+            if (kn == 8 && ev[0] && (ev[2] & 0x44) && !(ev[2] & 0x40)) {
+                /* Left-Alt shortcuts (AltGr is not Alt): Enter = new terminal, Tab = cycle, F4 = close */
+                if (ev[1] == 0x28) {
+                    if (fork() == 0) { execl("/thosterm", "thosterm", "-l", (char *)0); _exit(127); }
+                } else if (ev[1] == 0x2B && nwin > 1) {
+                    int b = 0;
+                    while (b < nwin && !wins[b].deco) b++;
+                    if (b < nwin && b != nwin - 1) { raise_win(b); compose(frame_of(&wins[nwin - 1])); }
+                } else if (ev[1] == 0x3D && t >= 0) {
+                    struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
+                    if (wins[t].hwnd) ws_send(12, wins[t].hwnd, 0, 0, 0);
+                    else (void)!write(wins[t].fd, &c, sizeof c);
+                    remove_win(t);
+                }
+                kn = 0;
+            }
+            if (kn == 8 && t >= 0) {
                 unsigned cp = ev[3] ? ev[3] : (ev[4] | (ev[5] << 8) | (ev[6] << 16));   /* ASCII, else the code point */
                 struct wl_msg k = { WL_KEY, ev[1], ev[0], cp, ev[2] };
                 if (wins[t].hwnd) { if (ev[0] && ev[3]) ws_send(11, wins[t].hwnd, ev[3], 0, 0); }

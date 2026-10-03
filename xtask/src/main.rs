@@ -279,6 +279,38 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_win32_test(&img);
         }
+        "desk-keys-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/deskkeys-serial.log");
+            let sock = root.join("target/deskkeys-mon.sock");
+            let _ = std::fs::remove_file(&log);
+            let _ = std::fs::remove_file(&sock);
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "desk: ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, "sendkey alt-ret"); // compositor shortcut: new terminal
+                if wait_for(&tlog, "term ready", 40) {
+                    std::thread::sleep(ms(1500));
+                    mon(&tsock, "sendkey alt-f4"); // compositor shortcut: close the focused window
+                }
+            });
+            let out = boot_and_run(&img, "deskkeys", "/busybox sh /desk-keys.sh", "desk ok:", 150);
+            let (started, closed) = (out.contains("term ready"), out.contains("term done"));
+            if started && closed {
+                println!("desk-keys-test PASSED: Alt+Enter opened a terminal window, Alt+F4 closed it again");
+            } else {
+                for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desk-keys-test FAILED (started {started}, closed {closed})");
+                exit(1);
+            }
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -693,6 +725,7 @@ fn disk_image() -> PathBuf {
                 }
             }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real4.sh", root.join("xtask/testdata/real4.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-keys.sh", root.join("xtask/testdata/desk-keys.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -3948,7 +3981,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
