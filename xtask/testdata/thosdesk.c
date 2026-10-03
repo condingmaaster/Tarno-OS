@@ -27,7 +27,7 @@ struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; };
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
 static int W, H, pitch;
@@ -53,9 +53,9 @@ static struct rect isect(struct rect a, struct rect b) {
     return r;
 }
 static int empty(struct rect r) { return r.x1 <= r.x0 || r.y1 <= r.y0; }
-static struct rect frame_of(struct win *w) { return rect_xywh(w->x - BORDER, w->y - TITLE, w->w + 2 * BORDER, w->h + TITLE + BORDER); }
+static struct rect frame_of(struct win *w) { if (!w->deco) return rect_xywh(w->x, w->y, w->w, w->h); return rect_xywh(w->x - BORDER, w->y - TITLE, w->w + 2 * BORDER, w->h + TITLE + BORDER); }
 static struct rect content_of(struct win *w) { return rect_xywh(w->x, w->y, w->w, w->h); }
-static struct rect close_btn(struct win *w) { return rect_xywh(w->x + w->w + BORDER - BTN - 4, w->y - TITLE + 4, BTN, BTN); }
+static struct rect close_btn(struct win *w) { if (!w->deco) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - BTN - 4, w->y - TITLE + 4, BTN, BTN); }
 
 static void fill(struct rect r, uint32_t c) {
     r = clip(r);
@@ -82,7 +82,7 @@ static void compose(struct rect r) {
         int top = i == nwin - 1;
         struct rect f = isect(frame_of(w), r);
         if (!empty(f)) {
-            fill(f, top ? rgb(40, 120, 220) : rgb(100, 100, 110));
+            if (w->deco) fill(f, top ? rgb(40, 120, 220) : rgb(100, 100, 110));
             struct rect cb = isect(close_btn(w), r);
             if (!empty(cb)) fill(cb, rgb(210, 50, 50));
             /* title text, clipped to the damage rectangle */
@@ -127,6 +127,7 @@ static void remove_win(int i) {
 static int in(struct rect r, int x, int y) {
     return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1; }
 
+static struct rect uni(struct rect a, struct rect b);
 static void on_client(int i) {
     struct wl_msg m;
     ssize_t n = read(wins[i].fd, &m, sizeof m);
@@ -135,6 +136,10 @@ static void on_client(int i) {
         memcpy(wins[i].title, &m.a, 16);
         wins[i].title[16] = 0;
         compose(frame_of(&wins[i]));
+    } else if (m.op == WL_POS) {
+        struct rect old = frame_of(&wins[i]);
+        wins[i].x = (int)m.a; wins[i].y = (int)m.b;
+        compose(uni(old, frame_of(&wins[i])));
     } else if (m.op == WL_COMMIT) {
         struct win *w = &wins[i];
         compose(isect(content_of(w), rect_xywh(w->x + m.a, w->y + m.b, m.c, m.d)));
@@ -153,7 +158,9 @@ static void on_new_client(int ls) {
     struct win *w = &wins[nwin++];
     int k = next_id - 1;
     *w = (struct win){ c, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), (int)m.a, (int)m.b, p };
-    struct wl_msg r = { WL_CREATED, (uint32_t)w->id, 0, 0, 0 };
+    w->deco = !(m.d & 1);
+    if (!w->deco) { w->x = 0; w->y = 0; }
+    struct wl_msg r = { WL_CREATED, (uint32_t)w->id, (uint32_t)W, (uint32_t)H, 0 };
     (void)!write(c, &r, sizeof r);
     printf("desk: window %d created %dx%d at %d,%d\n", w->id, w->w, w->h, w->x, w->y);
     fflush(stdout);
@@ -195,9 +202,11 @@ int main(void) {
         idle = 0;
         if (p[0].revents & POLLIN) {
             unsigned char ev[8];
-            if (read(kbd, ev, 8) == 8 && nwin) {
+            int t = nwin - 1;
+            while (t >= 0 && !wins[t].deco) t--;
+            if (read(kbd, ev, 8) == 8 && t >= 0) {
                 struct wl_msg k = { WL_KEY, ev[1], ev[0], ev[3], ev[2] };
-                (void)!write(wins[nwin - 1].fd, &k, sizeof k);
+                (void)!write(wins[t].fd, &k, sizeof k);
             }
         }
         for (int i = nwin - 1; i >= 0; i--)
@@ -225,7 +234,11 @@ int main(void) {
                     } else {
                         if (i != nwin - 1) raise_win(i);
                         w = &wins[nwin - 1];
-                        if (my < w->y) { drag = 1; dx0 = mx - w->x; dy0 = my - w->y; }
+                        if (in(content_of(w), mx, my)) {
+                            struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - w->x), (uint32_t)(my - w->y), 1, 0 };
+                            (void)!write(w->fd, &pm, sizeof pm);
+                        }
+                        if (w->deco && my < w->y) { drag = 1; dx0 = mx - w->x; dy0 = my - w->y; }
                         compose(frame_of(w));
                     }
                     break;
