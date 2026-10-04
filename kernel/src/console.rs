@@ -48,25 +48,33 @@ impl Tty {
             self.pending += 1;
         }
     }
-    /// Take back the last typed byte of the current line.
+    /// Take back the last typed character (a whole UTF-8 sequence) of the current line.
     fn erase_last(&mut self) -> bool {
         if self.pending == 0 {
             return false;
         }
-        self.q.pop_back();
-        self.pending -= 1;
+        while self.pending > 0 {
+            let b = self.q.pop_back();
+            self.pending -= 1;
+            if b.is_some_and(|b| b & 0xC0 != 0x80) {
+                break; // that was the lead byte (or ASCII)
+            }
+        }
         true
     }
-    /// Drop the whole current line; returns how many bytes.
+    /// Drop the whole current line; returns how many characters (for the echo erase).
     fn kill_line(&mut self) -> usize {
         let n = self.pending;
+        let mut chars = 0;
         for _ in 0..n {
-            self.q.pop_back();
+            if self.q.pop_back().is_some_and(|b| b & 0xC0 != 0x80) {
+                chars += 1;
+            }
         }
         self.pending = 0;
-        n
+        chars
     }
-    /// Drop the last word (and blanks before it) of the current line.
+    /// Drop the last word (and blanks before it) of the current line; returns the characters.
     fn kill_word(&mut self) -> usize {
         let mut n = 0;
         while n < self.pending && self.q.iter().rev().nth(n) == Some(&b' ') {
@@ -75,11 +83,14 @@ impl Tty {
         while n < self.pending && self.q.iter().rev().nth(n).is_some_and(|&b| b != b' ') {
             n += 1;
         }
+        let mut chars = 0;
         for _ in 0..n {
-            self.q.pop_back();
+            if self.q.pop_back().is_some_and(|b| b & 0xC0 != 0x80) {
+                chars += 1;
+            }
         }
         self.pending -= n;
-        n
+        chars
     }
     /// Bytes a reader may take now.
     fn committed(&self) -> usize {
@@ -173,6 +184,33 @@ fn ascii(code: u8, shift: bool, altgr: bool) -> u8 {
         hi
     } else {
         lo
+    }
+}
+
+/// The German-layout keys that type a non-ASCII character: `(plain, shifted, altgr)` code points
+/// (0 = none). The dead keys (´ ` ^) type their plain sign instead of composing.
+fn extra(code: u8, shift: bool, altgr: bool) -> u32 {
+    let (lo, hi, ag): (u32, u32, u32) = match code {
+        0x2F => (0xFC, 0xDC, 0),   // ü Ü
+        0x33 => (0xF6, 0xD6, 0),   // ö Ö
+        0x34 => (0xE4, 0xC4, 0),   // ä Ä
+        0x2D => (0xDF, 0, 0),      // ß
+        0x20 => (0, 0xA7, 0xB3),   // § / ³
+        0x1F => (0, 0, 0xB2),      // ²
+        0x35 => (b'^' as u32, 0xB0, 0), // ^ °
+        0x2E => (0xB4, b'`' as u32, 0), // ´ `
+        0x08 => (0, 0, 0x20AC),    // AltGr+E = €
+        0x10 => (0, 0, 0xB5),      // AltGr+M = µ
+        _ => return 0,
+    };
+    if altgr { ag } else if shift { hi } else { lo }
+}
+
+/// UTF-8 bytes of a code point.
+fn utf8_of(cp: u32, out: &mut [u8; 4]) -> usize {
+    match char::from_u32(cp) {
+        Some(c) => c.encode_utf8(out).len(),
+        None => 0,
     }
 }
 
@@ -337,6 +375,64 @@ fn shortcut(k: u8, ctrl: bool, shift: bool) -> bool {
     true
 }
 
+// --- raw key events for a display server (`/dev/input/kbd`) ---
+
+/// Number of open `/dev/input/kbd` files; while non-zero, keystrokes become events there instead of
+/// going to the tty line discipline (the secure attention key is still handled first).
+static KBD_GRAB: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static KBD_Q: Mutex<VecDeque<[u8; 8]>> = Mutex::new(VecDeque::new());
+static KBD_WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+
+pub fn kbd_grab(on: bool) {
+    if on {
+        KBD_GRAB.fetch_add(1, Ordering::AcqRel);
+    } else if KBD_GRAB.fetch_sub(1, Ordering::AcqRel) == 1 {
+        KBD_Q.lock().clear();
+    }
+}
+
+pub fn kbd_ready() -> bool {
+    !KBD_Q.lock().is_empty()
+}
+
+/// One 8-byte event per read: `[1 = press / 0 = release, HID usage, modifier byte, ASCII (0 = none), 0, 0, 0, 0]`.
+pub fn kbd_read(buf: &mut [u8], nonblock: bool) -> i64 {
+    if buf.len() < 8 {
+        return -22;
+    }
+    loop {
+        if let Some(e) = KBD_Q.lock().pop_front() {
+            buf[..8].copy_from_slice(&e);
+            return 8;
+        }
+        if nonblock {
+            return -11;
+        }
+        if crate::signal::interrupted() {
+            return -4;
+        }
+        KBD_WQ.wait_if_intr(|| KBD_Q.lock().is_empty());
+    }
+}
+
+/// Turn the change between two reports into press/release events.
+fn kbd_events(rpt: &[u8; 8], keys: &[u8; 6], prev: &[u8; 6], shift: bool, altgr: bool) {
+    let mut q = KBD_Q.lock();
+    for &k in prev {
+        if k != 0 && !keys.contains(&k) && q.len() < 256 {
+            q.push_back([0, k, rpt[0], 0, 0, 0, 0, 0]);
+        }
+    }
+    for &k in keys {
+        if k != 0 && !prev.contains(&k) && q.len() < 256 {
+            let cp = extra(k, shift, altgr).to_le_bytes();
+            q.push_back([1, k, rpt[0], ascii(k, shift, altgr), cp[0], cp[1], cp[2], 0]);
+        }
+    }
+    drop(q);
+    KBD_WQ.wake_all();
+}
+
 /// Feed one HID boot keyboard report (`[modifiers, reserved, k0..k5]`).
 pub fn feed_report(rpt: &[u8; 8]) {
     crate::random::add_event(u64::from_le_bytes(*rpt)); // keystroke timing is entropy
@@ -366,6 +462,12 @@ pub fn feed_report(rpt: &[u8; 8]) {
         return;
     }
 
+    if KBD_GRAB.load(Ordering::Acquire) > 0 {
+        kbd_events(rpt, &keys, &prev, shift, altgr);
+        *prev = keys;
+        return;
+    }
+
     let mut pushed = false;
 
     let ctrl_only = ctrl && !altgr; // AltGr is reported as Ctrl+Alt on some keyboards
@@ -384,6 +486,11 @@ pub fn feed_report(rpt: &[u8; 8]) {
         }
         let c = ascii(k, shift, altgr);
         if c == 0 {
+            let cp = extra(k, shift, altgr);
+            let mut b = [0u8; 4];
+            for i in 0..utf8_of(cp, &mut b) {
+                push_typed(b[i]);
+            }
             continue;
         }
         if c == 0x08 {

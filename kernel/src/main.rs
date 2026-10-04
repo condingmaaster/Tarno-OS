@@ -37,6 +37,7 @@ mod cpu;
 #[cfg(feature = "interactive")]
 mod cred;
 mod device;
+mod e1000;
 mod elf;
 mod execgate;
 mod ext2;
@@ -57,6 +58,7 @@ mod object;
 mod pci;
 mod pe;
 mod process;
+mod pty;
 mod procfs;
 mod registry;
 mod sched;
@@ -64,12 +66,14 @@ mod secsvc;
 mod net;
 mod net_sock;
 mod seh;
+mod shm;
 mod sock_sys;
 mod signal;
 mod serial;
 mod smp;
 mod syscall;
 mod timer;
+mod unix;
 mod usercopy;
 mod virtio_net;
 mod vfs;
@@ -1281,10 +1285,10 @@ fn storage_milestone() {
     kprintln!("THOS: ahci cap ok      {} sectors; out-of-range read rejected", cap);
 
     // GPT + FAT: a self-contained GPT image (protective MBR, one ESP holding a
-    // FAT32 volume) is spliced in at LBA 51000, past the ext2 image (see xtask
+    // FAT32 volume) is spliced in at LBA 141000, past the ext2 image (see xtask
     // `disk_image`). Find the ESP by type GUID, mount it, read a known file —
     // the full "read the ESP" path: GPT → partition → BPB → FAT chain → 8.3.
-    match gpt::find_esp(51_000) {
+    match gpt::find_esp(141_000) {
         Some(esp_lba) => {
             kprintln!("THOS: gpt ok           ESP at LBA {}", esp_lba);
             match fat::Fat::open(esp_lba).and_then(|v| {
@@ -1297,7 +1301,7 @@ fn storage_milestone() {
                 Err(e) => kprintln!("THOS: fat FAIL         {}", e),
             }
         }
-        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 51000"),
+        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 141000"),
     }
 
     let fs = ext2::open().expect("mount ext2");
@@ -1453,14 +1457,14 @@ fn storage_milestone() {
     }
 
     // AHCI write: round-trip a known pattern through a scratch sector past the
-    // ext2 image (LBA 50000 = ~25 MiB; the fs is the first 16 MiB). The host
+    // ext2 image (LBA 140000 = ~68 MiB; the fs is the first 64 MiB). The host
     // side of `cargo xtask ahci-test` re-checks this landed in the disk file.
     // Fixed-LBA scratch writes are test-image-only: on a real MBR disk those
     // sectors lie inside the user's root partition.
     if ext2::on_partition() {
         kprintln!("THOS: ahci scratch skip real disk — destructive LBA tests not run");
     } else {
-        const SCRATCH_LBA: u64 = 50_000;
+        const SCRATCH_LBA: u64 = 140_000;
         let mut wbuf = [0u8; ahci::SECTOR];
         for (i, b) in wbuf.iter_mut().enumerate() {
             *b = (i as u8) ^ 0xA5;
@@ -1711,6 +1715,9 @@ pub(crate) enum ExitCode {
 }
 
 pub(crate) fn exit_qemu(code: ExitCode) {
+    if matches!(code, ExitCode::Success) {
+        ext2::sync_all(); // the host checks the image afterwards
+    }
     unsafe {
         core::arch::asm!(
             "out dx, eax",

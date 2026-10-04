@@ -42,8 +42,7 @@ fn main() {
             bios_test(&img);
         }
         "bios-run" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let log = workspace_root().join("target/bios-run-serial.log");
             println!("serial log: {}", log.display());
             let _ = Command::new("qemu-system-x86_64")
@@ -57,8 +56,7 @@ fn main() {
                 .status();
         }
         "bios-power-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             for (cmd, needle) in [
                 ("reboot", "THOS: rebooting"),
                 ("poweroff", "THOS: powering off"),
@@ -69,23 +67,19 @@ fn main() {
             println!("bios-power-test PASSED: reboot / poweroff / poweroff -f end the machine from the shell");
         }
         "shortcuts-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             shortcuts_test(&img);
         }
         "longcmd-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             longcmd_test(&img);
         }
         "mouse-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             mouse_test(&img);
         }
         "dyn-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "dyn", "dyntest", "dyn ", 90);
             let ok = out.lines().find(|l| l.contains("dyn ok:")).map(str::trim);
             match ok {
@@ -99,14 +93,13 @@ fn main() {
                 }
             }
         }
+        "suite" => suite(&args[1..]),
         "fb-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             fb_test(&img);
         }
         "real-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "real", "/usr/bin/bash /real.sh", "real-script-done", 150);
             let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
             let (bash, sed) = (has("bash-hello"), has("aXc"));
@@ -122,9 +115,148 @@ fn main() {
                 exit(1);
             }
         }
+        "real2-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real2", "/usr/bin/bash /real2.sh", "real2-done", 200);
+            let has = |needle: &str| out.lines().any(|l| l.trim() == needle);
+            let checks = [("gawk", has("gawk 42")), ("gawk fields", has("b")), ("bc", has("1024")), ("jq", has("6")), ("tar", has("tt/f.txt")), ("make", has("make-works")), ("symlink read", has("data")), ("readlink", has("/tmp/s1")), ("write through link", has("viasym")), ("dir symlink", has("inlinkeddir"))];
+            if checks.iter().all(|c| c.1) {
+                println!("real2-test PASSED: dynamically linked gawk, bc, jq, tar and make run");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real2-test FAILED ({:?})", checks.iter().filter(|c| !c.1).map(|c| c.0).collect::<Vec<_>>());
+                exit(1);
+            }
+        }
+        "real3-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real3", "/usr/bin/bash /real3.sh", "real3-done", 200);
+            if out.lines().any(|l| l.trim() == "perl-ok") && out.lines().any(|l| l.trim() == "2 4 6 8 10") && out.lines().any(|l| l.trim() == "py 42 45") && out.lines().any(|l| l.trim() == "xs:3:55:9") {
+                println!("real3-test PASSED: dynamically linked perl and python3 run scripts");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real3-test FAILED");
+                exit(1);
+            }
+        }
+        "real4-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real4", "/usr/bin/bash /real4.sh", "real4-done", 250);
+            if out.lines().any(|l| l.trim().ends_with(" first")) {
+                println!("real4-test PASSED: git init / add / commit / log work");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real4-test FAILED");
+                exit(1);
+            }
+        }
+        "real5-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real5", "/usr/bin/bash /real5.sh", "real5-done", 250);
+            let want = [
+                "sort=a a b c", "uniq=3", "head=b,a,", "tail=a", "cut=y", "sha=ba7816bf8f01cfea", "md5=90015098", "seq=1 2 3 4 5", "expr=42",
+                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi", "vim=GAMMA", "trunc=abcd", "mode=755", "bigdir=400", "bigdir2=389",
+            ];
+            let mut missing: Vec<&str> = want.iter().copied().filter(|w| !out.lines().any(|l| l.trim() == *w)).collect();
+            if !out.lines().any(|l| l.trim().starts_with("find=") && l.contains("./in.txt") && l.contains("./moved.txt") && l.contains("./empty")) {
+                missing.push("find=...");
+            }
+            if missing.is_empty() {
+                println!("real5-test PASSED: {} coreutils/findutils/diffutils behave (sort, cut, sha256sum, find, xargs, cp, mv, stat, date, ...)", want.len() + 1);
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(60) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real5-test FAILED, missing: {missing:?}");
+                exit(1);
+            }
+        }
+        "rust-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "rust",
+                "rstest; echo rust-after-$((11))",
+                "rust-after-11",
+                150,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            if out.lines().any(|l| l.contains("rs ok:")) {
+                println!("rust-test PASSED: a Rust std program runs (threads, channels, HashMap, files, rename, loopback TCP, process spawn)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("rs") || l.contains("panick") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("rust-test FAILED");
+                exit(1);
+            }
+        }
+        "oom-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "oom", "oomtest; oomtest; echo oom-after-$((11))", "oom-after-11", 200);
+            let oks = out.lines().filter(|l| l.contains("oom ok:")).count();
+            if oks == 2 && !out.contains("PANIC") {
+                println!("oom-test PASSED: exhausting memory ends in ENOMEM (twice, so nothing leaked) instead of a kernel panic");
+            } else {
+                for l in out.lines().filter(|l| l.contains("oom") || l.contains("PANIC") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("oom-test FAILED ({oks} of 2 runs ok)");
+                exit(1);
+            }
+        }
+        "aslr-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "aslr", "asltest; asltest; asltest; echo aslr-after-$((11))", "aslr-after-11", 90);
+            let runs: Vec<Vec<&str>> = out.lines().filter(|l| l.trim().starts_with("asl 0x")).map(|l| l.split_whitespace().skip(1).collect()).collect();
+            // every one of the five addresses (program, heap, big heap, mmap, stack) must differ between at least two runs
+            let moved = |i: usize| runs.len() == 3 && (runs[0][i] != runs[1][i] || runs[1][i] != runs[2][i]);
+            if runs.len() == 3 && (0..5).all(moved) {
+                println!("aslr-test PASSED: program, heap, mmap and stack addresses differ from run to run ({} / {})", runs[0].join(" "), runs[1].join(" "));
+            } else {
+                for l in out.lines().filter(|l| l.contains("asl")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("aslr-test FAILED");
+                exit(1);
+            }
+        }
+        "winc-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "winc", "/busybox sh /winc.sh", "winc-done", 120);
+            let n = |t: &str| out.lines().filter(|l| l.trim() == t).count();
+            if n("hello from win32 2 alpha") == 1 && n("rc-7-end") == 1 && n("hello from win32 1 -") == 2
+                && n("w1 1-2-9 42 ctype") == 1 && n("line-two") + n("w2 line-two") >= 1 && n("w3 rand-ok time-ok") == 1 && n("w4  3.14|ab   |00042|ff") == 1
+                && n("k1 year-ok tick-ok qpc-ok pid-ok") == 1 && n("k2 size-10 read-456 attr-dir") == 1 && n("k3 found-1 bytes-10 name-a.txt") == 1
+                && n("t1 counter-4000 wait-ok") == 1 && n("t2 event-ok sem1-ok sem2-ok") == 1 && n("t3 mutex-ok") == 1
+                && n("k4 moved-ok") == 1 && n("k5 gone-ok") == 1 && n("k6 heap") == 1 {
+                println!("winc-test PASSED: an unmodified mingw console program (msvcrt printf/malloc/strcpy) gets its real argv, returns its exit status and honours pipes and redirection");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS: ") || l.contains("msvcrt") || l.contains("PE")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("winc-test FAILED");
+                exit(1);
+            }
+        }
+        "pipe2-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pipe2", "/usr/bin/bash /pipe2.sh", "pipe2-done-40", 200);
+            if out.lines().any(|l| l.trim() == "pipe2-done-40") {
+                println!("pipe2-test PASSED: 40 command substitutions with a three-stage pipeline of real programs each (they exec at the same time — this used to deadlock in the exec gate)");
+            } else {
+                eprintln!("pipe2-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
             let ok = out.lines().find(|l| l.contains("mem ok:")).map(str::trim);
             match ok {
@@ -139,8 +271,7 @@ fn main() {
             }
         }
         "fork-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "fork", "forktest; forktest-static; echo fk-after-$((11))", "fk-after-11", 90);
             let oks = out.lines().filter(|l| l.contains("fork ok:")).count();
             let ok = (oks == 2).then(|| "dynamic and static glibc: fork, atexit in the child, exit status");
@@ -156,8 +287,7 @@ fn main() {
             }
         }
         "ping-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run_args(
                 &img,
                 "ping",
@@ -177,6 +307,72 @@ fn main() {
                 exit(1);
             }
         }
+        "e1000-test" => {
+            let img = prod_interactive_image(cmd);
+            // the classic 82540EM and the PCIe 82574L ("e1000e") that QEMU also emulates
+            for model in ["e1000", "e1000e"] {
+                let out = boot_and_run_args(
+                    &img,
+                    "e1000",
+                    "ping -c 3 10.0.2.2; echo e1000-after-$((11))",
+                    "e1000-after-11",
+                    90,
+                    &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", &format!("{model},netdev=n0")],
+                );
+                let replies = out.lines().filter(|l| l.contains("bytes from 10.0.2.2")).count();
+                let log = std::fs::read(workspace_root().join("target/e1000-serial.log")).unwrap_or_default();
+                let nic = String::from_utf8_lossy(&log).contains("net nic          e1000");
+                if replies >= 2 && nic {
+                    println!("e1000-test PASSED ({model}): the Intel driver brought the stack up (DHCP/ARP) and BusyBox ping got {replies} of 3 replies");
+                } else {
+                    for l in out.lines().filter(|l| l.contains("ping") || l.contains("PING") || l.contains("bytes") || l.contains("net") || l.contains("packet")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("e1000-test FAILED with {model} ({replies} replies, e1000 driver in use: {nic})");
+                    exit(1);
+                }
+            }
+        }
+        "lo-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "lo",
+                "lotest; echo lo-after-$((11))",
+                "lo-after-11",
+                90,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            if out.lines().any(|l| l.contains("lo ok:")) {
+                println!("lo-test PASSED: TCP and UDP over 127.0.0.1 between two processes");
+            } else {
+                for l in out.lines().filter(|l| l.contains("lo ") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("lo-test FAILED");
+                exit(1);
+            }
+        }
+        "httpd-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "httpd",
+                "/busybox sh /httpd.sh",
+                "httpd-done",
+                90,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            if out.lines().any(|l| l.trim() == "httpd-says-hello") {
+                println!("httpd-test PASSED: BusyBox httpd serves a page and BusyBox wget fetches it over 127.0.0.1 (a server and a client process on one machine)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("httpd") || l.contains("wget") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("httpd-test FAILED");
+                exit(1);
+            }
+        }
         "dns-test" => {
             // Needs the host to be online: QEMU's resolver (10.0.2.3) forwards to the host's.
             use std::net::ToSocketAddrs;
@@ -184,8 +380,7 @@ fn main() {
                 eprintln!("dns-test SKIPPED: the host cannot resolve example.com (offline?)");
                 exit(0);
             }
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run_args(
                 &img,
                 "dns",
@@ -215,9 +410,164 @@ fn main() {
                 exit(1);
             }
         }
+        "ipc-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "ipc", "ipctest; echo ipc-after-$((11))", "ipc-after-11", 90);
+            let ok = out.lines().find(|l| l.contains("ipc ok:")).map(str::trim);
+            if let (Some(l), true) = (ok, !out.contains("page fault")) {
+                println!("ipc-test PASSED: {l}");
+            } else {
+                for l in out.lines().filter(|l| l.contains("ipc") || l.contains("unhandled") || l.contains("fault")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("ipc-test FAILED");
+                exit(1);
+            }
+        }
+        "desk-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_test(&img);
+        }
+        "desk-kbd-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_kbd_test(&img);
+        }
+        "desk-term-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_term_test(&img);
+        }
+        "desk-panel-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_panel_test(&img);
+        }
+        "desk-win32-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_win32_test(&img);
+        }
+        "desk-keys-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/deskkeys-serial.log");
+            let sock = root.join("target/deskkeys-mon.sock");
+            let _ = std::fs::remove_file(&log);
+            let _ = std::fs::remove_file(&sock);
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "desk: ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, "sendkey alt-ret"); // compositor shortcut: new terminal
+                if wait_for(&tlog, "term ready", 40) {
+                    std::thread::sleep(ms(1500));
+                    mon(&tsock, "sendkey alt-f4"); // compositor shortcut: close the focused window
+                    std::thread::sleep(ms(1500));
+                    mon(&tsock, "sendkey ctrl-alt-q"); // compositor shortcut: leave the desktop
+                }
+            });
+            let t0 = std::time::Instant::now();
+            let out = boot_and_run(&img, "deskkeys", "/busybox sh /desk-keys.sh", "desk ok:", 150);
+            let quick = t0.elapsed().as_secs() < 35; // the script alone would wait 40 s before asking the compositor to quit
+            let (started, closed) = (out.contains("term ready"), out.contains("term done"));
+            if started && closed && quick {
+                println!("desk-keys-test PASSED: Alt+Enter opened a terminal window, Alt+F4 closed it again, Ctrl+Alt+Q left the desktop");
+            } else {
+                for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desk-keys-test FAILED (started {started}, closed {closed})");
+                exit(1);
+            }
+        }
+        "desktop-test" => {
+            // the whole thing the way a user starts it: type `desktop` in the console shell
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/desktop-serial.log");
+            let sock = root.join("target/desktop-mon.sock");
+            let shot = root.join("target/desktop.ppm");
+            for f in [&log, &sock, &shot] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "term ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(3000));
+                type_line(&tsock, "echo hellodesktop");
+                wait_for(&tlog, "hellodesktop", 20);
+                std::thread::sleep(ms(1000));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+                std::thread::sleep(ms(500));
+                mon(&tsock, "sendkey alt-f4");
+                std::thread::sleep(ms(1500));
+                std::fs::write(tlog.with_extension("done"), b"x").ok();
+            });
+            // the console shell is grabbed by the compositor once it runs, so the test ends on the host side
+            let out = boot_and_run(&img, "desktop", "desktop -v", "term done", 150);
+            let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+                let (w, h, d) = read_ppm(&shot)?;
+                (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+            };
+            let panel = px(600, 790).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70);
+            let log_text = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).to_string();
+            let echoed = log_text.contains("hellodesktop");
+            if panel && echoed && out.contains("panel ready") {
+                println!("desktop-test PASSED: `desktop` starts compositor, panel and a terminal; a command typed in the terminal ran");
+            } else {
+                eprintln!("  panel pixel {:?}, command echoed {echoed}", px(600, 790));
+                for l in log_text.lines().filter(|l| l.contains("desk") || l.contains("panel") || l.contains("term")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desktop-test FAILED");
+                exit(1);
+            }
+        }
+        "desk-vim-test" => {
+            // an interactive full-screen editor inside the terminal window: raw tty mode, cursor addressing, scrolling
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/deskvim-serial.log");
+            let sock = root.join("target/deskvim-mon.sock");
+            let _ = std::fs::remove_file(&log);
+            let _ = std::fs::remove_file(&sock);
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "term ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(3000));
+                type_line(&tsock, "/usr/bin/vim.tiny -u NONE /tmp/vt.txt");
+                std::thread::sleep(ms(5000));
+                mon(&tsock, "sendkey i");
+                type_raw(&tsock, "hellovim");
+                mon(&tsock, "sendkey esc");
+                std::thread::sleep(ms(500));
+                type_line(&tsock, ":wq");
+                std::thread::sleep(ms(2500));
+                type_line(&tsock, "cat /tmp/vt.txt");
+                wait_for(&tlog, "term-line: hellovim", 20);
+                std::thread::sleep(ms(500));
+                type_line(&tsock, "exit");
+            });
+            let out = boot_and_run(&img, "deskvim", "/busybox sh /desk-vim.sh", "term done", 180);
+            let hits = out.lines().filter(|l| l.trim() == "term-line: hellovim").count();
+            if hits >= 1 {
+                println!("desk-vim-test PASSED: vim.tiny ran full-screen in the terminal window, text typed in insert mode was saved");
+            } else {
+                for l in out.lines().filter(|l| l.contains("term") || l.contains("vim") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desk-vim-test FAILED");
+                exit(1);
+            }
+        }
         "thr-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
             let ok = out.lines().find(|l| l.contains("thr ok:")).map(str::trim);
             let alive = out.lines().any(|l| l.trim() == "thr-after-11");
@@ -233,8 +583,7 @@ fn main() {
             }
         }
         "proc-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "proc", "cat /proc/version; free; ps; ps; ps; echo zzz-$((11))", "zzz-11", 90);
             let has = |needle: &str| out.lines().any(|l| l.contains(needle));
             let (ver, mem, ps_sh) = (has("Linux version"), has("Mem:"), out.lines().any(|l| l.contains("sh") && l.contains("/proc") == false && l.trim_start().starts_with(|c: char| c.is_ascii_digit())));
@@ -251,18 +600,15 @@ fn main() {
             }
         }
         "net-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             net_test(&img);
         }
         "random-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             random_test(&img);
         }
         "bios-kbd-test" => {
-            build_kernel_prod(&["interactive"]);
-            let img = bios_image();
+            let img = prod_interactive_image(cmd);
             bios_kbd_test(&img);
         }
         "kbd-test" => {
@@ -339,7 +685,7 @@ fn main() {
         other => {
             eprintln!("unknown command: {other}");
             eprintln!(
-                "usage: cargo xtask [build|iso|run|bios-image|bios-test|bios-power-test|bios-run|bios-kbd-test|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
+                "usage: cargo xtask [suite [--jobs N] [--only a,b] [--skip-iso]|build|iso|run|bios-image|bios-test|bios-power-test|bios-run|bios-kbd-test|kbd-test|bootpick|bootpick-test|bootpick-tpm-test|ahci-test|ext2-test|integrity-test|smp-test|ncq-error-test|busybox-test|pipe-test|fat-test|pe-test] [--gui]"
             );
             exit(2);
         }
@@ -481,14 +827,14 @@ fn disk_image() -> PathBuf {
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
-        img.to_str().unwrap(), "16384",
+        img.to_str().unwrap(), "65536",
     ]));
     // Grow the backing file past the 16 MiB filesystem: scratch space for the
-    // AHCI write test (LBA 50000) plus room for the FAT32 volume at LBA 51000.
+    // AHCI write test (LBA 140000) plus room for the FAT32 volume at LBA 141000.
     std::fs::OpenOptions::new()
         .write(true)
         .open(&img)
-        .and_then(|f| f.set_len(96 * 1024 * 1024))
+        .and_then(|f| f.set_len(128 * 1024 * 1024))
         .expect("extend disk.img");
     for (name, elf) in elfs {
         run(Command::new("debugfs").args([
@@ -622,9 +968,130 @@ fn disk_image() -> PathBuf {
             // Real Debian programs, dynamically linked: bash, ls, grep, sed with all their libraries.
             let mut dirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real.sh", root.join("xtask/testdata/real.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed"] {
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real3.sh", root.join("xtask/testdata/real3.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            // a minimal Python standard library (startup needs `encodings`; os.py is the prefix landmark)
+            for d in ["usr", "usr/lib", "usr/lib/python3.13", "usr/lib/python3.13/encodings"] {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+            }
+            for f in ["os.py", "linecache.py", "encodings/__init__.py", "encodings/aliases.py", "encodings/utf_8.py", "encodings/latin_1.py", "encodings/ascii.py"] {
+                let host = format!("/usr/lib/python3.13/{f}");
+                if std::path::Path::new(&host).exists() {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {host} usr/lib/python3.13/{f}"), img.to_str().unwrap()]));
+                }
+            }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real4.sh", root.join("xtask/testdata/real4.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-keys.sh", root.join("xtask/testdata/desk-keys.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            copy_tree_into_image(&img, "/usr/lib/x86_64-linux-gnu/perl-base", "/usr/lib/x86_64-linux-gnu/perl-base");
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real5.sh", root.join("xtask/testdata/real5.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for d in ["usr", "usr/share", "usr/share/terminfo", "usr/share/terminfo/l"] {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+            }
+            run(Command::new("debugfs").args(["-w", "-R", "write /usr/share/terminfo/l/linux usr/share/terminfo/l/linux", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-vim.sh", root.join("xtask/testdata/desk-vim.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pipe2.sh", root.join("xtask/testdata/pipe2.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv", "/usr/bin/vim.tiny", "/usr/bin/truncate", "/usr/bin/cat", "/usr/bin/chmod"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
+                }
+            }
+            let rst = root.join("target/rstest");
+            if Command::new("rustc").args(["-O", "-o", rst.to_str().unwrap(), root.join("xtask/testdata/rstest.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rstest", rst.to_str().unwrap()), img.to_str().unwrap()]));
+                add_dynamic_program(&img, "/lib/x86_64-linux-gnu/libgcc_s.so.1", &mut dirs);
+            }
+            let oomt = root.join("target/oomtest");
+            if Command::new("gcc").args(["-O1", "-o", oomt.to_str().unwrap(), root.join("xtask/testdata/oomtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} oomtest", oomt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let asl = root.join("target/asltest");
+            if Command::new("gcc").args(["-O1", "-o", asl.to_str().unwrap(), root.join("xtask/testdata/asltest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} asltest", asl.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} httpd.sh", root.join("xtask/testdata/httpd.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            let lot = root.join("target/lotest");
+            if Command::new("gcc").args(["-O1", "-o", lot.to_str().unwrap(), root.join("xtask/testdata/lotest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} lotest", lot.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let ipc = root.join("target/ipctest");
+            let ipc_ok = Command::new("gcc")
+                .args(["-O1", "-o", ipc.to_str().unwrap(), root.join("xtask/testdata/ipctest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if ipc_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk.sh", root.join("xtask/testdata/desk.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-kbd.sh", root.join("xtask/testdata/desk-kbd.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winc.sh", root.join("xtask/testdata/winc.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            // THOS's C runtime extension for Windows programs: a real PE DLL the loader consults before the built-in msvcrt
+            let mx = root.join("target/msvcrtx.dll");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", mx.to_str().unwrap(), root.join("xtask/msvcrtx/msvcrtx.c").to_str().unwrap(), "-lmsvcrt"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                for d in ["Windows", "Windows/System32"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/msvcrtx.dll", mx.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let k32 = root.join("target/kernel32x.dll");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", k32.to_str().unwrap(), root.join("xtask/msvcrtx/kernel32x.c").to_str().unwrap(), "-lntdll", "-lkernel32"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/kernel32x.dll", k32.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let w3 = root.join("target/w32test.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", w3.to_str().unwrap(), root.join("xtask/testdata/w32test.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} w32test.exe", w3.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let w4 = root.join("target/w32thr.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", w4.to_str().unwrap(), root.join("xtask/testdata/w32thr.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} w32thr.exe", w4.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let wt = root.join("target/wtest.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wt.to_str().unwrap(), root.join("xtask/testdata/wtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wtest.exe", wt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let wc = root.join("target/whello.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join("xtask/testdata/whello.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} whello.exe", wc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let wh = root.join("target/winhello.exe");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O1", "-nostdlib", "-ffreestanding", "-Wl,-e,start", "-o", wh.to_str().unwrap(), root.join("xtask/testdata/winhello.c").to_str().unwrap(), "-luser32", "-lgdi32", "-lkernel32"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel"] {
+                if prog == "thosterm" {
+                    // `desktop` is the same program started under another name: it brings up panel + terminal too
+                    let td = root.join("target/thosdesk");
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
+                }
+                let out = root.join(format!("target/{prog}"));
+                let ok = Command::new("gcc")
+                    .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
+                    .status()
+                    .map(|s| s.success())
+                    .unwrap_or(false);
+                if ok {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                 }
             }
             let mt = root.join("target/memtest");
@@ -820,8 +1287,8 @@ fn disk_image() -> PathBuf {
 
     // A self-contained GPT disk image — one EFI System Partition holding a
     // FAT32 volume with `/EFI/THOS/HELLO.TXT` — spliced into a hole past the
-    // ext2 image (LBA 51000; the fs is the first 16 MiB, the AHCI scratch write
-    // is a single sector at LBA 50000). The kernel walks GPT → ESP → FAT32.
+    // ext2 image (LBA 141000; the fs is the first 32 MiB, the AHCI scratch write
+    // is a single sector at LBA 140000). The kernel walks GPT → ESP → FAT32.
     // Needs `sfdisk` (util-linux), `mkfs.vfat` (dosfstools), `mmd`/`mcopy`
     // (mtools).
     let gpt = root.join("target/esp-gpt.img");
@@ -874,11 +1341,11 @@ fn disk_image() -> PathBuf {
         "bs=512", &format!("seek={part_start}"), "conv=notrunc", "status=none",
     ]));
 
-    // Splice the whole GPT image into the main disk at LBA 51000.
+    // Splice the whole GPT image into the main disk at LBA 141000.
     run(Command::new("dd").args([
         &format!("if={}", gpt.to_str().unwrap()),
         &format!("of={}", img.to_str().unwrap()),
-        "bs=512", "seek=51000", "conv=notrunc", "status=none",
+        "bs=512", "seek=141000", "conv=notrunc", "status=none",
     ]));
 
     img
@@ -3500,7 +3967,7 @@ fn mon(sock: &Path, cmd: &str) {
 }
 
 /// Type `text` (ascii `a-z0-9` only — QEMU `sendkey` names) then Enter.
-fn type_line(sock: &Path, text: &str) {
+fn type_raw(sock: &Path, text: &str) {
     for c in text.chars() {
         // QEMU `sendkey` wants key *names*, not glyphs, for non-alphanumerics.
         // Key *names* / chords for QEMU `sendkey`. The kernel console maps
@@ -3537,6 +4004,11 @@ fn type_line(sock: &Path, text: &str) {
         };
         mon(sock, &format!("sendkey {key}"));
     }
+}
+
+/// [`type_raw`] followed by Enter.
+fn type_line(sock: &Path, text: &str) {
+    type_raw(sock, text);
     mon(sock, "sendkey ret");
 }
 
@@ -3802,6 +4274,122 @@ fn login_test(iso: &Path) {
 /// stage 3 `limine-bios.sys`, `limine.conf`, the kernel — Limine does not read
 /// our ext2 here), partition 2 = type-0x83 ext2 root FS (same content as
 /// `disk.img`). Needs `mkfs.fat` (dosfstools), `mtools` and e2fsprogs on PATH.
+/// The production (non-selftest, `interactive`) BIOS image the many boot-and-type tests share.
+/// Normally builds it. Under `cargo xtask suite` the runner has already built it once
+/// (`THOS_PREBUILT_IMG`): each test then works on its **own copy**, because QEMU writes to the disk
+/// (first-run setup creates the admin account in it) and parallel tests must not share a disk.
+fn prod_interactive_image(tag: &str) -> PathBuf {
+    if let Ok(shared) = std::env::var("THOS_PREBUILT_IMG") {
+        let own = workspace_root().join(format!("target/priv-{tag}.img"));
+        std::fs::copy(&shared, &own).expect("copy the prebuilt image");
+        return own;
+    }
+    build_kernel_prod(&["interactive"]);
+    bios_image()
+}
+
+/// `cargo xtask suite [--jobs N] [--only a,b] [--skip-iso]`: build once, then run the tests that
+/// share the production image in parallel (one subprocess each, a private image copy each), then
+/// the ISO tests (each needs its own kernel feature set, so they stay one after another).
+fn suite(args: &[String]) {
+    use std::time::Instant;
+    let root = workspace_root();
+    let jobs: usize = args
+        .iter()
+        .position(|a| a == "--jobs")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3)
+        .max(1);
+    let only: Option<Vec<String>> = args
+        .iter()
+        .position(|a| a == "--only")
+        .and_then(|i| args.get(i + 1))
+        .map(|v| v.split(',').map(String::from).collect());
+    let skip_iso = args.iter().any(|a| a == "--skip-iso");
+    let keep = |t: &str| only.as_ref().map_or(true, |o| o.iter().any(|x| x == t));
+
+    // tests that boot the shared production image (the slowest first, so the pool stays busy)
+    const SHARED: &[&str] = &[
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
+        "net-test", "random-test", "bios-power-test",
+    ];
+    const ISO: &[&str] = &[
+        "kbd-test", "ahci-test", "ext2-test", "fat-test", "integrity-test", "registry-crash-test",
+        "smp-test", "busybox-test", "pipe-test", "pe-test",
+    ];
+    let out_dir = root.join("target/suite");
+    let _ = std::fs::create_dir_all(&out_dir);
+    let exe = std::env::current_exe().expect("current exe");
+
+    let run_one = |name: String, shared_img: Option<PathBuf>| -> (String, &'static str, f64) {
+        let t0 = Instant::now();
+        let out = std::fs::File::create(out_dir.join(format!("{name}.out"))).unwrap();
+        let err = out.try_clone().unwrap();
+        let mut cmd = Command::new(&exe);
+        cmd.arg(&name).stdout(out).stderr(err);
+        if let Some(img) = &shared_img {
+            cmd.env("THOS_PREBUILT_IMG", img);
+        }
+        let status = cmd.status();
+        let text = std::fs::read_to_string(out_dir.join(format!("{name}.out"))).unwrap_or_default();
+        let verdict = match status {
+            Ok(s) if s.success() && text.contains("SKIPPED") => "SKIPPED",
+            Ok(s) if s.success() => "PASS",
+            _ => "FAIL",
+        };
+        let _ = std::fs::remove_file(root.join(format!("target/priv-{name}.img")));
+        (name, verdict, t0.elapsed().as_secs_f64())
+    };
+
+    let mut results: Vec<(String, &'static str, f64)> = Vec::new();
+    let started = Instant::now();
+
+    let shared: Vec<String> = SHARED.iter().filter(|t| keep(t)).map(|t| t.to_string()).collect();
+    if !shared.is_empty() {
+        println!("suite: building the shared production image once ...");
+        build_kernel_prod(&["interactive"]);
+        let img = bios_image();
+        println!("suite: running {} tests, {} at a time", shared.len(), jobs);
+        let queue = std::sync::Mutex::new(shared.into_iter().collect::<std::collections::VecDeque<_>>());
+        let done = std::sync::Mutex::new(Vec::new());
+        std::thread::scope(|sc| {
+            for _ in 0..jobs {
+                sc.spawn(|| loop {
+                    let next = queue.lock().unwrap().pop_front();
+                    let Some(name) = next else { break };
+                    let r = run_one(name, Some(img.clone()));
+                    println!("  {:7} {} ({:.0}s)", r.1, r.0, r.2);
+                    done.lock().unwrap().push(r);
+                });
+            }
+        });
+        results.extend(done.into_inner().unwrap());
+    }
+    if !skip_iso {
+        for t in ISO.iter().filter(|t| keep(t)) {
+            let r = run_one(t.to_string(), None);
+            println!("  {:7} {} ({:.0}s)", r.1, r.0, r.2);
+            results.push(r);
+        }
+    }
+    let fails: Vec<&str> = results.iter().filter(|r| r.1 == "FAIL").map(|r| r.0.as_str()).collect();
+    let skipped = results.iter().filter(|r| r.1 == "SKIPPED").count();
+    println!(
+        "suite: {} run, {} passed, {} skipped, {} failed in {:.0}s",
+        results.len(),
+        results.iter().filter(|r| r.1 == "PASS").count(),
+        skipped,
+        fails.len(),
+        started.elapsed().as_secs_f64()
+    );
+    if !fails.is_empty() {
+        eprintln!("suite FAILED: {} (output in target/suite/<test>.out)", fails.join(", "));
+        exit(1);
+    }
+}
+
 fn bios_image() -> PathBuf {
     const GAP_SECTORS: u64 = 2048;
     const BOOT_MIB: u64 = 64;
@@ -4054,7 +4642,15 @@ fn shortcuts_test(img: &Path) {
     // 4. Ctrl+D on an empty line ends the shell; the session returns to login.
     let logins = text(&log).matches("THOS login:").count();
     key("ctrl-d");
-    if !wait_for(&log, "THOS: session ended", 20) || text(&log).matches("THOS login:").count() <= logins {
+    let ended = wait_for(&log, "THOS: session ended", 20);
+    for _ in 0..100 {
+        // the login prompt follows the "session ended" line (not necessarily at once)
+        if text(&log).matches("THOS login:").count() > logins {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if !ended || text(&log).matches("THOS login:").count() <= logins {
         fails.push("Ctrl+D did not end the session / return to the login prompt".into());
     }
 
@@ -4173,7 +4769,28 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     }
     std::thread::sleep(std::time::Duration::from_millis(800));
     type_line(&sock, cmd);
-    let _ = wait_for(&log, needle, secs);
+    let found = wait_for(&log, needle, secs);
+    if !found {
+        // a hang: leave the CPUs' registers (three samples, a second apart) next to the log; rip -> `nm` on the kernel
+        use std::io::{Read, Write};
+        let mut all = String::new();
+        for _ in 0..3 {
+            if let Ok(mut st) = std::os::unix::net::UnixStream::connect(&sock) {
+                let _ = writeln!(st, "info registers -a");
+                let _ = st.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+                let mut chunk = [0u8; 4096];
+                while let Ok(n) = st.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    all.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+            all.push_str("\n=====\n");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        let _ = std::fs::write(root.join(format!("target/{tag}-regs.txt")), all);
+    }
     let out = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = child.kill();
     let _ = child.wait();
@@ -4253,6 +4870,10 @@ fn mouse_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/mouse-serial.log");
     let sock = root.join("target/mouse-mon.sock");
+    // A log or socket left over from the last run would let the helper thread below act on the *old*
+    // "mouse ready" before this boot has even started.
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
     let (tlog, tsock) = (log.clone(), sock.clone());
     std::thread::spawn(move || {
         if wait_for(&tlog, "mouse ready", 200) {
@@ -4289,6 +4910,8 @@ fn fb_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/fb-serial.log");
     let sock = root.join("target/fb-mon.sock");
+    let _ = std::fs::remove_file(&log); // see mouse_test: no stale "fb ready" from the last run
+    let _ = std::fs::remove_file(&sock);
     let shot = root.join("target/fb-screen.ppm");
     let _ = std::fs::remove_file(&shot);
     let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
@@ -4350,6 +4973,43 @@ fn fb_test(img: &Path) {
         eprintln!("fb-test FAILED (rectangle {rect_ok}, cursor {cursor_ok}, mmap {mmap_ok})");
         exit(1);
     }
+}
+
+/// Copy a host directory tree (regular files only) into the image with one `debugfs -f` batch.
+fn copy_tree_into_image(img: &Path, host_dir: &str, image_dir: &str) {
+    let mut cmds = String::new();
+    let mut made = std::collections::BTreeSet::new();
+    let mut stack = vec![PathBuf::from(host_dir)];
+    let mk = |dir: &str, cmds: &mut String, made: &mut std::collections::BTreeSet<String>| {
+        let mut cur = String::new();
+        for part in dir.split('/').filter(|p| !p.is_empty()) {
+            cur.push('/');
+            cur.push_str(part);
+            if made.insert(cur.clone()) {
+                cmds.push_str(&format!("mkdir {cur}\n"));
+            }
+        }
+    };
+    mk(image_dir, &mut cmds, &mut made);
+    while let Some(d) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&d) else { continue };
+        for e in rd.flatten() {
+            let path = e.path();
+            let rel = path.strip_prefix(host_dir).unwrap().to_string_lossy().to_string();
+            let target = format!("{}/{}", image_dir.trim_end_matches('/'), rel);
+            match e.file_type() {
+                Ok(t) if t.is_dir() => {
+                    mk(&target, &mut cmds, &mut made);
+                    stack.push(path);
+                }
+                Ok(t) if t.is_file() => cmds.push_str(&format!("write {} {}\n", path.display(), target)),
+                _ => {}
+            }
+        }
+    }
+    let script = workspace_root().join("target/debugfs-tree.cmds");
+    std::fs::write(&script, cmds).expect("write debugfs script");
+    let _ = Command::new("debugfs").args(["-w", "-f", script.to_str().unwrap(), img.to_str().unwrap()]).output();
 }
 
 /// Copy a dynamically linked host program and every library `ldd` lists for it into the image
@@ -4866,7 +5526,7 @@ fn boot_kernel_headless(tag: &str, iso: &Path, disk: &Path, smp: u32) -> String 
 }
 
 /// Must match `SCRATCH_LBA` / the pattern in `kernel/src/main.rs`.
-const AHCI_SCRATCH_LBA: u64 = 50_000;
+const AHCI_SCRATCH_LBA: u64 = 140_000;
 
 fn ahci_test(iso: &Path) {
     use std::io::Read;
@@ -5306,6 +5966,342 @@ fn pipe_test(iso: &Path) {
         println!("pipe-test: OK — `|` and `$(…)` work through BusyBox sh");
     } else {
         eprintln!("pipe-test: FAIL — pipe / command-substitution output wrong\n--- serial ---\n{serial}\n---");
+        exit(1);
+    }
+}
+
+/// Parse a binary PPM (P6) into `(width, height, rgb bytes)`.
+fn read_ppm(path: &Path) -> Option<(usize, usize, Vec<u8>)> {
+    let data = std::fs::read(path).ok()?;
+    let mut pos = 0;
+    let mut tok = Vec::new();
+    while tok.len() < 4 {
+        while pos < data.len() && data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        let start = pos;
+        while pos < data.len() && !data[pos].is_ascii_whitespace() {
+            pos += 1;
+        }
+        tok.push(String::from_utf8_lossy(&data[start..pos]).to_string());
+    }
+    pos += 1; // the single whitespace after maxval
+    if tok[0] != "P6" {
+        return None;
+    }
+    Some((tok[1].parse().ok()?, tok[2].parse().ok()?, data[pos..].to_vec()))
+}
+
+/// `cargo xtask desk-test`: the userspace compositor (`thosdesk`) with two `thoswin` clients —
+/// overlap and z-order, raise-on-click, titlebar drag — checked on QEMU screendumps.
+fn desk_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/desk-serial.log");
+    let sock = root.join("target/desk-mon.sock");
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/desk-{i}.ppm"))).collect();
+    for s in &shots {
+        let _ = std::fs::remove_file(s);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "desk: window 2 created", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1500));
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        let Some((w, h, _)) = read_ppm(&tshots[0]) else { return };
+        // the cursor starts at the screen centre; walk it onto window 1's titlebar (150, 68)
+        let walk = |dx: i32, dy: i32| {
+            let (mut rx, mut ry) = (dx, dy);
+            while rx != 0 || ry != 0 {
+                let sx = rx.clamp(-40, 40);
+                let sy = ry.clamp(-40, 40);
+                mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                rx -= sx;
+                ry -= sy;
+            }
+        };
+        walk(150 - (w as i32) / 2, 68 - (h as i32) / 2);
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(500));
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        // press again on the (now top) window's titlebar and drag it +300,+250
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        walk(300, 250);
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(500));
+        mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+        std::thread::sleep(ms(1500));
+        type_line(&tsock, "thoswin quit");
+    });
+    let out = boot_and_run(img, "desk", "/busybox sh /desk.sh", "desk ok:", 150);
+    let px = |i: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shots[i])?;
+        if x >= w || y >= h {
+            return None;
+        }
+        let o = (y * w + x) * 3;
+        Some((*d.get(o)?, *d.get(o + 1)?, *d.get(o + 2)?))
+    };
+    let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| {
+        a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24)
+    };
+    let (red, green, bg) = ((220, 40, 40), (40, 200, 60), (30, 50, 90));
+    // A = red at (100,80) 300x200; B = green at (180,140) 300x200 on top of it
+    let c1 = near(px(0, 120, 100), red) && near(px(0, 300, 200), green) && near(px(0, 460, 320), green) && near(px(0, 700, 600), bg);
+    // after clicking A's titlebar A is on top
+    let c2 = near(px(1, 300, 200), red) && near(px(1, 460, 320), green);
+    // dragged +300,+250: A's old top-left is background, its new body is red, B is uncovered again
+    let c3 = near(px(2, 120, 100), bg) && near(px(2, 550, 430), red) && near(px(2, 200, 160), green);
+    let quit = out.lines().any(|l| l.contains("desk ok:"));
+    if c1 && c2 && c3 && quit {
+        println!("desk-test PASSED: compositor — two client windows overlap in z-order, a click raises, the titlebar drags, the client quit cleanly");
+    } else {
+        eprintln!("  shot1: A-only {:?} overlap {:?} B-only {:?} bg {:?}", px(0, 120, 100), px(0, 300, 200), px(0, 460, 320), px(0, 700, 600));
+        eprintln!("  shot2: overlap {:?} B-only {:?}", px(1, 300, 200), px(1, 460, 320));
+        eprintln!("  shot3: old A {:?} new A {:?} B {:?}", px(2, 120, 100), px(2, 550, 430), px(2, 200, 160));
+        for l in out.lines().filter(|l| l.contains("desk") || l.contains("win") || l.contains("unhandled") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-test FAILED (initial {c1}, raise {c2}, drag {c3}, quit {quit})");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-kbd-test`: keystrokes reach the focused window's client through the compositor
+/// (`/dev/input/kbd` -> `thosdesk` -> `WL_KEY` -> `thostext`) and its text — and the title — are on screen.
+fn desk_kbd_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskkbd-serial.log");
+    let sock = root.join("target/deskkbd-mon.sock");
+    let shot = root.join("target/deskkbd.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "text ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1500));
+        for k in ["h", "e", "l", "l", "o"] {
+            mon(&tsock, &format!("sendkey {k}"));
+            std::thread::sleep(ms(150));
+        }
+        std::thread::sleep(ms(800));
+        mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        mon(&tsock, "sendkey esc");
+    });
+    let out = boot_and_run(img, "deskkbd", "/busybox sh /desk-kbd.sh", "text done", 150);
+    // window at (100,80) 400x200; text origin (8,8) in the window, five 8x16 glyphs
+    let count = |x0: usize, y0: usize, x1: usize, y1: usize, pred: &dyn Fn(u8, u8, u8) -> bool| -> usize {
+        let Some((w, _, d)) = read_ppm(&shot) else { return 0 };
+        let mut n = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let o = (y * w + x) * 3;
+                if o + 2 < d.len() && pred(d[o], d[o + 1], d[o + 2]) {
+                    n += 1;
+                }
+            }
+        }
+        n
+    };
+    let white = |r: u8, g: u8, b: u8| r > 200 && g > 200 && b > 200;
+    let typed = count(108, 88, 148, 104, &white); // where "hello" is
+    let beyond = count(160, 88, 300, 104, &white); // nothing typed here
+    let title = count(104, 60, 200, 78, &white); // "typewriter" in the titlebar
+    if typed > 30 && beyond == 0 && title > 30 && out.contains("text done") {
+        println!("desk-kbd-test PASSED: typed text reached the focused client through the compositor ({typed} text pixels, title drawn: {title})");
+    } else {
+        eprintln!("  text pixels {typed}, beyond {beyond}, title pixels {title}");
+        for l in out.lines().filter(|l| l.contains("text") || l.contains("desk") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-kbd-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-term-test`: a terminal window with a real BusyBox shell on a pty — a command typed
+/// on the (emulated) keyboard goes compositor -> terminal -> pty -> shell and its output comes back.
+fn desk_term_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskterm-serial.log");
+    let sock = root.join("target/deskterm-mon.sock");
+    let shot = root.join("target/deskterm.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "term ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(3000)); // the shell starts and prints its prompt
+        type_line(&tsock, "echo hellothos");
+        if wait_for(&tlog, "term-line: hellothos", 30) {
+            std::thread::sleep(ms(800));
+            mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            std::thread::sleep(ms(1000));
+        }
+        // German layout: the key right of "ö" (US apostrophe) types "ä" — typed in, echoed back through the pty
+        for k in ["e", "c", "h", "o", "spc", "apostrophe", "ret"] {
+            mon(&tsock, &format!("sendkey {k}"));
+            std::thread::sleep(ms(150));
+        }
+        wait_for(&tlog, "term-line: ä", 20);
+        type_line(&tsock, "exit");
+    });
+    let out = boot_and_run(img, "deskterm", "/busybox sh /desk-term.sh", "desk ok:", 150);
+    let line = out.lines().any(|l| l.trim() == "term-line: hellothos") && out.lines().any(|l| l.trim() == "term-line: ä");
+    let (w, count) = match read_ppm(&shot) {
+        Some((w, _, d)) => {
+            let mut n = 0;
+            for y in 84..84 + 384 {
+                for x in 100..100 + 640 {
+                    let o = (y * w + x) * 3;
+                    if d[o] > 160 && d[o + 1] > 160 && d[o + 2] > 160 {
+                        n += 1;
+                    }
+                }
+            }
+            (w, n)
+        }
+        None => (0, 0),
+    };
+    if line && count > 200 && out.contains("term done") {
+        println!("desk-term-test PASSED: a typed command ran in a BusyBox shell on a pty inside a terminal window ({count} text pixels on screen, width {w})");
+    } else {
+        eprintln!("  output line seen: {line}, text pixels: {count}");
+        for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault") || l.contains("unhandled")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-term-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-panel-test`: the panel client sits undecorated at the bottom edge; clicking its
+/// "Terminal" button (pointer events from the compositor) launches a terminal window.
+fn desk_panel_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskpanel-serial.log");
+    let sock = root.join("target/deskpanel-mon.sock");
+    let shot = root.join("target/deskpanel.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "panel ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1000));
+        // cursor starts at the centre (640,400); the button is at (56, 784)
+        let (mut rx, mut ry) = (56 - 640, 784 - 400);
+        while rx != 0 || ry != 0 {
+            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+            mon(&tsock, &format!("mouse_move {sx} {sy}"));
+            rx -= sx;
+            ry -= sy;
+        }
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        if wait_for(&tlog, "term ready", 40) {
+            std::thread::sleep(ms(1500));
+            mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+        }
+    });
+    let out = boot_and_run(img, "deskpanel", "/busybox sh /desk-panel.sh", "desk ok:", 150);
+    let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shot)?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let bar_ok = px(600, 790).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // panel colour 0x282832
+    let term = out.contains("term ready");
+    if bar_ok && term {
+        println!("desk-panel-test PASSED: undecorated panel at the bottom edge; a click on its button launched a terminal window");
+    } else {
+        eprintln!("  panel pixel {:?}, terminal launched: {term}", px(600, 790));
+        for l in out.lines().filter(|l| l.contains("panel") || l.contains("term") || l.contains("desk") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-panel-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-win32-test`: a real Win32 program (mingw-built `winhello.exe`) opens a window that the
+/// compositor shows next to the Linux clients; a click is delivered as WM_LBUTTONDOWN and repaints it.
+fn desk_win32_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskwin32-serial.log");
+    let sock = root.join("target/deskwin32-mon.sock");
+    let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/deskwin32-{i}.ppm"))).collect();
+    for f in [&log, &sock] {
+        let _ = std::fs::remove_file(f);
+    }
+    for s in &shots {
+        let _ = std::fs::remove_file(s);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "desk: win32 window", 200) {
+            return;
+        }
+        std::thread::sleep(ms(2500));
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        std::thread::sleep(ms(1000));
+        // click inside the window: window content at (100,80) 300x200; cursor from the centre (640,400)
+        let (mut rx, mut ry) = (150 - 640, 150 - 400);
+        while rx != 0 || ry != 0 {
+            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+            mon(&tsock, &format!("mouse_move {sx} {sy}"));
+            rx -= sx;
+            ry -= sy;
+        }
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(2000));
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+    });
+    let out = boot_and_run(img, "deskwin32", "/busybox sh /desk-win32.sh", "desk ok:", 150);
+    let px = |i: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shots[i])?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24);
+    // blue-ish background, yellow rectangle at (40..140, 40..100) in the window; after the click the blue is darker
+    let c1 = near(px(0, 100 + 250, 80 + 20), (30, 160, 200)) && near(px(0, 100 + 80, 80 + 70), (250, 220, 40));
+    let c2 = near(px(1, 100 + 250, 80 + 20), (30, 160, 140));
+    if c1 && c2 {
+        println!("desk-win32-test PASSED: a real Win32 .exe (mingw) draws into a compositor window; a click arrives as WM_LBUTTONDOWN and repaints it");
+    } else {
+        eprintln!("  before click: bg {:?} rect {:?}; after: bg {:?}", px(0, 350, 100), px(0, 180, 150), px(1, 350, 100));
+        for l in out.lines().filter(|l| l.contains("desk") || l.contains("win") || l.contains("PE") || l.contains("fault") || l.contains("unhandled")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-win32-test FAILED");
         exit(1);
     }
 }

@@ -34,6 +34,11 @@ pub fn user_exits() -> u64 {
 /// Count a user thread that ended without `exit` (e.g. killed by a fault).
 pub fn note_user_exit() {
     USER_EXITS.fetch_add(1, Ordering::Release);
+    if let Some(t) = sched::current().task() {
+        if t.only_thread_left() {
+            t.close_all_fds(); // a killed process releases its files at once
+        }
+    }
 }
 
 // Linux x86-64 syscall numbers.
@@ -113,6 +118,25 @@ const SYS_SETGID: u64 = 106;
 const SYS_MPROTECT: u64 = 10;
 const SYS_MADVISE: u64 = 28;
 const SYS_MUNMAP: u64 = 11;
+const SYS_CREAT: u64 = 85;
+const SYS_RENAME: u64 = 82;
+const SYS_LINK: u64 = 86;
+const SYS_TRUNCATE: u64 = 76;
+const SYS_FCHMOD: u64 = 91;
+const SYS_FCHOWN: u64 = 93;
+const SYS_SYMLINKAT: u64 = 266;
+const SYS_SYMLINK: u64 = 88;
+const SYS_LINKAT: u64 = 265;
+const SYS_RENAMEAT: u64 = 264;
+const SYS_RENAMEAT2: u64 = 316;
+const SYS_UMASK: u64 = 95;
+const SYS_GETGROUPS: u64 = 115;
+const SYS_SHMGET: u64 = 29;
+const SYS_SHMAT: u64 = 30;
+const SYS_SHMCTL: u64 = 31;
+const SYS_SHMDT: u64 = 67;
+const SYS_FTRUNCATE: u64 = 77;
+const SYS_MEMFD_CREATE: u64 = 319;
 const SYS_KILL: u64 = 62;
 const SYS_REBOOT: u64 = 169;
 const SYS_GETTIMEOFDAY: u64 = 96;
@@ -135,6 +159,7 @@ const SYS_BIND: u64 = 49;
 const SYS_LISTEN: u64 = 50;
 const SYS_GETSOCKNAME: u64 = 51;
 const SYS_GETPEERNAME: u64 = 52;
+const SYS_SOCKETPAIR: u64 = 53;
 const SYS_SETSOCKOPT: u64 = 54;
 const SYS_GETSOCKOPT: u64 = 55;
 const SYS_ACCEPT4: u64 = 288;
@@ -362,10 +387,18 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
     if len > crate::mm::FRAME_ALLOC.lock().free_frames() * 4096 && prot != 0 {
         return ENOMEM;
     }
-    let data: Option<alloc::vec::Vec<u8>> = if flags & MAP_ANON != 0 {
+    let file: Option<alloc::sync::Arc<dyn crate::file::FileOps>> = if flags & MAP_ANON != 0 {
         None
     } else {
         let Some(f) = cur_fd(fd) else { return EBADF };
+        if flags & 1 != 0 {
+            if let Some(sec) = f.shm_section() {
+                if fixed || off as usize >= sec.size {
+                    return EINVAL;
+                }
+                return proc.map_section_view(&sec, off as usize, (len as usize).min(sec.size - off as usize)) as i64;
+            }
+        }
         if let Some((phys, dev_len)) = f.device_phys() {
             // device memory (the framebuffer): shared, not copied
             if off >= dev_len {
@@ -373,26 +406,18 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
             }
             return proc.mmap_device(addr, fixed, len.min(dev_len - off), prot, phys + off) as i64;
         }
-        let save = f.seek(0, 1);
-        if f.seek(off as i64, 0) < 0 {
-            return EINVAL;
-        }
-        let mut buf = alloc::vec![0u8; len as usize];
-        let mut got = 0usize;
-        while got < buf.len() {
-            let n = f.read(&mut buf[got..]);
-            if n <= 0 {
-                break;
-            }
-            got += n as usize;
-        }
-        buf.truncate(got);
-        if save >= 0 {
-            f.seek(save, 0);
-        }
-        Some(buf)
+        Some(f)
     };
-    proc.mmap_region(addr, fixed, len, prot, data.as_deref()) as i64
+    // MAP_PRIVATE file mapping: each page is copied from the file at its offset; the caller's own file
+    // position is restored afterwards.
+    let saved = file.as_ref().map(|f| f.seek(0, 1));
+    let r = proc.mmap_region(addr, fixed, len, prot, file.as_ref().map(|f| (&**f, off)));
+    if let (Some(f), Some(pos)) = (&file, saved) {
+        if pos >= 0 {
+            f.seek(pos, 0);
+        }
+    }
+    r as i64
 }
 
 /// `prlimit64(pid, resource, new, old)` / `getrlimit(resource, rlim)`: report the limits (new
@@ -436,7 +461,19 @@ fn sys_readlink(path_ptr: u64, buf: u64, size: u64) -> i64 {
                 Err(e) => e,
             }
         }
-        None => EINVAL,
+        None => match ext2::open().ok().and_then(|fs| fs.path_lookup_nofollow(&path).and_then(|i| fs.read_link(i))) {
+            Some(target) => {
+                let n = target.len().min(size as usize);
+                match usercopy::slice_mut(buf, n) {
+                    Ok(b) => {
+                        b.copy_from_slice(&target.as_bytes()[..n]);
+                        n as i64
+                    }
+                    Err(e) => e,
+                }
+            }
+            None => EINVAL,
+        },
     }
 }
 
@@ -508,7 +545,8 @@ fn sys_statx(dirfd: u64, path_ptr: u64, flags: u64, buf: u64) -> i64 {
             (mode, size, 0, 0, 0, 0, 0, 0)
         } else {
             let Some(fs) = ext2::open().ok() else { return -5 };
-            let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+            let found = if flags & 0x100 != 0 { fs.path_lookup_nofollow(&path) } else { fs.path_lookup(&path) };
+            let Some(ino) = found else { return ENOENT };
             let n = fs.read_inode(ino);
             (n.mode as u32, n.size, ino as u64, n.uid, n.gid, n.atime, n.mtime, n.ctime)
         }
@@ -604,8 +642,8 @@ fn sys_pipe(fds_ptr: u64, flags: u64) -> i64 {
     0
 }
 
-fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
-    let path = match user_path(path_ptr) {
+fn sys_unlink(dirfd: u64, path_ptr: u64, dir: bool) -> i64 {
+    let path = match user_path_at(dirfd, path_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
@@ -621,8 +659,8 @@ fn sys_unlink(path_ptr: u64, dir: bool) -> i64 {
     }
 }
 
-fn sys_open(path_ptr: u64, flags: u64) -> i64 {
-    match user_path(path_ptr) {
+fn sys_open(dirfd: u64, path_ptr: u64, flags: u64) -> i64 {
+    match user_path_at(dirfd, path_ptr) {
         Ok(p) => open_resolved(&p, flags),
         Err(e) => e,
     }
@@ -632,13 +670,91 @@ fn sys_open(path_ptr: u64, flags: u64) -> i64 {
 /// always `0755`, matching `ext2::mkdir_path`'s prior hardcoded behaviour);
 /// what's new here is a real owner (the calling task's uid) instead of the
 /// permanent system uid every directory got before this increment.
-fn sys_mkdir(path_ptr: u64) -> i64 {
-    let path = match user_path(path_ptr) {
+/// The process-wide `umask` (stored and returned; file creation still uses fixed modes).
+static UMASK: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0o022);
+
+/// `rename` / `renameat` / `renameat2` (flags other than 0 are refused).
+fn sys_rename(olddirfd: u64, old: u64, newdirfd: u64, new: u64) -> i64 {
+    let (from, to) = match (user_path_at(olddirfd, old), user_path_at(newdirfd, new)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    for p in [&from, &to] {
+        if let Some(parent) = parent_of(p) {
+            if let Some(pino) = fs.path_lookup(parent) {
+                if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+                    return EACCES;
+                }
+            }
+        }
+    }
+    match fs.rename_path(&from, &to) {
+        Ok(()) => 0,
+        Err("no such file") | Err("parent dir missing") => ENOENT,
+        Err("is a directory") => EISDIR,
+        Err("not a directory") => ENOTDIR,
+        Err("directory not empty") => ENOTEMPTY,
+        Err(_) => EINVAL,
+    }
+}
+
+fn sys_symlink(target_ptr: u64, newdirfd: u64, link_ptr: u64) -> i64 {
+    let target = match usercopy::cstr(target_ptr, 4096) {
+        Ok(t) => t,
+        Err(e) => return e,
+    };
+    let path = match user_path_at(newdirfd, link_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
+    if let Some(pino) = parent_of(&path).and_then(|p| fs.path_lookup(p)) {
+        if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+            return EACCES;
+        }
+    }
+    match fs.symlink_path(&target, &path, task.uid, task.gid) {
+        Ok(()) => 0,
+        Err("already exists") => EEXIST,
+        Err("parent dir missing") => ENOENT,
+        Err(_) => EINVAL,
+    }
+}
+
+fn sys_link(olddirfd: u64, old: u64, newdirfd: u64, new: u64) -> i64 {
+    let (from, to) = match (user_path_at(olddirfd, old), user_path_at(newdirfd, new)) {
+        (Ok(a), Ok(b)) => (a, b),
+        (Err(e), _) | (_, Err(e)) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    if let Some(pino) = parent_of(&to).and_then(|p| fs.path_lookup(p)) {
+        if !fs.read_inode(pino).access_ok(task.uid, task.gid, true) {
+            return EACCES;
+        }
+    }
+    match fs.link_path(&from, &to) {
+        Ok(()) => 0,
+        Err("no such file") | Err("parent dir missing") => ENOENT,
+        Err("is a directory") => -1, // EPERM
+        Err("already exists") => EEXIST,
+        Err(_) => EINVAL,
+    }
+}
+
+fn sys_mkdir(dirfd: u64, path_ptr: u64) -> i64 {
+    let path = match user_path_at(dirfd, path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let Some(task) = sched::current().task() else { return EBADF };
+    let Some(fs) = ext2::open().ok() else { return EIO };
+    if fs.path_lookup(&path).is_some() {
+        return EEXIST; // `mkdir -p` relies on EEXIST for directories that are already there ("/" included)
+    }
     // Same rule as O_CREAT in `open_resolved`: creating an entry is a write
     // to the *parent* directory, checked against the parent's own mode bits.
     if let Some(parent) = parent_of(&path) {
@@ -660,11 +776,57 @@ fn sys_mkdir(path_ptr: u64) -> i64 {
 /// `chmod(path, mode)` — only the owner or root (uid 0) may change a file's
 /// permission bits, checked here (`ext2::chmod_path` itself does no check —
 /// see its doc comment).
+/// `fchmod` / `fchown` on an open ext2 file: the same checks as the path versions.
+fn sys_fchmod(fd: u64, mode: u64) -> i64 {
+    match cur_fd(fd) {
+        Some(f) => match f.fs_path() {
+            Some(p) => chmod_path_checked(&p, mode),
+            None => 0, // devices, pipes, sockets: nothing to change
+        },
+        None => EBADF,
+    }
+}
+
+fn sys_fchown(fd: u64, uid: u64, gid: u64) -> i64 {
+    match cur_fd(fd) {
+        Some(f) => match f.fs_path() {
+            Some(p) => chown_path_checked(&p, uid, gid),
+            None => 0,
+        },
+        None => EBADF,
+    }
+}
+
+/// `truncate(path, len)`.
+fn sys_truncate(path_ptr: u64, len: u64) -> i64 {
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let fd = open_resolved(&path, 1); // O_WRONLY
+    if fd < 0 {
+        return fd;
+    }
+    let r = match cur_fd(fd as u64) {
+        Some(f) => f.truncate(len),
+        None => EBADF,
+    };
+    if let Some(t) = sched::current().task() {
+        t.fd_close(fd as i32);
+    }
+    r
+}
+
 fn sys_chmod(path_ptr: u64, mode: u64) -> i64 {
     let path = match user_path(path_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
+    chmod_path_checked(&path, mode)
+}
+
+fn chmod_path_checked(path: &str, mode: u64) -> i64 {
+    let path = alloc::string::String::from(path);
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
     let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
@@ -684,6 +846,11 @@ fn sys_chown(path_ptr: u64, uid: u64, gid: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
+    chown_path_checked(&path, uid, gid)
+}
+
+fn chown_path_checked(path: &str, uid: u64, gid: u64) -> i64 {
+    let path = alloc::string::String::from(path);
     let Some(task) = sched::current().task() else { return EBADF };
     if task.uid != 0 {
         return EPERM;
@@ -763,6 +930,15 @@ pub fn open_resolved(path: &str, flags: u64) -> i64 {
     if let Some(r) = open_dev(path, flags & 0x3 != 1, flags & 0x3 != 0) {
         return r;
     }
+    // A symlink as the last component: operate on its target (also what the file will be written back to).
+    let followed;
+    let path = match ext2::open().ok() {
+        Some(fs) => {
+            followed = fs.resolve_final(path);
+            followed.as_str()
+        }
+        None => path,
+    };
     if flags & O_CREAT != 0 {
         let Some(task) = sched::current().task() else {
             return EBADF;
@@ -846,7 +1022,7 @@ pub fn open_resolved_access(path: &str, want_read: bool, want_write: bool) -> i6
         // A directory: hand back a `getdents64`-able stream.
         let entries: alloc::vec::Vec<(u64, u8, alloc::string::String)> =
             fs.read_dir(ino).into_iter().map(|(i, t, n)| (i as u64, t, n)).collect();
-        task.fd_alloc(crate::file::DirFile::new(&entries)) as i64
+        task.fd_alloc(crate::file::DirFile::new(&entries).with_path(path)) as i64
     } else {
         if !want_write && node.size > crate::file::STREAM_THRESHOLD {
             // big and read-only: stream it instead of loading it all
@@ -880,6 +1056,17 @@ fn fstat_into(f: &dyn crate::file::FileOps, buf: u64) -> i64 {
     }
     let (a, m, c) = f.times();
     fill_stat_times(buf, a, m, c);
+    // owner and permission bits of files on the root filesystem (st_mode @24, st_uid @28, st_gid @32)
+    if f.ino() != 0 {
+        if let Some(fs) = ext2::open().ok() {
+            let n = fs.read_inode(f.ino() as u32);
+            unsafe {
+                *((buf + 24) as *mut u32) = n.mode as u32;
+                *((buf + 28) as *mut u32) = n.uid as u32;
+                *((buf + 32) as *mut u32) = n.gid as u32;
+            }
+        }
+    }
     0
 }
 
@@ -898,8 +1085,9 @@ fn fill_stat_times(buf: u64, atime: u32, mtime: u32, ctime: u32) {
 /// edits), so BusyBox `sh` goes interactive — prompt on — but leaves line
 /// editing to us.
 fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
-    if cur_fd(fd).is_none() {
-        return EBADF;
+    let Some(file) = cur_fd(fd) else { return EBADF };
+    if let Some(r) = file.tty_ioctl(cmd, arg) {
+        return r;
     }
     // Every command below writes a fixed-size struct through `arg`.
     let need = match cmd {
@@ -944,7 +1132,7 @@ fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
             *(arg as *mut u32) = signal::FG_PGRP.load(Ordering::Relaxed) as u32;
             0
         },
-        0x4600 | 0x4602 => cur_fd(fd).map_or(EBADF, |f| f.ioctl(cmd, arg)), // fbdev geometry
+        0x4600 | 0x4602 | 0x7701 => cur_fd(fd).map_or(EBADF, |f| f.ioctl(cmd, arg)), // fbdev geometry, winsys map
         0x5421 => {
             // FIONBIO
             let on = usercopy::read_u32(arg).unwrap_or(0) != 0;
@@ -1028,7 +1216,14 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
     if raw.is_empty() && flags & 0x1000 != 0 {
         return sys_fstat(dirfd, buf);
     }
-    let path = process::resolve_path(&raw);
+    let path = if raw.starts_with('/') || dirfd as i32 == -100 {
+        process::resolve_path(&raw)
+    } else {
+        match cur_fd(dirfd).and_then(|f| f.dir_path()) {
+            Some(d) => process::resolve_path(&alloc::format!("{d}/{raw}")),
+            None => process::resolve_path(&raw),
+        }
+    };
     if !usercopy::user_ok(buf, 144, true) {
         return EFAULT;
     }
@@ -1037,7 +1232,8 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
         return fstat_into(&*f, buf);
     }
     let Some(fs) = ext2::open().ok() else { return -5 /* EIO */ };
-    let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
+    let found = if flags & 0x100 != 0 { fs.path_lookup_nofollow(&path) } else { fs.path_lookup(&path) };
+    let Some(ino) = found else { return ENOENT };
     let node = fs.read_inode(ino);
     unsafe {
         core::ptr::write_bytes(buf as *mut u8, 0, 144);
@@ -1045,6 +1241,8 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
         *((buf + 8) as *mut u64) = ino as u64; // st_ino
         *((buf + 16) as *mut u64) = 1;
         *((buf + 24) as *mut u32) = node.mode as u32;
+        *((buf + 28) as *mut u32) = node.uid as u32;
+        *((buf + 32) as *mut u32) = node.gid as u32;
         *((buf + 48) as *mut i64) = node.size as i64;
         *((buf + 56) as *mut i64) = 4096;
         *((buf + 64) as *mut i64) = ((node.size + 511) / 512) as i64;
@@ -1056,6 +1254,19 @@ fn sys_newfstatat(dirfd: u64, path_ptr: u64, buf: u64, flags: u64) -> i64 {
 /// A path argument, resolved against the cwd. A pointer that is not valid user
 /// memory is `EFAULT` — **not** the empty string, which would silently mean "the
 /// current directory".
+/// Directory-relative path resolution for the `*at` calls: a relative path is taken against
+/// `dirfd`'s directory unless `dirfd` is `AT_FDCWD` (-100).
+fn user_path_at(dirfd: u64, ptr: u64) -> Result<alloc::string::String, i64> {
+    let raw = usercopy::cstr(ptr, 4096)?;
+    if raw.starts_with('/') || dirfd as i32 == -100 {
+        return Ok(process::resolve_path(&raw));
+    }
+    match cur_fd(dirfd).and_then(|f| f.dir_path()) {
+        Some(d) => Ok(process::resolve_path(&alloc::format!("{d}/{raw}"))),
+        None => Ok(process::resolve_path(&raw)),
+    }
+}
+
 fn user_path(ptr: u64) -> Result<alloc::string::String, i64> {
     Ok(process::resolve_path(&usercopy::cstr(ptr, 4096)?))
 }
@@ -1148,6 +1359,9 @@ fn sys_nanosleep(clock: u64, flags: u64, req: u64, rem: u64) -> i64 {
     if left > 0 { signal::EINTR } else { 0 }
 }
 
+/// Sentinel `sys_execve` returns after running a PE as a proxy: `PE_PROXY_EXIT + status`.
+const PE_PROXY_EXIT: i64 = i64::MIN + 1024;
+
 /// `execve(path, argv, envp)`. Does not return on success.
 fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
     let path = match user_path(path_ptr) {
@@ -1167,8 +1381,39 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         // Not something we can run (a script, a text file, a truncated
         // binary): ENOEXEC lets the shell fall back instead of the kernel dying
         // inside `execve`'s own `expect`.
+        // A Windows program: run it as its own (NT-personality) task and stand in for it until it
+        // ends; `PE_PROXY_EXIT` tells the dispatcher to exit with its status.
+        Some(bytes) if bytes.starts_with(b"MZ") => match sched::current().task().ok_or(ENOEXEC).and_then(|me| {
+            // Windows command line: the program name, then the arguments, quoted when they hold blanks
+            let mut cl = alloc::string::String::new();
+            for (i, a) in argv.iter().enumerate() {
+                if i > 0 {
+                    cl.push(' ');
+                }
+                if a.contains(' ') {
+                    cl.push('"');
+                    cl.push_str(a);
+                    cl.push('"');
+                } else {
+                    cl.push_str(a);
+                }
+            }
+            process::spawn_pe_args(&bytes, cl.as_bytes(), &me).map_err(|_| ENOEXEC)
+        }) {
+            Ok(pid) => {
+                let Some(t) = process::find_task(pid) else { return ENOEXEC };
+                while !t.is_exited() {
+                    if signal::interrupted() {
+                        return -4;
+                    }
+                    crate::timer::sleep_ns(10_000_000);
+                }
+                PE_PROXY_EXIT + (t.exit_code() & 0xFF) as i64
+            }
+            Err(e) => e,
+        },
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
-        Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
+        Some(bytes) => process::execve(bytes, argv, envp), // -> ! on success
         None => ENOENT,
     }
 }
@@ -1221,14 +1466,27 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             total
         }
 
-        SYS_OPEN => sys_open(a1, a2),
-        SYS_OPENAT => sys_open(a2, a3), // dirfd ignored; paths are absolute
+        SYS_OPEN => sys_open((-100i64) as u64, a1, a2),
+        SYS_CREAT => sys_open((-100i64) as u64, a1, 0o1101), // O_WRONLY | O_CREAT | O_TRUNC
+        SYS_UMASK => UMASK.swap((a1 & 0o777) as u32, Ordering::AcqRel) as i64,
+        SYS_GETGROUPS => 0, // no supplementary groups
+        SYS_OPENAT => sys_open(a1, a2, a3),
 
-        SYS_UNLINK => sys_unlink(a1, false),
-        SYS_RMDIR => sys_unlink(a1, true),
-        SYS_UNLINKAT => sys_unlink(a2, a3 & 0x200 != 0), // flags=a3; AT_REMOVEDIR=0x200
-        SYS_MKDIR => sys_mkdir(a1),
-        SYS_MKDIRAT => sys_mkdir(a2), // dirfd ignored; paths are absolute
+        SYS_TRUNCATE => sys_truncate(a1, a2),
+        SYS_FCHMOD => sys_fchmod(a1, a2),
+        SYS_FCHOWN => sys_fchown(a1, a2, a3),
+        SYS_LINK => sys_link((-100i64) as u64, a1, (-100i64) as u64, a2),
+        SYS_LINKAT => sys_link(a1, a2, a3, a4),
+        SYS_SYMLINK => sys_symlink(a1, (-100i64) as u64, a2),
+        SYS_SYMLINKAT => sys_symlink(a1, a2, a3),
+        SYS_RENAME => sys_rename((-100i64) as u64, a1, (-100i64) as u64, a2),
+        SYS_RENAMEAT => sys_rename(a1, a2, a3, a4),
+        SYS_RENAMEAT2 => if a5 != 0 { EINVAL } else { sys_rename(a1, a2, a3, a4) },
+        SYS_UNLINK => sys_unlink((-100i64) as u64, a1, false),
+        SYS_RMDIR => sys_unlink((-100i64) as u64, a1, true),
+        SYS_UNLINKAT => sys_unlink(a1, a2, a3 & 0x200 != 0), // flags=a3; AT_REMOVEDIR=0x200
+        SYS_MKDIR => sys_mkdir((-100i64) as u64, a1),
+        SYS_MKDIRAT => sys_mkdir(a1, a2),
         SYS_CHMOD => sys_chmod(a1, a2),
         SYS_FCHMODAT => sys_chmod(a2, a3), // dirfd ignored; flags (a4) ignored
         SYS_CHOWN => sys_chown(a1, a2, a3),
@@ -1322,6 +1580,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
 
         SYS_BRK => sched::current_proc().map(|p| p.brk(a1) as i64).unwrap_or(EINVAL),
         SYS_MMAP => sys_mmap(a1, a2, a3, a4, a5, frame.r9),
+        SYS_SHMGET => crate::shm::sys_shmget(a1, a2, a3),
+        SYS_SHMAT => crate::shm::sys_shmat(a1),
+        SYS_SHMCTL => crate::shm::sys_shmctl(a1, a2, a3),
+        SYS_SHMDT => crate::shm::sys_shmdt(a1),
+        SYS_FTRUNCATE => crate::shm::sys_ftruncate(a1, a2),
+        SYS_MEMFD_CREATE => crate::shm::sys_memfd_create(a2),
         SYS_MUNMAP => match sched::current_proc() {
             Some(p) if a1 & 0xFFF == 0 && a2 > 0 && a1.saturating_add(a2) < usercopy::USER_TOP => {
                 p.munmap(a1, a2);
@@ -1373,8 +1637,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         SYS_PRLIMIT64 => sys_prlimit(a2, a3, a4),
         SYS_GETRLIMIT => sys_prlimit(a1, 0, a2),
+        SYS_FCHDIR => match cur_fd(a1).and_then(|f| f.dir_path()) {
+            Some(d) => {
+                process::set_current_cwd(d);
+                0
+            }
+            None => if cur_fd(a1).is_some() { ENOTDIR } else { EBADF },
+        },
         SYS_SET_ROBUST_LIST | SYS_SIGALTSTACK | SYS_MADVISE
-        | SYS_PRCTL | SYS_FCHDIR => 0,
+        | SYS_PRCTL => 0,
         SYS_FUTEX => crate::futex::sys_futex(a1, a2, a3, a4, a5, frame.r9),
         SYS_RSEQ => ENOSYS,
 
@@ -1528,6 +1799,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_RECVMMSG => sock_sys::sys_recvmmsg(a1, a2, a3),
         SYS_GETSOCKNAME => sock_sys::sys_getsockname(a1, a2, a3),
         SYS_GETPEERNAME => sock_sys::sys_getpeername(a1, a2, a3),
+        SYS_SOCKETPAIR => sock_sys::sys_socketpair(a1, a2, a4),
         SYS_SETSOCKOPT => sock_sys::sys_setsockopt(a1),
         SYS_GETSOCKOPT => sock_sys::sys_getsockopt(a1, a2, a3, a4, a5),
 
@@ -1610,10 +1882,16 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_UNAME => match usercopy::slice_mut(a1, 6 * 65) {
             Ok(b) => {
                 b.fill(0);
+                // sysname, nodename, release, version, machine, domainname (65 bytes each). THOS reports
+                // itself as a Linux 6.1-compatible kernel — that is the ABI it implements.
+                for (i, v) in ["Linux", "thos", "6.1.0-thos", "#1 THOS", "x86_64", "(none)"].iter().enumerate() {
+                    b[i * 65..i * 65 + v.len()].copy_from_slice(v.as_bytes());
+                }
                 0
             }
             Err(e) => e,
         },
+        221 | 326 => ENOSYS, // fadvise64 is only a hint; copy_file_range: callers fall back to read/write
 
         SYS_FORK => process::fork(frame),
 
@@ -1629,7 +1907,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                     process::clone_thread(frame, a1, a2, a3, a4, a5)
                 }
             } else if a1 & CLONE_VM != 0 {
-                ENOSYS // vfork-style shared-VM processes are not supported
+                process::clone_vm(frame, a1, a2, a5)
             } else {
                 process::fork(frame)
             }
@@ -1638,18 +1916,31 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_NEWFSTATAT => sys_newfstatat(a1, a2, a3, a4),
         SYS_SETUID | SYS_SETGID => 0,
 
-        SYS_EXECVE => sys_execve(a1, a2, a3),
+        SYS_EXECVE => {
+            let r = sys_execve(a1, a2, a3);
+            if r >= PE_PROXY_EXIT && r < PE_PROXY_EXIT + 256 {
+                process::thread_exit_cleanup();
+                process::set_exit_status((r - PE_PROXY_EXIT) as i32);
+                USER_EXITS.fetch_add(1, Ordering::Release);
+                if let Some(t) = sched::current().task() {
+                    t.thread_leaving();
+                }
+                sched::exit()
+            }
+            r
+        }
 
-        SYS_WAIT4 => process::wait4(a1 as i64, a2),
+        SYS_WAIT4 => process::wait4(a1 as i64, a2, a3),
 
         // exit_group ends the whole process (the other threads notice and follow).
         SYS_EXIT_GROUP => {
             process::thread_exit_cleanup();
+            let last = sched::current().task().map_or(true, |t| t.thread_leaving());
+            if last {
+                process::free_address_space_at_exit(); // before the parent can see the exit
+            }
             process::set_exit_status(a1 as i32);
             USER_EXITS.fetch_add(1, Ordering::Release);
-            if let Some(t) = sched::current().task() {
-                t.thread_leaving();
-            }
             sched::exit()
         }
         // exit ends only this thread; the last one to leave ends the process.
@@ -1657,6 +1948,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             let last = sched::current().task().map_or(true, |t| t.thread_leaving());
             process::thread_exit_cleanup();
             if last {
+                process::free_address_space_at_exit();
                 process::set_exit_status(a1 as i32);
                 USER_EXITS.fetch_add(1, Ordering::Release);
             }
@@ -1723,6 +2015,7 @@ fn sys_setsid() -> i64 {
     }
     me.set_sid(me.pid);
     me.set_pgid(me.pid);
+    me.set_ctty(None); // a new session has no controlling terminal
     me.pid as i64
 }
 

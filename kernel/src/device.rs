@@ -79,6 +79,6 @@ fn to_posix(s: &str) -> String {
 /// yet). `None` if the boot media has no ESP (never true for THOS's own
 /// disk images, but a real possibility on unusual hardware).
 pub fn open_cdrom() -> Option<crate::fat::Fat> {
-    let esp_lba = crate::gpt::find_esp(51_000)?;
+    let esp_lba = crate::gpt::find_esp(141_000)?;
     crate::fat::Fat::open(esp_lba).ok()
 }

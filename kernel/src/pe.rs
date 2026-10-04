@@ -160,6 +160,8 @@ const PE_THREAD_STACK_ADDR: u64 = NT_STUB_BASE + 0x0010_0000;
 const PE_THREAD_STACK_BYTES: u64 = 0x8000; // 32 KiB
 const SYNTH_STUBS_OFF: u64 = 0x180; // trampoline table within a synth DLL page
 const SYNTH_EXPDIR_OFF: u64 = 0x400; // IMAGE_EXPORT_DIRECTORY within the page
+/// The command line the next `load` puts in the process parameters (set by `process::spawn_pe_args`).
+pub static NEXT_CMDLINE: spin::Mutex<Option<alloc::vec::Vec<u8>>> = spin::Mutex::new(None);
 /// `GetCommandLineA` returns this.
 pub const PE_ANSI_CMDLINE_ADDR: u64 = PE_PARAMS_ADDR + ANSI_CMDLINE_OFF;
 const ANSI_CMDLINE: &[u8] = b"PE argv0 pe-hello.exe\n\0";
@@ -231,6 +233,7 @@ struct Loader<'a> {
     depth: u32,
     tls: TlsBuild,
     tls_cbs: Vec<(u64, u64)>, // (module base, callback VA) run at process start
+    ext_tried: Vec<String>,   // extension DLLs that have been looked for
 }
 
 impl<'a> Loader<'a> {
@@ -277,6 +280,7 @@ impl<'a> Loader<'a> {
             depth: 0,
             tls: TlsBuild { frame_phys: 0, n_mods: 0, blk_next: TLS_BLOCKS_OFF },
             tls_cbs: Vec::new(),
+            ext_tried: Vec::new(),
         }
     }
 
@@ -458,15 +462,53 @@ impl<'a> Loader<'a> {
                     })?
                 } else {
                     let func = cstr_at(img, (thunk & 0x7FFF_FFFF) + 2)?; // skip the 2-byte hint
-                    self.resolve_export_name(midx, func, 0).map_err(|e| {
-                        crate::kprintln!("THOS: pe unresolved    {}!{}", dll.as_str(), func);
-                        e
-                    })?
+                    // The C-runtime extension DLL (a real PE in System32) overrides the built-in msvcrt.
+                    let ext_name = match self.mods[midx].name.as_str() {
+                        "msvcrt.dll" => Some("msvcrtx.dll"),
+                        "kernel32.dll" => Some("kernel32x.dll"),
+                        _ => None,
+                    };
+                    let ext = ext_name.and_then(|n| self.ext_export(n, func));
+                    match ext {
+                        Some(a) => a,
+                        None => self.resolve_export_name(midx, func, 0).map_err(|e| {
+                            crate::kprintln!("THOS: pe unresolved    {}!{}", dll.as_str(), func);
+                            e
+                        })?,
+                    }
                 };
                 img[p_off..p_off + 8].copy_from_slice(&addr.to_le_bytes());
                 i += 1;
             }
             idt += 20;
+        }
+    }
+
+    /// `name` from `msvcrtx.dll` (THOS's C runtime extension), loading it on first use; `None` when
+    /// the DLL is absent or does not export `name`.
+    fn ext_export(&mut self, dll: &str, name: &str) -> Option<u64> {
+        let idx = match self.mods.iter().position(|m| m.name == dll) {
+            Some(i) => i,
+            None => {
+                if self.ext_tried.iter().any(|d| d == dll) {
+                    return None;
+                }
+                self.ext_tried.push(String::from(dll));
+                match self.resolve_module(dll) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        if e != "PE: DLL not found in System32" {
+                            crate::kprintln!("THOS: pe {dll}      not usable: {e}");
+                        }
+                        return None;
+                    }
+                }
+            }
+        };
+        let i = *self.mods[idx].names.get(name)?;
+        match self.mods[idx].eat.get(i)? {
+            Export::Addr(a) => Some(*a),
+            _ => None,
         }
     }
 
@@ -728,7 +770,9 @@ fn stage_image(file: &[u8], want_base: Option<u64>) -> Result<StagedImage, &'sta
     };
     let delta = load_base.wrapping_sub(image_base);
     if delta != 0 {
-        if reloc_size == 0 {
+        // An image that declares DYNAMIC_BASE yet has no relocations is position independent: it can
+        // simply be mapped elsewhere.
+        if reloc_size == 0 && dll_chars & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE == 0 {
             return Err("PE: needs relocation but has no .reloc");
         }
         apply_relocs(&mut img, reloc_rva as u64, reloc_size as u64, delta, size_of_image)?;
@@ -1117,8 +1161,14 @@ fn map_teb_peb(
         put(b, MOD3_OFF + 0x60, ntd_base_buf);
 
         // --- ANSI command line (GetCommandLineA) + empty environment ---
-        b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + ANSI_CMDLINE.len()]
-            .copy_from_slice(ANSI_CMDLINE);
+        match NEXT_CMDLINE.lock().take() {
+            Some(cl) => {
+                let n = cl.len().min((ENV_OFF - ANSI_CMDLINE_OFF) as usize - 1);
+                b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + n].copy_from_slice(&cl[..n]);
+            }
+            None => b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + ANSI_CMDLINE.len()]
+                .copy_from_slice(ANSI_CMDLINE),
+        }
         // ENV_OFF: leave the two NUL words already zeroed
     })?;
 
@@ -1341,7 +1391,14 @@ pub fn spawn_thread(
     let task = crate::sched::current().task().ok_or("no current task")?;
     let proc = task.space();
 
-    // user stack: fresh frames, contiguous VA at PE_THREAD_STACK_ADDR.
+    // Every worker gets its own stack (64 KiB stride) and TEB page; at most 15 workers.
+    let slot = proc.next_pe_thread_slot();
+    if slot >= 15 {
+        return Err("PE: too many threads");
+    }
+    let stack_addr = PE_THREAD_STACK_ADDR + slot * 0x1_0000;
+    let teb_addr = if slot == 0 { PE_TEB2_ADDR } else { NT_STUB_BASE + 0x0020_0000 + slot * 0x1000 };
+    // user stack: fresh frames, contiguous VA at `stack_addr`.
     let pages = (PE_THREAD_STACK_BYTES / 0x1000) as usize;
     for i in 0..pages {
         let fr = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread stack)")?;
@@ -1354,9 +1411,9 @@ pub fn spawn_thread(
                 *((top - 8) as *mut u64) = arg;
             }
         }
-        proc.map(PE_THREAD_STACK_ADDR + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
+        proc.map(stack_addr + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
     }
-    let user_rsp = PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES - 16;
+    let user_rsp = stack_addr + PE_THREAD_STACK_BYTES - 16;
 
     // worker TEB.
     let tf = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread TEB)")?;
@@ -1364,15 +1421,15 @@ pub fn spawn_thread(
         let p = phys_to_virt(tf.start_address()).as_mut_ptr::<u8>();
         core::ptr::write_bytes(p, 0, 4096);
         let put = |off: usize, v: u64| *((p.add(off)) as *mut u64) = v;
-        put(0x08, PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES); // StackBase
-        put(0x10, PE_THREAD_STACK_ADDR); // StackLimit
-        put(0x30, PE_TEB2_ADDR); // NT_TIB.Self
+        put(0x08, stack_addr + PE_THREAD_STACK_BYTES); // StackBase
+        put(0x10, stack_addr); // StackLimit
+        put(0x30, teb_addr); // NT_TIB.Self
         put(0x60, PE_PEB_ADDR); // ProcessEnvironmentBlock
     }
-    proc.map(PE_TEB2_ADDR, tf.start_address().as_u64(), true, false);
+    proc.map(teb_addr, tf.start_address().as_u64(), true, false);
 
     let ev = alloc::sync::Arc::new(crate::wait::Event::new());
-    let tid = crate::sched::spawn_user_pe("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, PE_TEB2_ADDR);
+    let tid = crate::sched::spawn_user_pe("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, teb_addr);
     crate::process::register_thread_exit(tid, ev.clone());
     Ok((tid, ev))
 }

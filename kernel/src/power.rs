@@ -169,6 +169,7 @@ pub fn poweroff() -> ! {
     if BUSY.swap(true, Ordering::SeqCst) {
         halt_forever();
     }
+    crate::ext2::sync_all();
     crate::kprintln!("THOS: powering off");
     unsafe {
         core::arch::asm!("cli", options(nomem, nostack));
@@ -204,6 +205,7 @@ pub fn reboot() -> ! {
     if BUSY.swap(true, Ordering::SeqCst) {
         halt_forever();
     }
+    crate::ext2::sync_all();
     crate::kprintln!("THOS: rebooting");
     unsafe {
         core::arch::asm!("cli", options(nomem, nostack));

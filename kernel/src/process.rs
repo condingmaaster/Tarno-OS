@@ -39,6 +39,15 @@ pub struct Process {
     /// `NtUnmapViewOfSection` / `NtFlushVirtualMemory` can find which
     /// `Section` (and how many pages) a base VA names.
     views: Mutex<Vec<SectionView>>,
+    /// The main stack grows downwards on demand: `[stack_floor, stack_low)` is reserved but not mapped yet.
+    stack_floor: AtomicU64,
+    stack_low: AtomicU64,
+    /// Randomised start of the heap (`brk`) for this address space.
+    brk_base: AtomicU64,
+    /// How many PE worker threads this address space has started (each gets its own stack and TEB slot).
+    pe_threads: AtomicU32,
+    /// `teardown` ran (the exit path frees the space early; `sched::reap` must not do it again).
+    freed: AtomicBool,
 }
 
 struct SectionView {
@@ -50,8 +59,45 @@ struct SectionView {
 /// User virtual space for `mmap` / stacks, clear of typical ELF load addresses.
 const USER_ALLOC_BASE: u64 = 0x0000_7000_0000_0000;
 const USER_STACK_SIZE: u64 = 64 * 1024;
+/// How far the main stack may grow (the usual 8 MiB `RLIMIT_STACK`).
+const USER_STACK_MAX: u64 = 8 * 1024 * 1024;
 const BRK_BASE: u64 = 0x0000_6800_0000_0000;
-const BRK_MAX: u64 = BRK_BASE + 256 * 1024 * 1024;
+const BRK_SPAN: u64 = 256 * 1024 * 1024;
+
+/// Called by the last thread of a process on its way out: switch to the kernel's page tables and give
+/// the address space back at once (not when the scheduler gets around to reaping the corpse), so
+/// the parent that `wait4`s it can immediately reuse the memory. Skipped when the space is shared.
+pub fn free_address_space_at_exit() {
+    let cur = sched::current();
+    let Some(task) = cur.task() else { return };
+    let space = task.space();
+    if Arc::strong_count(&space) > 2 || task.pid == 0 {
+        return;
+    }
+    let kcr3 = vmm::kernel_pml4_phys();
+    cur.set_cr3(kcr3);
+    unsafe {
+        Cr3::write(PhysFrame::from_start_address(PhysAddr::new(kcr3)).unwrap(), Cr3Flags::empty());
+    }
+    space.teardown();
+    task.close_all_fds();
+}
+
+/// A frame for user data, keeping a small reserve for page tables and the kernel itself.
+fn user_frame() -> Option<PhysFrame> {
+    for attempt in 0..2 {
+        {
+            let mut fa = FRAME_ALLOC.lock();
+            if fa.free_frames() >= 512 {
+                return fa.alloc();
+            }
+        }
+        if attempt == 0 {
+            sched::reap(); // exited processes may still be holding their memory
+        }
+    }
+    None
+}
 
 impl Process {
     pub fn new() -> Arc<Self> {
@@ -73,11 +119,18 @@ impl Process {
             *(dst as *mut u64) = 0; // PML4[0]
         }
 
+        let brk0 = BRK_BASE + ((crate::random::u64() & 0x3FFF) << 12);
         Arc::new(Self {
             pml4_phys,
-            next_user_va: AtomicU64::new(USER_ALLOC_BASE),
-            brk: AtomicU64::new(BRK_BASE),
+            // ASLR: the mmap area, the heap and (in elf.rs) the program/interpreter bases move per process
+            next_user_va: AtomicU64::new(USER_ALLOC_BASE + ((crate::random::u64() & 0x3FFF) << 21)),
+            brk: AtomicU64::new(brk0),
+            brk_base: AtomicU64::new(brk0),
             views: Mutex::new(Vec::new()),
+            stack_floor: AtomicU64::new(0),
+            stack_low: AtomicU64::new(0),
+            freed: AtomicBool::new(false),
+            pe_threads: AtomicU32::new(0),
         })
     }
 
@@ -89,6 +142,28 @@ impl Process {
         self.next_user_va
             .store(other.next_user_va.load(Ordering::Relaxed), Ordering::Relaxed);
         self.brk.store(other.brk.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.brk_base.store(other.brk_base.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.stack_floor.store(other.stack_floor.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.stack_low.store(other.stack_low.load(Ordering::Relaxed), Ordering::Relaxed);
+    }
+
+    /// A not-present fault just below the main stack: map zeroed pages down to the faulting page
+    /// (up to the 8 MiB reservation). `true` if the fault was such a stack access and is fixed.
+    pub fn grow_stack(&self, addr: u64) -> bool {
+        let (floor, low) = (self.stack_floor.load(Ordering::Relaxed), self.stack_low.load(Ordering::Relaxed));
+        if floor == 0 || addr < floor || addr >= low {
+            return false;
+        }
+        let new_low = addr & !0xFFF;
+        let mut v = new_low;
+        while v < low {
+            if !vmm::page_present_in(self.pml4_phys, v) && !self.map_zeroed(v) {
+                return false; // out of memory: the fault becomes a SIGSEGV
+            }
+            v += 4096;
+        }
+        self.stack_low.store(new_low, Ordering::Relaxed);
+        true
     }
 
     /// Visit every present 4 KiB user page: `(virt, phys, writable, exec)`.
@@ -144,24 +219,49 @@ impl Process {
         vmm::map_page_in(self.pml4_phys, virt, phys, writable, true, exec);
     }
 
-    fn map_zeroed(&self, virt: u64) {
-        let frame = FRAME_ALLOC.lock().alloc().expect("no frame");
+    pub fn next_pe_thread_slot(&self) -> u64 {
+        self.pe_threads.fetch_add(1, Ordering::Relaxed) as u64
+    }
+
+    /// Map a zeroed page; `false` when memory is (nearly) exhausted — page-table frames still
+    /// have to be available afterwards, so a small reserve is kept back for them.
+    fn map_zeroed(&self, virt: u64) -> bool {
+        let Some(frame) = user_frame() else { return false };
         unsafe {
             core::ptr::write_bytes(phys_to_virt(frame.start_address()).as_mut_ptr::<u8>(), 0, 4096);
         }
         self.map(virt, frame.start_address().as_u64(), true, false);
+        true
     }
 
     /// `brk(0)` returns the current break; `brk(addr)` grows/sets it.
     pub fn brk(&self, req: u64) -> u64 {
         let cur = self.brk.load(Ordering::Relaxed);
-        if req < BRK_BASE || req > BRK_MAX {
+        let base = self.brk_base.load(Ordering::Relaxed);
+        if req < base || req > base + BRK_SPAN {
             return cur;
         }
         let mut v = (cur + 0xFFF) & !0xFFF;
+        let first_new = v;
         let end = (req + 0xFFF) & !0xFFF;
+        if end < v {
+            // shrinking: give the pages above the new break back (malloc trims the heap this way)
+            let mut p = end;
+            while p < v {
+                self.release_page(p);
+                p += 4096;
+            }
+        }
         while v < end {
-            self.map_zeroed(v);
+            if !vmm::page_present_in(self.pml4_phys, v) && !self.map_zeroed(v) {
+                // out of memory: undo this call's pages and keep the old break (brk's ENOMEM)
+                let mut p = first_new;
+                while p < v {
+                    self.release_page(p);
+                    p += 4096;
+                }
+                return cur;
+            }
             v += 4096;
         }
         self.brk.store(req, Ordering::Relaxed);
@@ -173,7 +273,7 @@ impl Process {
     /// is mapped; `MAP_FIXED` over an old mapping removes it). With `file` the pages are
     /// filled from `(data, offset)` — a private copy, which is what `MAP_PRIVATE` means.
     /// Returns the base.
-    pub fn mmap_region(&self, addr: u64, fixed: bool, len: u64, prot: u64, data: Option<&[u8]>) -> u64 {
+    pub fn mmap_region(&self, addr: u64, fixed: bool, len: u64, prot: u64, file: Option<(&dyn FileOps, u64)>) -> u64 {
         let len = (len + 0xFFF) & !0xFFF;
         let base = if fixed {
             addr
@@ -187,14 +287,29 @@ impl Process {
                 self.release_page(v); // MAP_FIXED replaces whatever was there
             }
             if prot != 0 {
-                let frame = FRAME_ALLOC.lock().alloc().expect("no frame for mmap");
+                let Some(frame) = user_frame() else {
+                    // out of memory: unmap what this call mapped and report ENOMEM
+                    let mut p = base;
+                    while p < v {
+                        self.release_page(p);
+                        p += 4096;
+                    }
+                    return (-12i64) as u64;
+                };
                 let dst = phys_to_virt(frame.start_address()).as_mut_ptr::<u8>();
                 unsafe { core::ptr::write_bytes(dst, 0, 4096) };
-                if let Some(d) = data {
-                    let off = (v - base) as usize;
-                    if off < d.len() {
-                        let n = (d.len() - off).min(4096);
-                        unsafe { core::ptr::copy_nonoverlapping(d.as_ptr().add(off), dst, n) };
+                if let Some((f, foff)) = file {
+                    // Fill the page straight from the file: a 50 MiB library never exists as one buffer.
+                    let page = unsafe { core::slice::from_raw_parts_mut(dst, 4096) };
+                    if f.seek((foff + (v - base)) as i64, 0) >= 0 {
+                        let mut got = 0;
+                        while got < 4096 {
+                            let n = f.read(&mut page[got..]);
+                            if n <= 0 {
+                                break;
+                            }
+                            got += n as usize;
+                        }
                     }
                 }
                 self.map(v, frame.start_address().as_u64(), writable, exec);
@@ -239,6 +354,9 @@ impl Process {
 
     /// `munmap`: drop the mappings in `[addr, addr+len)` and return their frames.
     pub fn munmap(&self, addr: u64, len: u64) {
+        if self.unmap_view(addr & !0xFFF) {
+            return; // a shared-memory view: its frames belong to the section
+        }
         let (start, end) = (addr & !0xFFF, (addr + len + 0xFFF) & !0xFFF);
         let mut v = start;
         while v < end {
@@ -370,6 +488,9 @@ impl Process {
     /// `Process`'s `Task` is confirmed not running anywhere) each establish
     /// that before calling this.
     fn teardown(&self) {
+        if self.freed.swap(true, Ordering::AcqRel) {
+            return;
+        }
         let bases: alloc::vec::Vec<u64> = self.views.lock().iter().map(|v| v.base).collect();
         for base in bases {
             self.unmap_view(base);
@@ -426,7 +547,10 @@ impl Process {
 
     /// Allocate + map a fresh user stack; returns the (page-aligned) stack top.
     pub fn new_user_stack(&self) -> u64 {
-        let base = self.next_user_va.fetch_add(USER_STACK_SIZE + 0x1000, Ordering::Relaxed);
+        // Reserve address space for a stack that can grow to USER_STACK_MAX; only the top part is mapped.
+        let reserve = self.next_user_va.fetch_add(USER_STACK_MAX + 0x1000, Ordering::Relaxed);
+        let top = reserve + USER_STACK_MAX;
+        let base = top - USER_STACK_SIZE;
         let pages = USER_STACK_SIZE / 4096;
         for i in 0..pages {
             let frame = FRAME_ALLOC.lock().alloc().expect("no frame for user stack");
@@ -435,7 +559,9 @@ impl Process {
             }
             self.map(base + i * 4096, frame.start_address().as_u64(), true, false);
         }
-        base + USER_STACK_SIZE
+        self.stack_floor.store(reserve, Ordering::Relaxed);
+        self.stack_low.store(base, Ordering::Relaxed);
+        top
     }
 
     /// Walk this address space's page tables (via HHDM) to a physical address.
@@ -627,6 +753,24 @@ impl Section {
         Self { size: init.len(), frames, file }
     }
 
+    /// A zero-filled section of `size` bytes.
+    pub fn zeroed(size: usize) -> Self {
+        let pages = size.div_ceil(4096).max(1);
+        let mut frames = Vec::with_capacity(pages);
+        for _ in 0..pages {
+            let f = FRAME_ALLOC.lock().alloc().expect("no frame for section");
+            unsafe { core::ptr::write_bytes(phys_to_virt(f.start_address()).as_mut_ptr::<u8>(), 0, 4096) };
+            frames.push(f);
+        }
+        Self { size, frames, file: None }
+    }
+
+    /// Kernel pointer to byte `off` of the section (callers keep accesses inside one page).
+    pub fn ptr_at(&self, off: usize) -> Option<*mut u8> {
+        let f = self.frames.get(off / 4096)?;
+        Some(unsafe { phys_to_virt(f.start_address()).as_mut_ptr::<u8>().add(off % 4096) })
+    }
+
     /// The frames covering `[offset, offset+len)`, page-rounded outward.
     fn frames_for(&self, offset: usize, len: usize) -> &[PhysFrame] {
         let first = offset / 4096;
@@ -795,6 +939,8 @@ pub struct Task {
     live_threads: AtomicU32,
     /// Every thread of the task (weak), so exit_group / signals can wake them all.
     threads: Mutex<Vec<alloc::sync::Weak<crate::sched::Thread>>>,
+    /// Controlling terminal when it is a pseudo-terminal (`/dev/tty` opens it).
+    ctty: Mutex<Option<Arc<crate::pty::Pty>>>,
 }
 
 fn seed_fds() -> Vec<Fd> {
@@ -840,6 +986,7 @@ impl Task {
             active_threads: AtomicU64::new(0),
             live_threads: AtomicU32::new(0),
             threads: Mutex::new(Vec::new()),
+            ctty: Mutex::new(None),
         });
         TASKS.lock().insert(t.pid, t.clone());
         t
@@ -865,6 +1012,12 @@ impl Task {
     pub fn set_pgid(&self, v: u64) {
         self.pgid.store(v, Ordering::Relaxed);
     }
+    pub fn ctty(&self) -> Option<Arc<crate::pty::Pty>> {
+        self.ctty.lock().clone()
+    }
+    pub fn set_ctty(&self, p: Option<Arc<crate::pty::Pty>>) {
+        *self.ctty.lock() = p;
+    }
     pub fn set_sid(&self, v: u64) {
         self.sid.store(v, Ordering::Relaxed);
     }
@@ -881,6 +1034,9 @@ impl Task {
     }
     pub fn term_sig(&self) -> u32 {
         self.term_sig.load(Ordering::Relaxed)
+    }
+    pub fn exit_code(&self) -> i32 {
+        self.exit_status.lock().unwrap_or(0)
     }
     pub fn is_exited(&self) -> bool {
         self.exited.load(Ordering::Acquire)
@@ -912,6 +1068,17 @@ impl Task {
 
     /// One of this task's threads is leaving (called by the thread itself). `true` if it was
     /// the last live one, i.e. the whole process is ending.
+    /// Close every descriptor now (the process is over): pipe ends signal EOF, sockets close, the
+    /// framebuffer / keyboard are handed back — without waiting for a parent to `wait4` the zombie.
+    pub fn close_all_fds(&self) {
+        let fds = core::mem::take(&mut *self.fds.lock());
+        drop(fds);
+    }
+
+    pub fn only_thread_left(&self) -> bool {
+        self.live_threads.load(Ordering::Acquire) <= 1
+    }
+
     pub fn thread_leaving(&self) -> bool {
         self.live_threads.fetch_sub(1, Ordering::AcqRel) == 1
     }
@@ -1500,6 +1667,32 @@ pub fn spawn_pe(bytes: &[u8]) -> Result<u64, &'static str> {
     Ok(task.pid)
 }
 
+/// [`spawn_pe`] for a program started from a POSIX shell: it gets the real command line, and the
+/// caller's open files and working directory (so redirections and pipes work).
+pub fn spawn_pe_args(bytes: &[u8], cmdline: &[u8], parent: &Arc<Task>) -> Result<u64, &'static str> {
+    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
+        crate::kprintln!("THOS: exec gate        quarantined a PE — {reason}");
+        return Err("quarantined by the native-exec gate");
+    }
+    let space = Process::new();
+    let stack_top = space.new_user_stack();
+    let img = {
+        *crate::pe::NEXT_CMDLINE.lock() = Some(cmdline.to_vec());
+        let r = crate::pe::load(&space, bytes, stack_top);
+        *crate::pe::NEXT_CMDLINE.lock() = None;
+        r?
+    };
+    let rsp = (stack_top & !0xF) - 8;
+    let task = Task::new(parent.pid, space);
+    *task.fds.lock() = parent.clone_fds();
+    task.set_cwd(parent.cwd());
+    task.set_pgid(parent.pgid());
+    task.set_sid(parent.sid());
+    task.mark_pe();
+    sched::spawn_user_pe("pe", task.clone(), img.entry, rsp, img.teb);
+    Ok(task.pid)
+}
+
 /// `fork`: eager (non-COW) copy of the caller's address space; the child
 /// resumes at the same user instruction with `rax = 0`.
 pub fn fork(frame: &UserFrame) -> i64 {
@@ -1508,13 +1701,20 @@ pub fn fork(frame: &UserFrame) -> i64 {
 
     let cspace = Process::new();
     cspace.copy_alloc_state_from(&pspace);
+    let mut oom = false;
     pspace.for_each_user_page(|virt, phys, w, x, device| {
         if device {
             // device memory is shared, never copied (and never freed by either process)
             vmm::map_device_page_in(cspace.pml4_phys, virt, phys, w);
             return;
         }
-        let f = FRAME_ALLOC.lock().alloc().expect("fork: no frame");
+        if oom {
+            return;
+        }
+        let Some(f) = user_frame() else {
+            oom = true;
+            return;
+        };
         unsafe {
             core::ptr::copy_nonoverlapping(
                 phys_to_virt(PhysAddr::new(phys)).as_ptr::<u8>(),
@@ -1525,11 +1725,16 @@ pub fn fork(frame: &UserFrame) -> i64 {
         cspace.map(virt, f.start_address().as_u64(), w, x);
     });
 
+    if oom {
+        cspace.teardown(); // give back what was copied so far
+        return -12; // ENOMEM
+    }
     let child = Task::new(parent.pid, cspace);
     *child.fds.lock() = parent.clone_fds();
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
     child.set_pgid(parent.pgid());
+    child.set_ctty(parent.ctty());
     child.set_sid(parent.sid());
     {
         // Handlers and the blocked mask are inherited; pending signals are not.
@@ -1550,8 +1755,51 @@ pub fn fork(frame: &UserFrame) -> i64 {
     child.pid as i64
 }
 
+/// `clone(CLONE_VM [| CLONE_VFORK])` without `CLONE_THREAD`: a new *process* that runs in the
+/// caller's address space (what glibc's `posix_spawn` and `vfork` use). With `CLONE_VFORK` the caller
+/// stays suspended until the child execs (gets its own space) or exits.
+pub fn clone_vm(frame: &UserFrame, flags: u64, stack: u64, tls: u64) -> i64 {
+    const CLONE_VFORK: u64 = 0x4000;
+    const CLONE_SETTLS: u64 = 0x80000;
+    let parent = sched::current().task().expect("clone: not a user task");
+    let pspace = parent.space();
+    let child = Task::new(parent.pid, pspace.clone());
+    *child.fds.lock() = parent.clone_fds();
+    child.set_cwd(parent.cwd());
+    *child.cmdline.lock() = parent.cmdline();
+    child.set_pgid(parent.pgid());
+    child.set_ctty(parent.ctty());
+    child.set_sid(parent.sid());
+    {
+        let p = parent.sig.lock();
+        let mut c = child.sig.lock();
+        c.actions = p.actions;
+        c.blocked = p.blocked;
+    }
+    let (cs, ss) = user_selectors();
+    let mut cf = *frame;
+    cf.rax = 0;
+    cf.cs = cs;
+    cf.ss = ss;
+    if stack != 0 {
+        cf.rsp = stack;
+    }
+    let fsbase = if flags & CLONE_SETTLS != 0 { tls } else { sched::current().fsbase() };
+    sched::spawn_user_frame("vm-child", child.clone(), cf, fsbase);
+    let pid = child.pid;
+    if flags & CLONE_VFORK != 0 {
+        while !child.is_exited() && Arc::ptr_eq(&child.space(), &pspace) {
+            if crate::signal::interrupted() {
+                break;
+            }
+            crate::timer::sleep_ns(1_000_000);
+        }
+    }
+    pid as i64
+}
+
 /// `execve`: replace the current task's image. Does not return on success.
-pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
+pub fn execve(bytes: Vec<u8>, argv: Vec<String>, envp: Vec<String>) -> ! {
     // The native-exec gate: same check `spawn_pe` runs, here for the path a
     // *running* process takes to become a different program. A malformed
     // image already can't panic the kernel past this point (`elf::load`
@@ -1559,7 +1807,7 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
     // ABI (the calling thread's image is what's being replaced) — quarantine
     // ends the calling thread cleanly instead, exit code 126 (the shell
     // convention for "found but not executable"), kernel alive either way.
-    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
+    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(&bytes) {
         crate::kprintln!("THOS: exec gate        quarantined an ELF — {reason}");
         set_exit_status(126);
         crate::syscall::note_user_exit();
@@ -1570,7 +1818,7 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
     let task = cur.task().expect("execve: not a user task");
 
     let space = Process::new();
-    let img = elf::load(&space, bytes).expect("execve: bad ELF");
+    let img = elf::load(&space, &bytes).expect("execve: bad ELF");
     let stack_top = space.new_user_stack();
     let av: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let ev: Vec<&str> = envp.iter().map(|s| s.as_str()).collect();
@@ -1600,6 +1848,15 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
         ..Default::default()
     };
 
+    // `thos_user_resume` never returns, so nothing is dropped after it: give the heap back by hand
+    // (the whole ELF file and the argument strings — a leak of the program's size on every exec).
+    drop(av);
+    drop(ev);
+    drop(bytes);
+    drop(argv);
+    drop(envp);
+    drop(img);
+
     x86_64::registers::model_specific::FsBase::write(x86_64::VirtAddr::new(0));
     unsafe {
         Cr3::write(
@@ -1613,6 +1870,9 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
         if Arc::strong_count(&old_space) == 1 {
             old_space.teardown();
         }
+        drop(old_space);
+        drop(task);
+        drop(cur);
         syscall::thos_user_resume(&f)
     }
 }
@@ -1626,7 +1886,7 @@ pub fn pid_exited(pid: u64) -> bool {
     TASKS.lock().get(&pid).map_or(true, |t| t.exited.load(Ordering::Acquire))
 }
 
-pub fn wait4(pid: i64, status_ptr: u64) -> i64 {
+pub fn wait4(pid: i64, status_ptr: u64, options: u64) -> i64 {
     let me = current_pid();
     loop {
         {
@@ -1657,6 +1917,9 @@ pub fn wait4(pid: i64, status_ptr: u64) -> i64 {
             if !has_children {
                 return -10; // ECHILD
             }
+        }
+        if options & 1 != 0 {
+            return 0; // WNOHANG: children exist, none has exited yet
         }
         if crate::signal::interrupted() {
             return -4; // EINTR
@@ -1750,4 +2013,15 @@ pub fn clone_thread(frame: &UserFrame, flags: u64, stack: u64, ptid: u64, ctid: 
     let clear = if flags & CLONE_CHILD_CLEARTID != 0 { ctid } else { 0 };
     sched::spawn_user_thread(task, cf, fsbase, tid, clear);
     tid as i64
+}
+
+/// A section's frames go back to the allocator once the last handle *and* the last view are gone
+/// (views keep an `Arc`, and `teardown` unmaps them before the address space is freed).
+impl Drop for Section {
+    fn drop(&mut self) {
+        let mut fa = FRAME_ALLOC.lock();
+        for f in self.frames.drain(..) {
+            fa.dealloc(f);
+        }
+    }
 }

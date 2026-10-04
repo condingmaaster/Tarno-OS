@@ -23,7 +23,7 @@ const SOCK_CLOEXEC: u64 = 0o2000000;
 
 fn sock_of(fd: u64) -> Result<Arc<dyn FileOps>, i64> {
     let f = sched::current().task().and_then(|t| t.fd_get(fd as i32)).ok_or(EBADF)?;
-    if f.as_socket().is_none() {
+    if f.as_socket().is_none() && f.as_unix().is_none() {
         return Err(ENOTSOCK);
     }
     Ok(f)
@@ -62,7 +62,43 @@ fn write_sockaddr(ptr: u64, lenp: u64, addr: ([u8; 4], u16)) -> i64 {
     }
 }
 
+/// `socketpair(AF_UNIX, SOCK_STREAM, 0, sv)`.
+pub fn sys_socketpair(domain: u64, ty: u64, sv: u64) -> i64 {
+    if domain != 1 {
+        return EAFNOSUPPORT;
+    }
+    if ty & 0xF != SOCK_STREAM {
+        return ESOCKTNOSUPPORT;
+    }
+    if !usercopy::user_ok(sv, 8, true) {
+        return EFAULT;
+    }
+    let (a, b) = crate::unix::UnixSock::pair();
+    if ty & SOCK_NONBLOCK != 0 {
+        a.set_nonblock(true);
+        b.set_nonblock(true);
+    }
+    let Some(task) = sched::current().task() else { return EBADF };
+    let cx = ty & SOCK_CLOEXEC != 0;
+    let fa = task.fd_alloc_flags(a, cx);
+    let fb = task.fd_alloc_flags(b, cx);
+    let _ = usercopy::write_u32(sv, fa as u32);
+    let _ = usercopy::write_u32(sv + 4, fb as u32);
+    0
+}
+
 pub fn sys_socket(domain: u64, ty: u64, proto: u64) -> i64 {
+    if domain == 1 {
+        if ty & 0xF != SOCK_STREAM {
+            return ESOCKTNOSUPPORT;
+        }
+        let s = crate::unix::UnixSock::new();
+        if ty & SOCK_NONBLOCK != 0 {
+            s.set_nonblock(true);
+        }
+        let Some(task) = sched::current().task() else { return EBADF };
+        return task.fd_alloc_flags(s, ty & SOCK_CLOEXEC != 0) as i64;
+    }
     if domain != AF_INET {
         return EAFNOSUPPORT;
     }
@@ -88,6 +124,9 @@ pub fn sys_socket(domain: u64, ty: u64, proto: u64) -> i64 {
 
 pub fn sys_bind(fd: u64, addr: u64, len: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match crate::unix::parse_addr(addr, len) { Ok(p) => u.bind(p), Err(e) => e };
+    }
     match read_sockaddr(addr, len) {
         Ok((_, port)) => f.as_socket().unwrap().bind(port),
         Err(e) => e,
@@ -96,13 +135,16 @@ pub fn sys_bind(fd: u64, addr: u64, len: u64) -> i64 {
 
 pub fn sys_listen(fd: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => f.as_socket().unwrap().listen(),
+        Ok(f) => match f.as_unix() { Some(u) => u.listen(), None => f.as_socket().unwrap().listen() },
         Err(e) => e,
     }
 }
 
 pub fn sys_connect(fd: u64, addr: u64, len: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match crate::unix::parse_addr(addr, len) { Ok(p) => u.connect(p), Err(e) => e };
+    }
     match read_sockaddr(addr, len) {
         Ok((ip, port)) => f.as_socket().unwrap().connect(ip, port),
         Err(e) => e,
@@ -111,6 +153,19 @@ pub fn sys_connect(fd: u64, addr: u64, len: u64) -> i64 {
 
 pub fn sys_accept(fd: u64, addr: u64, lenp: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match u.accept() {
+            Ok(conn) => {
+                if flags & SOCK_NONBLOCK != 0 {
+                    conn.set_nonblock(true);
+                }
+                let _ = crate::unix::write_addr(addr, lenp, None);
+                let Some(task) = sched::current().task() else { return EBADF };
+                task.fd_alloc_flags(conn, flags & SOCK_CLOEXEC != 0) as i64
+            }
+            Err(e) => e,
+        };
+    }
     match f.as_socket().unwrap().accept() {
         Ok((conn, peer)) => {
             let r = write_sockaddr(addr, lenp, peer);
@@ -129,6 +184,9 @@ pub fn sys_accept(fd: u64, addr: u64, lenp: u64, flags: u64) -> i64 {
 
 pub fn sys_sendto(fd: u64, buf: u64, len: u64, addr: u64, alen: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if f.as_unix().is_some() {
+        return match usercopy::slice(buf, len as usize) { Ok(d) => f.write(d), Err(e) => e };
+    }
     let to = if addr != 0 {
         match read_sockaddr(addr, alen) { Ok(a) => Some(a), Err(e) => return e }
     } else {
@@ -143,6 +201,9 @@ pub fn sys_sendto(fd: u64, buf: u64, len: u64, addr: u64, alen: u64) -> i64 {
 pub fn sys_recvfrom(fd: u64, buf: u64, len: u64, addr: u64, lenp: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     let out = match usercopy::slice_mut(buf, len as usize) { Ok(b) => b, Err(e) => return e };
+    if f.as_unix().is_some() {
+        return f.read(out);
+    }
     let (n, from) = f.as_socket().unwrap().recv_from(out);
     if n >= 0 {
         if let Some(a) = from {
@@ -157,20 +218,27 @@ pub fn sys_recvfrom(fd: u64, buf: u64, len: u64, addr: u64, lenp: u64) -> i64 {
 
 pub fn sys_shutdown(fd: u64, how: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => f.as_socket().unwrap().shutdown(how as u32),
+        Ok(f) => match f.as_unix() { Some(u) => u.shutdown(how as u32), None => f.as_socket().unwrap().shutdown(how as u32) },
         Err(e) => e,
     }
 }
 
 pub fn sys_getsockname(fd: u64, addr: u64, lenp: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => write_sockaddr(addr, lenp, f.as_socket().unwrap().local_addr()),
+        Ok(f) => match f.as_unix() {
+            Some(u) => crate::unix::write_addr(addr, lenp, u.local_path().as_deref()),
+            None => write_sockaddr(addr, lenp, f.as_socket().unwrap().local_addr()),
+        },
         Err(e) => e,
     }
 }
 
 pub fn sys_getpeername(fd: u64, addr: u64, lenp: u64) -> i64 {
     match sock_of(fd) {
+        Ok(f) if f.as_unix().is_some() => match f.as_unix().unwrap().peer_path() {
+            Ok(p) => crate::unix::write_addr(addr, lenp, p.as_deref()),
+            Err(e) => e,
+        },
         Ok(f) => match f.as_socket().unwrap().peer_addr() {
             Some(p) => write_sockaddr(addr, lenp, p),
             None => -107, // ENOTCONN
@@ -190,7 +258,12 @@ pub fn sys_setsockopt(fd: u64) -> i64 {
 /// `getsockopt`: `SO_ERROR` / `SO_TYPE` are real; everything else reads as 0.
 pub fn sys_getsockopt(fd: u64, level: u64, name: u64, val: u64, lenp: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
-    let v: u32 = if level == 1 && name == 4 {
+    let is_unix = f.as_unix().is_some();
+    let v: u32 = if is_unix && level == 1 && name == 3 {
+        1 // SO_TYPE: SOCK_STREAM
+    } else if is_unix {
+        0
+    } else if level == 1 && name == 4 {
         0 // SO_ERROR
     } else if level == 1 && name == 3 {
         if f.as_socket().unwrap().kind() == Kind::Tcp { 1 } else { 2 } // SO_TYPE
@@ -284,6 +357,9 @@ fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
 
 pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if f.as_unix().is_some() {
+        return match gather_iov(msg) { Ok(d) => f.write(&d), Err(e) => e };
+    }
     let name = usercopy::read_u64(msg).unwrap_or(0);
     let namelen = usercopy::read_u32(msg + 8).unwrap_or(0) as u64;
     let to = if name != 0 {
@@ -312,7 +388,7 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
         }
     }
     let mut buf = alloc::vec![0u8; total.min(MSG_MAX)];
-    let (got, from) = f.as_socket().unwrap().recv_from(&mut buf);
+    let (got, from) = if f.as_unix().is_some() { (f.read(&mut buf), None) } else { f.as_socket().unwrap().recv_from(&mut buf) };
     if got < 0 {
         return got;
     }

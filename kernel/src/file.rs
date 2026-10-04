@@ -62,6 +62,30 @@ pub trait FileOps: Send + Sync {
     fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
         None
     }
+    /// Terminal `ioctl`s of a pseudo-terminal end; `None` = not a pty (the console's defaults apply).
+    fn tty_ioctl(&self, _cmd: u64, _arg: u64) -> Option<i64> {
+        None
+    }
+    /// The directory path of an opened directory (`fchdir`, `openat`).
+    fn dir_path(&self) -> Option<String> {
+        None
+    }
+    /// The path of an ext2 file (for `fchmod`/`fchown`).
+    fn fs_path(&self) -> Option<String> {
+        None
+    }
+    /// `ftruncate`: only `memfd` files support it.
+    fn truncate(&self, _len: u64) -> i64 {
+        -22
+    }
+    /// The shared-memory section behind a `memfd`, for `mmap(MAP_SHARED)`.
+    fn shm_section(&self) -> Option<alloc::sync::Arc<crate::process::Section>> {
+        None
+    }
+    /// The AF_UNIX socket behind this file, if it is one.
+    fn as_unix(&self) -> Option<&crate::unix::UnixSock> {
+        None
+    }
     /// For `mmap`: the device memory this file maps (`(physical base, length)`), if any.
     fn device_phys(&self) -> Option<(u64, u64)> {
         None
@@ -94,6 +118,111 @@ pub enum DevKind {
     Random,
     /// `/dev/input/mice`: raw PS/2 mouse packets.
     Mice,
+}
+
+/// `/dev/winsys`: the display server's side of the Win32 window manager. `read` = 32-byte window
+/// events, `ioctl(0x7701, hwnd)` maps a window's pixels, `write` = 32-byte input records
+/// (`[kind, hwnd, a, b, ...]`: 10 = mouse message a at (b, c); 11 = char a; 12 = close; 13 = paint;
+/// 14 = destroy). Holding it open turns on composition: windows then draw into their own buffers.
+pub struct WinSys;
+
+impl FileOps for WinSys {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        if buf.len() < 32 {
+            return -22;
+        }
+        loop {
+            if let Some(e) = crate::window::winsys_read() {
+                for (i, v) in e.iter().enumerate() {
+                    buf[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+                }
+                return 32;
+            }
+            if crate::signal::interrupted() {
+                return -4;
+            }
+            crate::window::winsys_wait();
+        }
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        let mut done = 0;
+        for rec in buf.chunks_exact(32) {
+            let w = |i: usize| u32::from_le_bytes([rec[4 * i], rec[4 * i + 1], rec[4 * i + 2], rec[4 * i + 3]]);
+            let (kind, hwnd) = (w(0), w(1));
+            match kind {
+                10 => {
+                    crate::window::post_message(hwnd, w(2), 0, (w(3) & 0xFFFF) as u64 | ((w(4) as u64) << 16));
+                }
+                11 => {
+                    crate::window::post_message(hwnd, 0x102, w(2) as u64, 0);
+                }
+                12 => {
+                    crate::window::post_message(hwnd, 0x10, 0, 0);
+                }
+                13 => {
+                    crate::window::post_message(hwnd, crate::window::WM_PAINT, 0, 0);
+                }
+                14 => crate::window::destroy_window(hwnd),
+                _ => {}
+            }
+            done += 32;
+        }
+        done as i64
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        (if want & POLLIN != 0 && crate::window::winsys_ready() { POLLIN } else { 0 }) | (want & POLLOUT)
+    }
+    fn ioctl(&self, cmd: u64, arg: u64) -> i64 {
+        if cmd == 0x7701 { crate::window::winsys_map(arg as u32) } else { -25 }
+    }
+}
+
+impl Drop for WinSys {
+    fn drop(&mut self) {
+        crate::window::winsys_open(false);
+    }
+}
+
+/// `/dev/input/kbd`: key press/release events (see `console::kbd_read`). Holding it open takes the
+/// keyboard away from the tty.
+pub struct KbdDev {
+    nonblock: AtomicBool,
+}
+
+impl FileOps for KbdDev {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        crate::console::kbd_read(buf, self.nonblock.load(Ordering::Relaxed))
+    }
+    fn write(&self, _buf: &[u8]) -> i64 {
+        -9
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        if want & POLLIN != 0 && crate::console::kbd_ready() { POLLIN } else { 0 }
+    }
+    fn set_nonblock(&self, on: bool) {
+        self.nonblock.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.nonblock.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for KbdDev {
+    fn drop(&mut self) {
+        crate::console::kbd_grab(false);
+    }
 }
 
 pub struct DevFile(pub DevKind);
@@ -143,11 +272,30 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/ptmx" => crate::pty::open_master(),
+        p if p.starts_with("/dev/pts/") => crate::pty::open_slave(p[9..].parse().ok()?)?,
+        "/dev/winsys" => {
+            crate::window::winsys_open(true);
+            Arc::new(WinSys)
+        }
+        "/dev/input/kbd" => {
+            crate::console::kbd_grab(true);
+            Arc::new(KbdDev { nonblock: AtomicBool::new(false) })
+        }
         "/dev/fb0" => {
             if crate::gdi::fb_geometry().is_none() {
                 return None;
             }
+            // The opener owns the screen: the text console stops painting (its model keeps
+            // updating) until the last fd of /dev/fb0 closes — also when the owner crashes.
+            if FB_OPENS.fetch_add(1, Ordering::AcqRel) == 0 {
+                crate::fbcon::suspend();
+            }
             Arc::new(FbFile { pos: AtomicU64::new(0) })
+        }
+        "/dev/tty" if crate::sched::current().task().is_some_and(|t| t.ctty().is_some()) => {
+            let p = crate::sched::current().task().and_then(|t| t.ctty())?;
+            crate::pty::open_ctty(&p)
         }
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
@@ -166,6 +314,16 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
 /// offsets, `FBIOGET_VSCREENINFO` / `FBIOGET_FSCREENINFO` for its geometry. (No `mmap` yet.)
 pub struct FbFile {
     pos: AtomicU64,
+}
+
+static FB_OPENS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+impl Drop for FbFile {
+    fn drop(&mut self) {
+        if FB_OPENS.fetch_sub(1, Ordering::AcqRel) == 1 {
+            crate::fbcon::resume();
+        }
+    }
 }
 
 impl FileOps for FbFile {
@@ -507,6 +665,18 @@ impl FileOps for Ext2File {
     fn ino(&self) -> u64 {
         self.ino.load(Ordering::Relaxed)
     }
+    fn fs_path(&self) -> Option<String> {
+        Some(self.path.clone())
+    }
+    fn truncate(&self, len: u64) -> i64 {
+        let mut data = self.buf.lock();
+        data.resize(len as usize, 0);
+        self.dirty.store(true, Ordering::Release);
+        self.dirty_lo.store(0, Ordering::Relaxed);
+        self.dirty_hi.store(data.len(), Ordering::Relaxed);
+        self.unflushed.store(usize::MAX / 2, Ordering::Relaxed);
+        self.flush_locked(&data)
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let data = self.buf.lock();
         let pos = self.pos.load(Ordering::Relaxed);
@@ -634,6 +804,7 @@ pub struct DirFile {
     /// Back-to-back `linux_dirent64` records, each `d_reclen`-aligned to 8.
     blob: Vec<u8>,
     pos: Mutex<usize>,
+    path: Mutex<Option<String>>,
 }
 
 impl DirFile {
@@ -650,11 +821,20 @@ impl DirFile {
             blob[s + 18] = *dtype;
             blob[s + DIRENT_HEAD..s + DIRENT_HEAD + name.len()].copy_from_slice(name.as_bytes());
         }
-        Arc::new(Self { blob, pos: Mutex::new(0) })
+        Arc::new(Self { blob, pos: Mutex::new(0), path: Mutex::new(None) })
+    }
+
+    /// Remember which directory this is (for `fchdir` and the `*at` calls).
+    pub fn with_path(self: Arc<Self>, p: &str) -> Arc<Self> {
+        *self.path.lock() = Some(String::from(p));
+        self
     }
 }
 
 impl FileOps for DirFile {
+    fn dir_path(&self) -> Option<String> {
+        self.path.lock().clone()
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EISDIR
     }

@@ -177,6 +177,14 @@ extern "C" {
 #[no_mangle]
 extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code: u64, cr2: u64) {
     let from_user = frame.cs & 3 == 3;
+    // Demand-grown main stack: a not-present access just below the mapped part is fixed up and retried.
+    if from_user && vector == 14 && error_code & 1 == 0 {
+        if let Some(t) = sched::current().task() {
+            if t.space().grow_stack(cr2) {
+                return;
+            }
+        }
+    }
     // `PE_EXC_ADDR` is only ever mapped for a *PE* process (`pe.rs`'s
     // loader) — a plain ELF one never gets that page, so reading it
     // unconditionally for every user fault (the bug this comment replaces)

@@ -93,20 +93,93 @@ impl Inode {
     }
 }
 
+/// A write-through cache of 512-byte sectors of the root filesystem. Without it every inode read,
+/// bitmap read and directory lookup was a drive command (milliseconds each; creating one file took
+/// ~85 of them). Reads fill it, writes update it (and still go to the drive), so it never holds data the
+/// disk does not.
+struct SectorCache {
+    map: BTreeMap<u64, (alloc::boxed::Box<[u8; SECTOR]>, u64)>,
+    tick: u64,
+}
+
+const CACHE_MAX_SECTORS: usize = 8192; // 4 MiB (the heap is shared with ELF buffers: keep the cache small)
+
+static CACHE: spin::Mutex<SectorCache> = spin::Mutex::new(SectorCache { map: BTreeMap::new(), tick: 0 });
+
+impl SectorCache {
+    fn get(&mut self, lba: u64, out: &mut [u8]) -> bool {
+        self.tick += 1;
+        let t = self.tick;
+        match self.map.get_mut(&lba) {
+            Some((d, tk)) => {
+                *tk = t;
+                out.copy_from_slice(&d[..]);
+                true
+            }
+            None => false,
+        }
+    }
+    /// `overwrite = false`: keep an entry a concurrent writer already put there (it is newer).
+    fn put(&mut self, lba: u64, data: &[u8], overwrite: bool) {
+        self.tick += 1;
+        let t = self.tick;
+        if let Some((d, tk)) = self.map.get_mut(&lba) {
+            if overwrite {
+                d.copy_from_slice(data);
+            }
+            *tk = t;
+            return;
+        }
+        if self.map.len() >= CACHE_MAX_SECTORS {
+            // drop the least recently used quarter
+            let mut ticks: Vec<(u64, u64)> = self.map.iter().map(|(&l, &(_, tk))| (tk, l)).collect();
+            ticks.sort_unstable();
+            for &(_, l) in ticks.iter().take(CACHE_MAX_SECTORS / 4) {
+                self.map.remove(&l);
+            }
+        }
+        let mut b = alloc::boxed::Box::new([0u8; SECTOR]);
+        b.copy_from_slice(data);
+        self.map.insert(lba, (b, t));
+    }
+}
+
+/// Read `sectors` sectors starting at ext2-relative `start_lba` through the cache.
+fn read_sectors(start_lba: u64, sectors: usize) -> Vec<u8> {
+    let part = PART_LBA.load(Ordering::Relaxed);
+    let mut raw = vec![0u8; sectors * SECTOR];
+    let mut missing: Vec<usize> = Vec::new();
+    {
+        let mut c = CACHE.lock();
+        for i in 0..sectors {
+            if !c.get(part + start_lba + i as u64, &mut raw[i * SECTOR..(i + 1) * SECTOR]) {
+                missing.push(i);
+            }
+        }
+    }
+    // read the missing sectors in runs of consecutive ones (up to 64 per drive command)
+    let mut k = 0;
+    while k < missing.len() {
+        let first = missing[k];
+        let mut n = 1;
+        while k + n < missing.len() && missing[k + n] == first + n && n < 64 {
+            n += 1;
+        }
+        ahci::read(part + start_lba + first as u64, &mut raw[first * SECTOR..(first + n) * SECTOR]).expect("ext2 disk read");
+        let mut c = CACHE.lock();
+        for j in 0..n {
+            c.put(part + start_lba + (first + j) as u64, &raw[(first + j) * SECTOR..(first + j + 1) * SECTOR], false);
+        }
+        k += n;
+    }
+    raw
+}
+
 /// Read an arbitrary byte range off the disk (sector-granular under the hood).
 fn disk_range(off: u64, len: usize) -> Vec<u8> {
     let start_lba = off / SECTOR as u64;
     let end_lba = (off + len as u64 + SECTOR as u64 - 1) / SECTOR as u64;
-    let sectors = (end_lba - start_lba) as usize;
-    let part = PART_LBA.load(Ordering::Relaxed);
-    let mut raw = vec![0u8; sectors * SECTOR];
-    let mut done = 0;
-    while done < sectors {
-        let n = (sectors - done).min(64);
-        ahci::read(part + start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
-            .expect("ext2 disk read");
-        done += n;
-    }
+    let raw = read_sectors(start_lba, (end_lba - start_lba) as usize);
     let skip = (off - start_lba * SECTOR as u64) as usize;
     raw[skip..skip + len].to_vec()
 }
@@ -161,8 +234,9 @@ pub fn open() -> Result<Ext2, &'static str> {
     })
 }
 
-/// Write an arbitrary byte range to the disk (sector-granular RMW under the
-/// hood). Every `ahci::write` flushes, so a returned `disk_write` is durable.
+/// Write an arbitrary byte range to the disk (sector-granular RMW under the hood; only the first and
+/// last sector can be partial). Written through the cache without a per-write drive flush — the caller
+/// ends its operation with `sync_backups`, which flushes once.
 fn disk_write(off: u64, data: &[u8]) {
     if data.is_empty() {
         return;
@@ -171,27 +245,40 @@ fn disk_write(off: u64, data: &[u8]) {
     let end_lba = (off + data.len() as u64 + SECTOR as u64 - 1) / SECTOR as u64;
     let sectors = (end_lba - start_lba) as usize;
     let part = PART_LBA.load(Ordering::Relaxed);
+    let skip = (off - start_lba * SECTOR as u64) as usize;
     let mut raw = vec![0u8; sectors * SECTOR];
-
+    // sectors the new data only partly covers keep their other bytes
+    if skip != 0 || (skip + data.len()) % SECTOR != 0 || sectors == 1 && data.len() < SECTOR {
+        let first = read_sectors(start_lba, 1);
+        raw[..SECTOR].copy_from_slice(&first);
+        if sectors > 1 {
+            let last = read_sectors(end_lba - 1, 1);
+            raw[(sectors - 1) * SECTOR..].copy_from_slice(&last);
+        }
+    }
+    raw[skip..skip + data.len()].copy_from_slice(data);
     let mut done = 0;
     while done < sectors {
         let n = (sectors - done).min(64);
-        ahci::read(part + start_lba + done as u64, &mut raw[done * SECTOR..(done + n) * SECTOR])
-            .expect("ext2 rmw read");
+        ahci::write_relaxed(part + start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR]).expect("ext2 write");
         done += n;
     }
-
-    let skip = (off - start_lba * SECTOR as u64) as usize;
-    raw[skip..skip + data.len()].copy_from_slice(data);
-
-    let mut done = 0;
-    while done < sectors {
-        let n = (sectors - done).min(64);
-        ahci::write(part + start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR])
-            .expect("ext2 rmw write");
-        done += n;
+    let mut c = CACHE.lock();
+    for i in 0..sectors {
+        c.put(part + start_lba + i as u64, &raw[i * SECTOR..(i + 1) * SECTOR], true);
     }
 }
+
+/// Make everything durable: refresh pending backup superblocks and flush the drive cache.
+pub fn sync_all() {
+    if let Ok(fs) = open() {
+        fs.flush_backups();
+    }
+    let _ = ahci::flush();
+}
+
+static BACKUPS_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static LAST_BACKUP_NS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 fn round4(n: usize) -> usize {
     (n + 3) & !3
@@ -321,7 +408,9 @@ impl Ext2 {
         let blocks = self.block_map(inode);
 
         // Emit consecutive runs of block numbers in one disk read each.
-        let mut out = Vec::with_capacity(total);
+        // Whole blocks are appended (the tail is cut off afterwards): reserve them up front, or the
+        // last partial block makes the Vec double its capacity (a 7 MiB file asked for 14 MiB).
+        let mut out = Vec::with_capacity(blocks.len() * bs);
         let mut i = 0;
         while i < blocks.len() {
             if blocks[i] == 0 {
@@ -437,12 +526,130 @@ impl Ext2 {
         out
     }
 
+    /// Resolve `path` to an inode, following symbolic links everywhere (at most 8 hops).
     pub fn path_lookup(&self, path: &str) -> Option<u32> {
-        let mut ino = ROOT_INO;
-        for comp in path.split('/').filter(|s| !s.is_empty()) {
-            ino = self.lookup(ino, comp)?;
+        self.walk(path, true)
+    }
+
+    /// Like [`Self::path_lookup`] but a symlink as the *last* component is returned itself (`lstat`).
+    pub fn path_lookup_nofollow(&self, path: &str) -> Option<u32> {
+        self.walk(path, false)
+    }
+
+    fn walk(&self, path: &str, follow_last: bool) -> Option<u32> {
+        let mut stack: Vec<u32> = vec![ROOT_INO];
+        let mut todo: Vec<alloc::string::String> =
+            path.split('/').filter(|s| !s.is_empty()).rev().map(Into::into).collect();
+        let mut hops = 0;
+        while let Some(c) = todo.pop() {
+            let cur = *stack.last()?;
+            if c == "." {
+                continue;
+            }
+            if c == ".." {
+                if stack.len() > 1 {
+                    stack.pop();
+                }
+                continue;
+            }
+            let ino = self.lookup(cur, &c)?;
+            let node = self.read_inode(ino);
+            let last = todo.is_empty();
+            if node.mode & 0xF000 == 0xA000 && (!last || follow_last) {
+                hops += 1;
+                if hops > 8 {
+                    return None; // ELOOP
+                }
+                let target = self.read_link(ino)?;
+                if target.starts_with('/') {
+                    stack.truncate(1);
+                }
+                for comp in target.split('/').filter(|s| !s.is_empty()).rev() {
+                    todo.push(comp.into());
+                }
+                continue;
+            }
+            if !last && node.mode & 0xF000 != 0x4000 {
+                return None; // ENOTDIR
+            }
+            stack.push(ino);
         }
-        Some(ino)
+        stack.last().copied()
+    }
+
+    /// The target text of symlink inode `ino` (fast symlinks keep it inside the inode).
+    pub fn read_link(&self, ino: u32) -> Option<alloc::string::String> {
+        let node = self.read_inode(ino);
+        if node.mode & 0xF000 != 0xA000 {
+            return None;
+        }
+        let bytes: Vec<u8> = if node.size < 60 {
+            node.block.iter().flat_map(|w| w.to_le_bytes()).take(node.size as usize).collect()
+        } else {
+            self.read_file(&node).into_iter().take(node.size as usize).collect()
+        };
+        alloc::string::String::from_utf8(bytes).ok()
+    }
+
+    /// Follow a symlink in the *last* component of `path` until it names something else
+    /// (what `open(O_CREAT)` needs so it writes to the target). Absolute result.
+    pub fn resolve_final(&self, path: &str) -> alloc::string::String {
+        let mut cur = alloc::string::String::from(path);
+        for _ in 0..8 {
+            let Some(ino) = self.path_lookup_nofollow(&cur) else { break };
+            let Some(target) = self.read_link(ino) else { break };
+            let joined = if target.starts_with('/') {
+                target
+            } else {
+                match split_parent(&cur) {
+                    Some((dir, _)) => alloc::format!("{}/{}", dir.trim_end_matches('/'), target),
+                    None => target,
+                }
+            };
+            let mut comps: Vec<&str> = Vec::new();
+            for p in joined.split('/') {
+                match p {
+                    "" | "." => {}
+                    ".." => {
+                        comps.pop();
+                    }
+                    c => comps.push(c),
+                }
+            }
+            cur = alloc::format!("/{}", comps.join("/"));
+        }
+        cur
+    }
+
+    /// `symlink(2)`: create `path` as a symbolic link to `target`.
+    pub fn symlink_path(&self, target: &str, path: &str, uid: u32, gid: u32) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        let (parent, name) = split_parent(path).ok_or("bad path")?;
+        let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
+        if self.lookup(parent_ino, name).is_some() {
+            return Err("already exists");
+        }
+        if target.is_empty() || target.len() > 1000 {
+            return Err("bad target");
+        }
+        let (block, blocks512) = if target.len() < 60 {
+            let mut b = [0u32; 15];
+            for (i, chunk) in target.as_bytes().chunks(4).enumerate() {
+                let mut w = [0u8; 4];
+                w[..chunk.len()].copy_from_slice(chunk);
+                b[i] = u32::from_le_bytes(w);
+            }
+            (b, 0)
+        } else {
+            self.lay_out_data(target.as_bytes()).ok_or("no space")?
+        };
+        let ino = self.alloc_inode(false).ok_or("no free inode")?;
+        self.patch_inode(ino, |raw| {
+            set_inode(raw, 0o120_777, uid, gid, target.len() as u64, 1, blocks512, &block);
+        });
+        self.dir_insert_ft(parent_ino, name, ino, 7)?;
+        self.sync_backups();
+        Ok(())
     }
 
     pub fn read_path(&self, path: &str) -> Option<Vec<u8>> {
@@ -685,10 +892,15 @@ impl Ext2 {
     /// (one atomic sector write) second, the old indirect blocks freed last.
     pub fn write_at(&self, ino: u32, data: &[u8], lo: usize, hi: usize) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
-        let old = self.read_inode(ino);
-        if old.mode & 0xF000 != 0x8000 {
+        if self.read_inode(ino).mode & 0xF000 != 0x8000 {
             return Err("not a regular file");
         }
+        self.write_at_locked(ino, data, lo, hi)
+    }
+
+    /// [`Self::write_at`] for a caller that holds `FS_WRITE` (and has checked the inode type).
+    fn write_at_locked(&self, ino: u32, data: &[u8], lo: usize, hi: usize) -> Result<(), &'static str> {
+        let old = self.read_inode(ino);
         let bs = self.block_size as usize;
         let new_size = data.len();
         let old_size = old.size as usize;
@@ -832,23 +1044,24 @@ impl Ext2 {
 
     /// Add a `(name -> child)` entry to directory `dir_ino` (direct blocks only).
     fn dir_insert(&self, dir_ino: u32, name: &str, child: u32, is_dir: bool) -> Result<(), &'static str> {
-        let ft: u8 = if !self.filetype {
-            0
-        } else if is_dir {
-            2
-        } else {
-            1
-        };
+        self.dir_insert_ft(dir_ino, name, child, if is_dir { 2 } else { 1 })
+    }
+
+    /// [`Self::dir_insert`] with an explicit `EXT2_FT_*` code (1 file, 2 dir, 7 symlink).
+    fn dir_insert_ft(&self, dir_ino: u32, name: &str, child: u32, ftype: u8) -> Result<(), &'static str> {
+        let ft: u8 = if !self.filetype { 0 } else { ftype };
         let need = round4(8 + name.len());
         let bs = self.block_size as usize;
         let dir = self.read_inode(dir_ino);
+        let dir_blocks = self.block_map(&dir); // all blocks, indirect ones included
+        let mut data = self.read_file(&dir); // the whole directory in a few large reads
+        data.resize(dir_blocks.len() * bs, 0);
 
-        for slot in 0..12 {
-            let bno = dir.block[slot];
+        for (bi, &bno) in dir_blocks.iter().enumerate() {
             if bno == 0 {
                 continue;
             }
-            let mut blk = self.block(bno);
+            let blk = &mut data[bi * bs..(bi + 1) * bs];
             let mut off = 0;
             while off + 8 <= bs {
                 let ino = le32(&blk[off..]);
@@ -869,15 +1082,26 @@ impl Ext2 {
                     blk[no + 6] = name.len() as u8;
                     blk[no + 7] = ft;
                     blk[no + 8..no + 8 + name.len()].copy_from_slice(name.as_bytes());
-                    self.write_block(bno, &blk);
+                    self.write_block(bno, blk);
                     return Ok(());
                 }
                 off += rec_len;
             }
         }
 
-        // No gap anywhere — hang a fresh block off the next free direct slot.
-        let slot = (0..12).find(|&s| dir.block[s] == 0).ok_or("directory full")?;
+        // No gap anywhere. Past the direct blocks the directory grows like a file: one more block
+        // appended with `write_at_locked` (only the new block and the indirect blocks are written).
+        let Some(slot) = (0..12).find(|&s| dir.block[s] == 0) else {
+            let old_len = data.len();
+            let mut blk = vec![0u8; bs];
+            blk[0..4].copy_from_slice(&child.to_le_bytes());
+            blk[4..6].copy_from_slice(&(bs as u16).to_le_bytes());
+            blk[6] = name.len() as u8;
+            blk[7] = ft;
+            blk[8..8 + name.len()].copy_from_slice(name.as_bytes());
+            data.extend_from_slice(&blk);
+            return self.write_at_locked(dir_ino, &data, old_len, old_len + bs);
+        };
         let bno = self.alloc_block().ok_or("no free block for dir")?;
         let mut blk = vec![0u8; bs];
         blk[0..4].copy_from_slice(&child.to_le_bytes());
@@ -917,6 +1141,10 @@ impl Ext2 {
     /// never changes its owner — matches real Unix: truncating a file you
     /// have write access to doesn't let you take it over.
     pub fn write_path_owned(&self, path: &str, data: &[u8], uid: u32, gid: u32) -> Result<(), &'static str> {
+        self.write_path_owned_inner(path, data, uid, gid)
+    }
+
+    fn write_path_owned_inner(&self, path: &str, data: &[u8], uid: u32, gid: u32) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
@@ -1049,12 +1277,14 @@ impl Ext2 {
     fn dir_remove(&self, dir_ino: u32, name: &str) -> Option<u32> {
         let bs = self.block_size as usize;
         let dir = self.read_inode(dir_ino);
-        for slot in 0..12 {
-            let bno = dir.block[slot];
+        let blocks = self.block_map(&dir);
+        let mut data = self.read_file(&dir); // all blocks in a few large reads
+        data.resize(blocks.len() * bs, 0);
+        for (bi, &bno) in blocks.iter().enumerate() {
             if bno == 0 {
                 continue;
             }
-            let mut blk = self.block(bno);
+            let blk = &mut data[bi * bs..(bi + 1) * bs];
             let mut off = 0;
             let mut prev: Option<usize> = None;
             while off + 8 <= bs {
@@ -1075,7 +1305,7 @@ impl Ext2 {
                         }
                         None => blk[off..off + 4].copy_from_slice(&0u32.to_le_bytes()),
                     }
-                    self.write_block(bno, &blk);
+                    self.write_block(bno, blk);
                     return Some(ino);
                 }
                 prev = Some(off);
@@ -1112,6 +1342,10 @@ impl Ext2 {
     /// Unlink a regular file: drop its last link and free it.
     pub fn unlink_path(&self, path: &str) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
+        self.unlink_inner(path)
+    }
+
+    fn unlink_inner(&self, path: &str) -> Result<(), &'static str> {
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such file")?;
@@ -1122,7 +1356,9 @@ impl Ext2 {
         self.dir_remove(parent_ino, name).ok_or("dirent vanished")?;
         let links = le16(&disk_range(self.inode_off(ino) + 26, 2)); // i_links_count @ 26
         if links <= 1 {
-            self.free_all_blocks(&node);
+            if !(node.mode & 0xF000 == 0xA000 && node.size < 60) {
+                self.free_all_blocks(&node); // (a fast symlink's "block pointers" are its text)
+            }
             self.free_inode(ino, false);
         } else {
             self.bump_links(ino, -1);
@@ -1131,9 +1367,74 @@ impl Ext2 {
         Ok(())
     }
 
+    /// `link(2)`: a new directory entry for an existing regular file.
+    pub fn link_path(&self, old: &str, new: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        let ino = self.path_lookup(old).ok_or("no such file")?;
+        if self.read_inode(ino).mode & 0xF000 == 0x4000 {
+            return Err("is a directory");
+        }
+        let (np, nname) = split_parent(new).ok_or("bad path")?;
+        let nparent = self.path_lookup(np).ok_or("parent dir missing")?;
+        if self.lookup(nparent, nname).is_some() {
+            return Err("already exists");
+        }
+        self.dir_insert(nparent, nname, ino, false)?;
+        self.bump_links(ino, 1);
+        self.sync_backups();
+        Ok(())
+    }
+
+    /// `rename(2)`: move/rename `from` to `to` (replacing an existing file, or an empty directory
+    /// by a directory). Hard links are not involved — the same inode gets a new directory entry.
+    pub fn rename_path(&self, from: &str, to: &str) -> Result<(), &'static str> {
+        let _fs = FS_WRITE.lock();
+        if from == to {
+            return Ok(());
+        }
+        let (fp, fname) = split_parent(from).ok_or("bad path")?;
+        let (tp, tname) = split_parent(to).ok_or("bad path")?;
+        let fparent = self.path_lookup(fp).ok_or("parent dir missing")?;
+        let tparent = self.path_lookup(tp).ok_or("parent dir missing")?;
+        let ino = self.lookup(fparent, fname).ok_or("no such file")?;
+        let is_dir = self.read_inode(ino).mode & 0xF000 == 0x4000;
+        if is_dir && (to.starts_with(from) && to[from.len()..].starts_with('/')) {
+            return Err("invalid");
+        }
+        if let Some(dst) = self.lookup(tparent, tname) {
+            if dst == ino {
+                return Ok(());
+            }
+            let dir_dst = self.read_inode(dst).mode & 0xF000 == 0x4000;
+            match (is_dir, dir_dst) {
+                (true, true) => self.rmdir_inner(to)?,
+                (false, false) => self.unlink_inner(to)?,
+                (false, true) => return Err("is a directory"),
+                (true, false) => return Err("not a directory"),
+            }
+        }
+        self.dir_insert(tparent, tname, ino, is_dir)?;
+        self.dir_remove(fparent, fname).ok_or("dirent vanished")?;
+        if is_dir && fparent != tparent {
+            // the moved directory's ".." now names the new parent
+            let node = self.read_inode(ino);
+            let mut blk = self.block(node.block[0]);
+            blk[12..16].copy_from_slice(&tparent.to_le_bytes());
+            self.write_block(node.block[0], &blk);
+            self.bump_links(fparent, -1);
+            self.bump_links(tparent, 1);
+        }
+        self.sync_backups();
+        Ok(())
+    }
+
     /// Remove an empty directory.
     pub fn rmdir_path(&self, path: &str) -> Result<(), &'static str> {
         let _fs = FS_WRITE.lock();
+        self.rmdir_inner(path)
+    }
+
+    fn rmdir_inner(&self, path: &str) -> Result<(), &'static str> {
         let (parent, name) = split_parent(path).ok_or("bad path")?;
         let parent_ino = self.path_lookup(parent).ok_or("parent dir missing")?;
         let ino = self.lookup(parent_ino, name).ok_or("no such directory")?;
@@ -1184,10 +1485,34 @@ impl Ext2 {
     /// Re-write every backup superblock + group-descriptor table from the
     /// primary, so `e2fsck` stays happy after a mutation on a multi-group fs.
     fn sync_backups(&self) {
+        // The end of every mutating operation: everything it wrote becomes durable here (one cache
+        // flush instead of one per block).
+        let _ = ahci::flush();
         let groups = self.group_count();
         if groups <= 1 {
             return;
         }
+        // The backup superblocks/descriptor tables only matter to fsck: refresh them at most every few
+        // seconds, and at shutdown (`flush_backups`), not after every created file.
+        let now = crate::timer::monotonic_ns();
+        if now.saturating_sub(LAST_BACKUP_NS.load(Ordering::Relaxed)) < 5_000_000_000 {
+            BACKUPS_DIRTY.store(true, Ordering::Release);
+            return;
+        }
+        LAST_BACKUP_NS.store(now, Ordering::Relaxed);
+        BACKUPS_DIRTY.store(false, Ordering::Release);
+        self.write_backups();
+    }
+
+    /// Write out pending backup refreshes now (shutdown, end of the self-tests).
+    pub fn flush_backups(&self) {
+        if BACKUPS_DIRTY.swap(false, Ordering::AcqRel) {
+            self.write_backups();
+        }
+    }
+
+    fn write_backups(&self) {
+        let groups = self.group_count();
         let sb = disk_range(SB_OFFSET, 1024);
         let gdt = disk_range(self.bgd_off(0), groups as usize * 32);
         for g in 1..groups {
@@ -1200,6 +1525,7 @@ impl Ext2 {
             disk_write(sb_blk as u64 * self.block_size as u64, &sbc);
             disk_write((sb_blk + 1) as u64 * self.block_size as u64, &gdt);
         }
+        let _ = ahci::flush();
     }
 }
 
