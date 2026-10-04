@@ -79,7 +79,11 @@ static void draw_cursor(void) {
 static void compose(struct rect r) {
     r = clip(r);
     if (empty(r)) return;
-    fill(r, rgb(30, 50, 90));
+    /* wallpaper: a soft vertical gradient */
+    for (int y = r.y0; y < r.y1; y++) {
+        uint32_t c = rgb(30 + 14 * y / H, 50 + 20 * y / H, 90 + 22 * y / H);
+        for (int x = r.x0; x < r.x1; x++) bb[(size_t)y * W + x] = c;
+    }
     for (int i = 0; i < nwin; i++) {
         struct win *w = &wins[i];
         int top = i == nwin - 1;
@@ -181,8 +185,14 @@ static void on_new_client(int ls) {
     int c = accept(ls, 0, 0);
     if (c < 0) return;
     struct wl_msg m;
-    if (read(c, &m, sizeof m) == (ssize_t)sizeof m && m.op == WL_QUIT) { quit = 1; close(c); return; }
-    if (nwin >= MAXWIN || m.op != WL_CREATE || m.a == 0 || m.b == 0 || m.a > 2000 || m.b > 2000) { close(c); return; }
+    ssize_t first = read(c, &m, sizeof m);
+    if (first == (ssize_t)sizeof m && m.op == WL_HELLO) {
+        struct wl_msg h = { WL_CREATED, 0, (uint32_t)W, (uint32_t)H, 0 };
+        (void)!write(c, &h, sizeof h);
+        first = read(c, &m, sizeof m);
+    }
+    if (first == (ssize_t)sizeof m && m.op == WL_QUIT) { quit = 1; close(c); return; }
+    if (first != (ssize_t)sizeof m || nwin >= MAXWIN || m.op != WL_CREATE || m.a == 0 || m.b == 0 || m.a > 2000 || m.b > 2000) { close(c); return; }
     int id = shmget(m.c, (size_t)m.a * m.b * 4, 0);
     void *p = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
     if (p == (void *)-1) { close(c); return; }
