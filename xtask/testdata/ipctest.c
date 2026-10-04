@@ -71,7 +71,67 @@ int main(void) {
     strcpy(m1 + 5000, "mem");
     CHECK(!strcmp(m2 + 5000, "mem"), "memfd shared");
     CHECK(munmap(m1, 8192) == 0 && munmap(m2, 8192) == 0, "munmap");
-    printf("ipc ok: socketpair, unix listen/accept/connect, SysV shm, memfd\n");
+    // 4. SCM_RIGHTS: pass a memfd (and a pipe end) across a socketpair; the receiver maps/reads the same objects
+    {
+        int sp[2];
+        CHECK(socketpair(AF_UNIX, SOCK_STREAM, 0, sp) == 0, "socketpair2");
+        int mf = memfd_create("pool", 0);
+        CHECK(mf >= 0 && ftruncate(mf, 4096) == 0, "memfd2");
+        char *w = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, mf, 0);
+        CHECK(w != MAP_FAILED, "mmap2");
+        strcpy(w, "before-send");
+        int pp[2]; CHECK(pipe(pp) == 0, "pipe");
+        // message 1 carries two descriptors, message 2 (sent right after) carries none, message 3 one
+        char c1 = 'A';
+        union { char b[CMSG_SPACE(2 * sizeof(int))]; struct cmsghdr al; } u1;
+        memset(&u1, 0, sizeof u1);
+        struct iovec iv = { &c1, 1 };
+        struct msghdr mh = { 0 };
+        mh.msg_iov = &iv; mh.msg_iovlen = 1; mh.msg_control = u1.b; mh.msg_controllen = sizeof u1.b;
+        struct cmsghdr *cm = CMSG_FIRSTHDR(&mh);
+        cm->cmsg_level = SOL_SOCKET; cm->cmsg_type = SCM_RIGHTS; cm->cmsg_len = CMSG_LEN(2 * sizeof(int));
+        int two[2] = { mf, pp[1] };
+        memcpy(CMSG_DATA(cm), two, sizeof two);
+        CHECK(sendmsg(sp[0], &mh, 0) == 1, "sendmsg fds");
+        CHECK(write(sp[0], "B", 1) == 1, "plain write after");
+        char c3 = 'C';
+        union { char b[CMSG_SPACE(sizeof(int))]; struct cmsghdr al; } u3;
+        memset(&u3, 0, sizeof u3);
+        struct iovec iv3 = { &c3, 1 };
+        struct msghdr m3 = { 0 };
+        m3.msg_iov = &iv3; m3.msg_iovlen = 1; m3.msg_control = u3.b; m3.msg_controllen = sizeof u3.b;
+        struct cmsghdr *c3h = CMSG_FIRSTHDR(&m3);
+        c3h->cmsg_level = SOL_SOCKET; c3h->cmsg_type = SCM_RIGHTS; c3h->cmsg_len = CMSG_LEN(sizeof(int));
+        memcpy(CMSG_DATA(c3h), &pp[0], sizeof(int));
+        CHECK(sendmsg(sp[0], &m3, 0) == 1, "sendmsg fd3");
+        // receive with a large buffer: it must stop at message boundaries that carry descriptors
+        char rb[16] = {0};
+        union { char b[CMSG_SPACE(4 * sizeof(int))]; struct cmsghdr al; } rc;
+        struct iovec rv = { rb, sizeof rb };
+        struct msghdr rm = { 0 };
+        rm.msg_iov = &rv; rm.msg_iovlen = 1; rm.msg_control = rc.b; rm.msg_controllen = sizeof rc.b;
+        ssize_t n1 = recvmsg(sp[1], &rm, MSG_CMSG_CLOEXEC);
+        CHECK(n1 == 2 && rb[0] == 'A' && rb[1] == 'B', "recv 1 returns A and B (no fds between them)");
+        struct cmsghdr *rcm = CMSG_FIRSTHDR(&rm);
+        CHECK(rcm && rcm->cmsg_level == SOL_SOCKET && rcm->cmsg_type == SCM_RIGHTS && rcm->cmsg_len == CMSG_LEN(2 * sizeof(int)), "cmsg 1");
+        int got2[2]; memcpy(got2, CMSG_DATA(rcm), sizeof got2);
+        char *w2 = mmap(0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, got2[0], 0);
+        CHECK(w2 != MAP_FAILED && !strcmp(w2, "before-send"), "received memfd maps the same pages");
+        strcpy(w2, "from-receiver");
+        CHECK(!strcmp(w, "from-receiver"), "memfd shared in both directions");
+        CHECK(write(got2[1], "pipe!", 5) == 5, "received pipe write end works");
+        rm.msg_controllen = sizeof rc.b;
+        memset(rb, 0, sizeof rb);
+        ssize_t n2 = recvmsg(sp[1], &rm, 0);
+        CHECK(n2 == 1 && rb[0] == 'C', "recv 2 returns C");
+        rcm = CMSG_FIRSTHDR(&rm);
+        CHECK(rcm && rcm->cmsg_len == CMSG_LEN(sizeof(int)), "cmsg 2");
+        int rd; memcpy(&rd, CMSG_DATA(rcm), sizeof rd);
+        char pb[8] = {0};
+        CHECK(read(rd, pb, sizeof pb) == 5 && !strcmp(pb, "pipe!"), "received pipe read end reads what the other wrote");
+        close(sp[0]); close(sp[1]);
+    }
+    printf("ipc ok: socketpair, unix listen/accept/connect, SysV shm, memfd, SCM_RIGHTS\n");
     fflush(stdout);
     return 0;
 }

@@ -24,9 +24,18 @@ const ECONNREFUSED: i64 = -111;
 const EISCONN: i64 = -106;
 const ENOTCONN: i64 = -107;
 
+/// Byte counters and in-flight file descriptors (`SCM_RIGHTS`) of one direction. A descriptor group is
+/// tagged with the stream offset of the first byte sent with it and travels with that byte.
+struct Meta {
+    written: u64,
+    read: u64,
+    fds: VecDeque<(u64, Vec<Arc<dyn FileOps>>)>,
+}
+
 /// One direction of a connection.
 struct Chan {
     buf: Mutex<VecDeque<u8>>,
+    meta: Mutex<Meta>,
     wr_closed: AtomicBool,
     rd_closed: AtomicBool,
     wq: WaitQueue,
@@ -36,6 +45,7 @@ impl Chan {
     fn new() -> Arc<Self> {
         Arc::new(Chan {
             buf: Mutex::new(VecDeque::new()),
+            meta: Mutex::new(Meta { written: 0, read: 0, fds: VecDeque::new() }),
             wr_closed: AtomicBool::new(false),
             rd_closed: AtomicBool::new(false),
             wq: WaitQueue::new(),
@@ -202,33 +212,46 @@ impl Drop for UnixSock {
     }
 }
 
-impl FileOps for UnixSock {
-    fn read(&self, buf: &mut [u8]) -> i64 {
-        let Some((rx, _)) = self.chans() else { return ENOTCONN };
+impl UnixSock {
+    /// Read up to `buf.len()` bytes; the second value holds the descriptors that were sent with them.
+    /// A read never runs across the start of a later descriptor group, so descriptors stay with their message.
+    pub fn recv_fds(&self, buf: &mut [u8]) -> (i64, Vec<Arc<dyn FileOps>>) {
+        let Some((rx, _)) = self.chans() else { return (ENOTCONN, Vec::new()) };
         if buf.is_empty() {
-            return 0;
+            return (0, Vec::new());
         }
         loop {
             {
                 let mut q = rx.buf.lock();
                 if !q.is_empty() {
-                    let n = buf.len().min(q.len());
+                    let mut n = buf.len().min(q.len());
+                    let mut m = rx.meta.lock();
+                    let r0 = m.read;
+                    if let Some(&(g, _)) = m.fds.iter().find(|(g, _)| *g > r0 && *g < r0 + n as u64) {
+                        n = (g - r0) as usize;
+                    }
                     for b in buf.iter_mut().take(n) {
                         *b = q.pop_front().unwrap();
                     }
+                    m.read += n as u64;
+                    let mut got = Vec::new();
+                    while m.fds.front().is_some_and(|(g, _)| *g < r0 + n as u64) {
+                        got.extend(m.fds.pop_front().unwrap().1);
+                    }
+                    drop(m);
                     drop(q);
                     rx.wq.wake_all();
-                    return n as i64;
+                    return (n as i64, got);
                 }
                 if rx.wr_closed.load(Ordering::Acquire) || rx.rd_closed.load(Ordering::Acquire) {
-                    return 0;
+                    return (0, Vec::new());
                 }
             }
             if self.nonblock.load(Ordering::Relaxed) {
-                return EAGAIN;
+                return (EAGAIN, Vec::new());
             }
             if crate::signal::interrupted() {
-                return EINTR;
+                return (EINTR, Vec::new());
             }
             rx.wq.wait_if_intr(|| {
                 rx.buf.lock().is_empty() && !rx.wr_closed.load(Ordering::Acquire) && !rx.rd_closed.load(Ordering::Acquire)
@@ -236,7 +259,8 @@ impl FileOps for UnixSock {
         }
     }
 
-    fn write(&self, data: &[u8]) -> i64 {
+    /// Write `data`; `fds` (if any) ride with its first byte.
+    pub fn send_fds(&self, data: &[u8], mut fds: Option<Vec<Arc<dyn FileOps>>>) -> i64 {
         let Some((_, tx)) = self.chans() else { return EPIPE };
         let mut done = 0;
         while done < data.len() {
@@ -249,6 +273,14 @@ impl FileOps for UnixSock {
                 if space > 0 {
                     let n = space.min(data.len() - done);
                     q.extend(data[done..done + n].iter().copied());
+                    {
+                        let mut m = tx.meta.lock();
+                        if let Some(f) = fds.take() {
+                            let at = m.written;
+                            m.fds.push_back((at, f));
+                        }
+                        m.written += n as u64;
+                    }
                     done += n;
                     drop(q);
                     tx.wq.wake_all();
@@ -264,6 +296,16 @@ impl FileOps for UnixSock {
             tx.wq.wait_if_intr(|| tx.buf.lock().len() == CAP && !tx.rd_closed.load(Ordering::Acquire));
         }
         done as i64
+    }
+}
+
+impl FileOps for UnixSock {
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        self.recv_fds(buf).0 // descriptors sent with these bytes are dropped (closed)
+    }
+
+    fn write(&self, data: &[u8]) -> i64 {
+        self.send_fds(data, None)
     }
 
     fn seek(&self, _o: i64, _w: u32) -> i64 {

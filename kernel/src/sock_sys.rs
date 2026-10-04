@@ -335,6 +335,63 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 const MSG_MAX: usize = 64 * 1024;
+const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
+const MSG_CTRUNC: u32 = 8;
+
+/// The descriptors named by `SCM_RIGHTS` control messages of a msghdr, as open files of the caller.
+fn read_scm_rights(msg: u64) -> Result<alloc::vec::Vec<Arc<dyn FileOps>>, i64> {
+    let ctl = usercopy::read_u64(msg + 32)?;
+    let len = usercopy::read_u64(msg + 40)?;
+    let mut out = alloc::vec::Vec::new();
+    if ctl == 0 || len < 16 {
+        return Ok(out);
+    }
+    let task = sched::current().task().ok_or(EBADF)?;
+    let mut off = 0u64;
+    while off + 16 <= len {
+        let clen = usercopy::read_u64(ctl + off)?;
+        let level = usercopy::read_u32(ctl + off + 8)?;
+        let ty = usercopy::read_u32(ctl + off + 12)?;
+        if clen < 16 || off + clen > len {
+            break;
+        }
+        if level == 1 && ty == 1 {
+            for i in 0..(clen - 16) / 4 {
+                let fd = usercopy::read_u32(ctl + off + 16 + 4 * i)? as i32;
+                out.push(task.fd_get(fd).ok_or(EBADF)?);
+                if out.len() > 253 {
+                    return Err(EINVAL);
+                }
+            }
+        }
+        off += (clen + 7) & !7;
+    }
+    Ok(out)
+}
+
+/// Install received descriptors and describe them in the msghdr's control buffer (one `SCM_RIGHTS`
+/// message). Returns the msg_flags to report (`MSG_CTRUNC` when the buffer was too small).
+fn write_scm_rights(msg: u64, files: alloc::vec::Vec<Arc<dyn FileOps>>, cloexec: bool) -> u32 {
+    let (Ok(ctl), Ok(space)) = (usercopy::read_u64(msg + 32), usercopy::read_u64(msg + 40)) else { return 0 };
+    let Some(task) = sched::current().task() else { return 0 };
+    if ctl == 0 || space < 20 {
+        return MSG_CTRUNC; // no room: the descriptors are dropped (closed)
+    }
+    let fit = (((space - 16) / 4) as usize).min(files.len());
+    let mut flags = if fit < files.len() { MSG_CTRUNC } else { 0 };
+    let clen = 16 + 4 * fit as u64;
+    let _ = usercopy::write_u64(ctl, clen);
+    let _ = usercopy::write_u32(ctl + 8, 1); // SOL_SOCKET
+    let _ = usercopy::write_u32(ctl + 12, 1); // SCM_RIGHTS
+    for (i, f) in files.into_iter().take(fit).enumerate() {
+        let fd = task.fd_alloc_flags(f, cloexec);
+        if usercopy::write_u32(ctl + 16 + 4 * i as u64, fd as u32).is_err() {
+            flags |= MSG_CTRUNC;
+        }
+    }
+    let _ = usercopy::write_u64(msg + 40, (clen + 7) & !7);
+    flags
+}
 
 /// Gather the iovec array of a msghdr into one buffer.
 fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
@@ -357,8 +414,9 @@ fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
 
 pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
-    if f.as_unix().is_some() {
-        return match gather_iov(msg) { Ok(d) => f.write(&d), Err(e) => e };
+    if let Some(u) = f.as_unix() {
+        let fds = match read_scm_rights(msg) { Ok(v) => v, Err(e) => return e };
+        return match gather_iov(msg) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }), Err(e) => e };
     }
     let name = usercopy::read_u64(msg).unwrap_or(0);
     let namelen = usercopy::read_u32(msg + 8).unwrap_or(0) as u64;
@@ -373,7 +431,7 @@ pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
     }
 }
 
-pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
+pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     let iov = match usercopy::read_u64(msg + 16) { Ok(v) => v, Err(e) => return e };
     let n = match usercopy::read_u64(msg + 24) { Ok(v) => v, Err(e) => return e };
@@ -388,7 +446,14 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
         }
     }
     let mut buf = alloc::vec![0u8; total.min(MSG_MAX)];
-    let (got, from) = if f.as_unix().is_some() { (f.read(&mut buf), None) } else { f.as_socket().unwrap().recv_from(&mut buf) };
+    let mut rights = alloc::vec::Vec::new();
+    let (got, from) = if let Some(u) = f.as_unix() {
+        let (g, r) = u.recv_fds(&mut buf);
+        rights = r;
+        (g, None)
+    } else {
+        f.as_socket().unwrap().recv_from(&mut buf)
+    };
     if got < 0 {
         return got;
     }
@@ -416,8 +481,13 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
             }
         }
     }
-    let _ = usercopy::write_u64(msg + 40, 0); // no control data
-    let _ = usercopy::write_u32(msg + 48, 0); // msg_flags
+    let mut out_flags = 0u32;
+    if rights.is_empty() {
+        let _ = usercopy::write_u64(msg + 40, 0); // no control data
+    } else {
+        out_flags |= write_scm_rights(msg, rights, flags & MSG_CMSG_CLOEXEC != 0);
+    }
+    let _ = usercopy::write_u32(msg + 48, out_flags); // msg_flags
     got
 }
 
@@ -446,7 +516,7 @@ pub fn sys_recvmmsg(fd: u64, vec: u64, vlen: u64) -> i64 {
             break;
         }
         let m = vec + 64 * i;
-        let r = sys_recvmsg(fd, m);
+        let r = sys_recvmsg(fd, m, 0);
         if r < 0 {
             return if got > 0 { got } else { r };
         }
