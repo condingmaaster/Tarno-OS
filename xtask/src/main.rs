@@ -559,6 +559,22 @@ fn main() {
                 exit(1);
             }
         }
+        "usb-boot-test" => {
+            // the whole system from a USB stick on EHCI, with no SATA disk in the machine
+            std::env::set_var("THOS_BOOT_USB", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "usbboot", "echo usb-after-$((11)); ls /usr 2>&1 | head -c 100; echo; echo usb-done", "usb-done", 240);
+            if out.contains("usb msc ok") && out.lines().any(|l| l.trim() == "usb-after-11") {
+                let l = out.lines().find(|l| l.contains("usb msc ok")).unwrap_or("").trim();
+                println!("usb-boot-test PASSED: booted and logged in with the root filesystem on a USB stick — {l}");
+            } else {
+                for l in out.lines().filter(|l| l.contains("THOS: usb") || l.contains("THOS: boot") || l.contains("THOS: ehci") || l.contains("cannot continue") || l.contains("THOS:   ")).take(20) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("usb-boot-test FAILED");
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1130,7 +1146,7 @@ fn disk_image() -> PathBuf {
     // 16384 1-KiB blocks = 2 block groups, so `sparse_super` puts a backup
     // superblock + GDT in group 1 and the ext2 write path has to keep it synced.
     run(Command::new("mke2fs").args([
-        "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
+        "-q", "-F", "-t", "ext2", "-L", "THOSROOT", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
         img.to_str().unwrap(), &(fs_mib() * 1024).to_string(),
     ]));
@@ -5253,9 +5269,20 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     std::fs::copy(img, &run_img).expect("copy image");
     let mut child = Command::new("qemu-system-x86_64")
         .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args(if std::env::var("THOS_BOOT_USB").is_ok() {
+            // no SATA disk at all: boot from a USB stick on an EHCI controller (the Acer-with-a-stick case)
+            vec![
+                "-drive".to_string(), format!("id=stick,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+                "-device".to_string(), "usb-ehci,id=ehci".to_string(),
+                "-device".to_string(), "usb-storage,bus=ehci.0,drive=stick,bootindex=0".to_string(),
+            ]
+        } else {
+            vec![
+                "-drive".to_string(), format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
+                "-device".to_string(), "ahci,id=ahci0".to_string(), "-device".to_string(), "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0".to_string(),
+            ]
+        })
         .args([
-            "-drive", &format!("id=disk0,if=none,format=raw,file={}", run_img.to_str().unwrap()),
-            "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
             "-display", "none", "-no-reboot",
             "-serial", &format!("file:{}", log.to_str().unwrap()),
             "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),

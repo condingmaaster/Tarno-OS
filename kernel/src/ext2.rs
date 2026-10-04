@@ -165,7 +165,7 @@ fn read_sectors(start_lba: u64, sectors: usize) -> Vec<u8> {
         while k + n < missing.len() && missing[k + n] == first + n && n < 64 {
             n += 1;
         }
-        ahci::read(part + start_lba + first as u64, &mut raw[first * SECTOR..(first + n) * SECTOR]).expect("ext2 disk read");
+        crate::blk::read(part + start_lba + first as u64, &mut raw[first * SECTOR..(first + n) * SECTOR]).expect("ext2 disk read");
         let mut c = CACHE.lock();
         for j in 0..n {
             c.put(part + start_lba + (first + j) as u64, &raw[(first + j) * SECTOR..(first + j + 1) * SECTOR], false);
@@ -197,16 +197,22 @@ pub fn on_partition() -> bool {
     PART_LBA.load(Ordering::Relaxed) != 0
 }
 
+/// A filesystem THOS may use: an ext2 superblock whose volume label is `THOSROOT`. Never mount (and write to) anything else —
+/// on a real machine the first Linux partition on the disk is somebody's operating system.
+fn is_ours(sb: &[u8]) -> bool {
+    le16(&sb[56..]) == EXT2_MAGIC && &sb[120..128] == b"THOSROOT"
+}
+
 pub fn open() -> Result<Ext2, &'static str> {
     let mut sb = disk_range(SB_OFFSET, 1024);
-    if le16(&sb[56..]) != EXT2_MAGIC {
+    if !is_ours(&sb) {
         // Not a bare-image disk: look for a Linux partition in the MBR.
         let found = crate::mbr::entries()
             .into_iter()
             .filter(|e| e.ptype == crate::mbr::TYPE_LINUX)
             .find(|e| {
                 PART_LBA.store(e.start_lba, Ordering::Relaxed);
-                le16(&disk_range(SB_OFFSET, 1024)[56..]) == EXT2_MAGIC
+                is_ours(&disk_range(SB_OFFSET, 1024))
             });
         match found {
             Some(e) => {
@@ -260,7 +266,7 @@ fn disk_write(off: u64, data: &[u8]) {
     let mut done = 0;
     while done < sectors {
         let n = (sectors - done).min(64);
-        ahci::write_relaxed(part + start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR]).expect("ext2 write");
+        crate::blk::write_relaxed(part + start_lba + done as u64, &raw[done * SECTOR..(done + n) * SECTOR]).expect("ext2 write");
         done += n;
     }
     let mut c = CACHE.lock();
@@ -274,7 +280,7 @@ pub fn sync_all() {
     if let Ok(fs) = open() {
         fs.flush_backups();
     }
-    let _ = ahci::flush();
+    let _ = crate::blk::flush();
 }
 
 static BACKUPS_DIRTY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -1487,7 +1493,7 @@ impl Ext2 {
     fn sync_backups(&self) {
         // The end of every mutating operation: everything it wrote becomes durable here (one cache
         // flush instead of one per block).
-        let _ = ahci::flush();
+        let _ = crate::blk::flush();
         let groups = self.group_count();
         if groups <= 1 {
             return;
@@ -1525,7 +1531,7 @@ impl Ext2 {
             disk_write(sb_blk as u64 * self.block_size as u64, &sbc);
             disk_write((sb_blk + 1) as u64 * self.block_size as u64, &gdt);
         }
-        let _ = ahci::flush();
+        let _ = crate::blk::flush();
     }
 }
 

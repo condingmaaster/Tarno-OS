@@ -30,6 +30,7 @@ extern crate alloc;
 
 mod acpi;
 mod ahci;
+mod blk;
 mod apc;
 mod apic;
 mod console;
@@ -1560,13 +1561,15 @@ fn start_input_devices() {
         }
         Err(e) => kprintln!("THOS: xhci             {}", e),
     }
-    match ehci::init() {
-        Ok(e) => {
-            *EHCI.lock() = Some(e);
-            sched::spawn("ehci-poll", ehci_poll_thread, 0);
-            kprintln!("THOS: ehci ok          USB keyboard attached (poll thread up)");
+    if EHCI.lock().is_none() {
+        match ehci::init() {
+            Ok(e) => *EHCI.lock() = Some(e),
+            Err(e) => kprintln!("THOS: ehci             {}", e),
         }
-        Err(e) => kprintln!("THOS: ehci             {}", e),
+    }
+    if EHCI.lock().as_ref().is_some_and(|e| e.has_keyboard()) {
+        sched::spawn("ehci-poll", ehci_poll_thread, 0);
+        kprintln!("THOS: ehci ok          USB keyboard attached (poll thread up)");
     }
 
     // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).
@@ -1600,8 +1603,26 @@ fn start_input_devices() {
 /// filesystem, registry hives, the Security Service, input devices.
 #[cfg(not(feature = "selftest"))]
 fn boot_system() {
-    if let Err(e) = ahci::init() {
-        fatal_boot("no usable SATA disk (BIOS SATA mode must be AHCI)", e);
+    let mut have_root = ahci::init().is_ok() && ext2::open().is_ok();
+    if !have_root {
+        // booted from a stick (or the SATA disk carries no THOSROOT filesystem): look for USB mass storage
+        kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk; trying USB storage");
+        match ehci::init() {
+            Ok(e) => {
+                let found = e.has_msc();
+                let sectors = e.msc_sectors();
+                *EHCI.lock() = Some(e);
+                if found {
+                    blk::use_usb();
+                    kprintln!("THOS: usb msc ok       {} MiB mass-storage device", sectors / 2048);
+                    have_root = ext2::open().is_ok();
+                }
+            }
+            Err(e) => kprintln!("THOS: usb              {}", e),
+        }
+    }
+    if !have_root {
+        fatal_boot("no THOS root filesystem found", "need an ext2 volume labelled THOSROOT on the SATA disk or on a USB stick");
     }
     let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
     let hives = registry::load_hives(&fs);

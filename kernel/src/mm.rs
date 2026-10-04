@@ -50,6 +50,8 @@ pub static FRAME_ALLOC: Mutex<FrameAllocator> = Mutex::new(FrameAllocator::new()
 const DMA_ARENA_BYTES: u64 = 1024 * 1024;
 /// Behind the AHCI arena: a small contiguous DMA region for the NIC (rings + packet buffers).
 const NET_DMA_BYTES: u64 = 256 * 1024;
+/// Behind that: queue heads, transfer descriptors and a bounce buffer for the USB mass-storage driver.
+const USB_DMA_BYTES: u64 = 128 * 1024;
 static DMA_ARENA: AtomicU64 = AtomicU64::new(0);
 /// Frames handed to the allocator at boot (for `sysinfo`).
 static TOTAL_FRAMES: AtomicU64 = AtomicU64::new(0);
@@ -66,6 +68,11 @@ pub fn dma_arena() -> (u64, u64) {
 /// `(phys_base, len)` of the NIC's contiguous DMA region (right after the AHCI arena).
 pub fn net_dma() -> (u64, u64) {
     (DMA_ARENA.load(Ordering::Relaxed) + DMA_ARENA_BYTES, NET_DMA_BYTES)
+}
+
+/// `(phys_base, len)` of the USB driver's DMA region (right after the NIC's).
+pub fn usb_dma() -> (u64, u64) {
+    (DMA_ARENA.load(Ordering::Relaxed) + DMA_ARENA_BYTES + NET_DMA_BYTES, USB_DMA_BYTES)
 }
 
 /// Summary printed at Milestone 1a.
@@ -91,7 +98,7 @@ pub unsafe fn init(hhdm: u64, entries: &[&Entry]) -> MemStats {
     // Reserve the DMA bounce arena at the start of the largest usable region.
     let dma_base = entries
         .iter()
-        .filter(|e| e.type_ == MEMMAP_USABLE && e.length >= (DMA_ARENA_BYTES + NET_DMA_BYTES) * 4)
+        .filter(|e| e.type_ == MEMMAP_USABLE && e.length >= (DMA_ARENA_BYTES + NET_DMA_BYTES + USB_DMA_BYTES) * 4)
         .max_by_key(|e| e.length)
         .map(|e| align_up(e.base, FRAME_SIZE))
         .expect("no usable region large enough for the DMA arena");
@@ -109,7 +116,7 @@ pub unsafe fn init(hhdm: u64, entries: &[&Entry]) -> MemStats {
         let end = align_down(entry.base + entry.length, FRAME_SIZE);
         let mut pa = start;
         while pa + FRAME_SIZE <= end {
-            if pa >= dma_base && pa < dma_base + DMA_ARENA_BYTES + NET_DMA_BYTES {
+            if pa >= dma_base && pa < dma_base + DMA_ARENA_BYTES + NET_DMA_BYTES + USB_DMA_BYTES {
                 pa += FRAME_SIZE; // reserved DMA arena — never allocatable
                 continue;
             }

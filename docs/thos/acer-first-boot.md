@@ -9,13 +9,18 @@ cargo xtask bios-image --interactive      # ergibt target/thos-bios.img (MBR, FA
 sudo dd if=target/thos-bios.img of=/dev/sdX bs=4M conv=fsync status=progress     # sdX = der STICK, vorher mit lsblk prüfen!
 ```
 Das Image ist rund 330 MiB groß. Beim Acer im BIOS (F2) "Boot Mode: Legacy" lassen und mit F12 vom Stick starten.
-Das Root-Dateisystem darf auf einem Stick schreiben; **auf die interne Platte schreibt THOS in diesem Stand nichts**, solange du das Image nicht selbst dorthin kopierst.
+Neu: **THOS bootet komplett vom USB-Stick** (EHCI-Massenspeichertreiber, `usb-boot-test` in QEMU ohne SATA-Platte). Limine lädt den Kernel über das BIOS vom Stick,
+danach liest und schreibt THOS sein Root-Dateisystem über USB. THOS benutzt **nur** ein ext2-Dateisystem mit dem Volume-Namen `THOSROOT`; die
+Linux-Partitionen der internen Platte werden nie gemountet oder beschrieben. Findet THOS auf der SATA-Platte kein `THOSROOT`, sucht es am USB-Anschluss.
+Den Stick an eine USB-2.0-Buchse des Acer stecken (der 5742G hat kein USB 3.0).
 
 ## Was beim Start auf dem Schirm / im Boot-Log zu sehen sein sollte
 | Zeile | Bedeutung |
 |---|---|
 | `THOS: ahci ok ...` / `ext2 part  root FS in MBR partition` | SATA + Root gefunden |
-| `THOS: ehci ok  USB keyboard attached` oder `ehci  no ...` | USB-Tastatur über EHCI (Hub-Pfad ungetestet) |
+| `THOS: boot  no THOSROOT filesystem on the SATA disk; trying USB storage` | normal beim Stick-Start |
+| `THOS: usb msc ok  NNN MiB mass-storage device` | der Stick wurde gefunden (EHCI-Hub-Pfad ungetestet) |
+| `THOS: ehci ok  USB keyboard attached` oder `ehci  no ...` | USB-Tastatur über EHCI |
 | `THOS: net nic          tg3 xx:xx:...` | Ethernet-Treiber hat den BCM57780 initialisiert |
 | `THOS: tg3 link        up 1000 Mb/s full duplex` | Kabel steckt, Gegenstelle antwortet (erst nach Autonegotiation, ~2 s) |
 | `THOS: net dhcp         lease ...` und `net ok  ping ...` | Netz läuft |

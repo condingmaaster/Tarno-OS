@@ -36,6 +36,24 @@ const CMD_ASYNC: u32 = 1 << 5;
 const STS_HALTED: u32 = 1 << 12;
 const STS_ASS: u32 = 1 << 15;
 
+/// A USB mass-storage device (Bulk-Only Transport, SCSI transparent command set): a stick or an external disk.
+struct Msc {
+    dev: Dev,
+    ep_in: u8,
+    ep_out: u8,
+    mps_in: u16,
+    mps_out: u16,
+    toggle_in: bool,
+    toggle_out: bool,
+    tag: u32,
+    sectors: u64,
+}
+
+enum Data<'a> {
+    In(&'a mut [u8]),
+    Out(&'a [u8]),
+}
+
 pub struct Ehci {
     op: u64,
     ports: u32,
@@ -44,6 +62,10 @@ pub struct Ehci {
     dma_phys: u64,
     dma: *mut u8,
     kbd: Option<Kbd>,
+    msc: Option<Msc>,
+    /// USB bulk DMA area: queue head 0x0000, qTDs 0x0100.., CBW/CSW 0x1000, data bounce 0x2000..0x12000.
+    ud_phys: u64,
+    ud: *mut u8,
 }
 
 #[derive(Clone, Copy)]
@@ -256,9 +278,7 @@ impl Ehci {
             let speed = if st[1] & 4 != 0 { 2 } else if st[1] & 2 != 0 { 1 } else { 0 };
             let _ = self.control(hub, setup_pkt(0x23, 1, 0x10, p, 0), false, 0); // clear C_PORT_RESET
             if let Ok(dev) = self.enumerate(speed, hub.addr, p as u8, &mut next) {
-                if self.try_keyboard(dev) {
-                    return Ok(());
-                }
+                let _ = self.try_keyboard(dev); // keyboard and/or mass storage: look at every port
             }
         }
         Ok(())
@@ -278,7 +298,7 @@ impl Ehci {
             }
             off += cfg[off] as usize;
         }
-        if let Some(iface) = hid_iface {
+        if let (Some(iface), true) = (hid_iface, self.kbd.is_none()) {
             let cfgval = cfg.get(5).copied().unwrap_or(1);
             if self.control(dev, setup_pkt(0, 9, cfgval as u16, 0, 0), false, 0).is_err() {
                 return false;
@@ -290,9 +310,305 @@ impl Ehci {
         }
         if class == 9 {
             // a hub: configure and look behind it
-            return self.hub_ports(dev).is_ok() && self.kbd.is_some();
+            return self.hub_ports(dev).is_ok() && (self.kbd.is_some() || self.msc.is_some());
+        }
+        if self.msc.is_none() {
+            self.try_msc(dev, &cfg);
         }
         false
+    }
+
+    /// Is `dev` a Bulk-Only mass-storage device (class 8, subclass 6 SCSI, protocol 0x50)? If so bring it up.
+    fn try_msc(&mut self, dev: Dev, cfg: &[u8]) {
+        let (mut off, mut in_iface) = (0usize, false);
+        let (mut ep_in, mut ep_out, mut mps_in, mut mps_out) = (0u8, 0u8, 0u16, 0u16);
+        while off + 2 <= cfg.len() && cfg[off] != 0 {
+            let len = cfg[off] as usize;
+            if cfg[off + 1] == 4 && off + 9 <= cfg.len() {
+                in_iface = cfg[off + 5] == 8 && cfg[off + 6] == 6 && cfg[off + 7] == 0x50;
+            } else if cfg[off + 1] == 5 && in_iface && off + 7 <= cfg.len() && cfg[off + 3] & 3 == 2 {
+                let (a, m) = (cfg[off + 2], u16::from_le_bytes([cfg[off + 4], cfg[off + 5]]));
+                if a & 0x80 != 0 && ep_in == 0 {
+                    ep_in = a & 0xF;
+                    mps_in = m;
+                } else if a & 0x80 == 0 && ep_out == 0 {
+                    ep_out = a & 0xF;
+                    mps_out = m;
+                }
+            }
+            off += len.max(2);
+        }
+        if ep_in == 0 || ep_out == 0 {
+            return;
+        }
+        let cfgval = cfg.get(5).copied().unwrap_or(1);
+        if self.control(dev, setup_pkt(0, 9, cfgval as u16, 0, 0), false, 0).is_err() {
+            return;
+        }
+        let mut m = Msc { dev, ep_in, ep_out, mps_in, mps_out, toggle_in: false, toggle_out: false, tag: 1, sectors: 0 };
+        // spin-up: wait until the unit answers TEST UNIT READY
+        let mut ready = false;
+        for _ in 0..40 {
+            if self.scsi(&mut m, &[0x00, 0, 0, 0, 0, 0], None).is_ok() {
+                ready = true;
+                break;
+            }
+            let mut sense = [0u8; 18];
+            let _ = self.scsi(&mut m, &[0x03, 0, 0, 0, 18, 0], Some(Data::In(&mut sense)));
+            ms(250);
+        }
+        if !ready {
+            return;
+        }
+        let mut cap = [0u8; 8];
+        if self.scsi(&mut m, &[0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0], Some(Data::In(&mut cap))).is_err() {
+            return;
+        }
+        let last = u32::from_be_bytes([cap[0], cap[1], cap[2], cap[3]]) as u64;
+        let bs = u32::from_be_bytes([cap[4], cap[5], cap[6], cap[7]]);
+        if bs != 512 {
+            return;
+        }
+        m.sectors = last + 1;
+        self.msc = Some(m);
+    }
+
+    // ---- bulk transfers and Bulk-Only Transport ----
+
+    /// One bulk transfer of `len` bytes between the device and the DMA area at offset `off`. Returns the bytes moved.
+    fn bulk(&mut self, dev: Dev, ep: u8, is_in: bool, mps: u16, toggle: &mut bool, off: usize, len: usize) -> Result<usize, &'static str> {
+        const CHUNK: usize = 16384;
+        let n_td = len.div_ceil(CHUNK).max(1);
+        if n_td > 8 {
+            return Err("EHCI: bulk transfer too large");
+        }
+        let ph = |o: usize| self.ud_phys + o as u64;
+        let w = |s: &Self, o: usize, v: u32| unsafe { core::ptr::write_volatile(s.ud.add(o) as *mut u32, v) };
+        let r = |s: &Self, o: usize| unsafe { core::ptr::read_volatile(s.ud.add(o) as *const u32) };
+        self.cmd(0, CMD_ASYNC);
+        if !self.wait_sts(STS_ASS, false) {
+            return Err("EHCI: async schedule did not stop");
+        }
+        let mut tg = *toggle;
+        let mut sent = 0usize;
+        for i in 0..n_td {
+            let t = 0x100 + i * 64;
+            let bytes = (len - sent).min(CHUNK);
+            for k in 0..16 {
+                w(self, t + k * 4, 0);
+            }
+            let last = i == n_td - 1;
+            w(self, t, if last { 1 } else { ph(0x100 + (i + 1) * 64) as u32 });
+            w(self, t + 4, 1);
+            let pid: u32 = if is_in { 1 } else { 0 };
+            w(self, t + 8, ((tg as u32) << 31) | ((bytes as u32) << 16) | ((last as u32) << 15) | (3 << 10) | (pid << 8) | 0x80);
+            let phys = ph(off + sent);
+            w(self, t + 12, phys as u32);
+            for k in 1..5 {
+                w(self, t + 12 + k * 4, ((phys as u32) & !0xFFF).wrapping_add(0x1000 * k as u32));
+            }
+            let packets = bytes.div_ceil(mps as usize).max(1);
+            if packets % 2 == 1 {
+                tg = !tg;
+            }
+            sent += bytes;
+        }
+        // the endpoint's queue head, linked into the ring behind the head QH of the control path
+        let eps = dev.speed as u32;
+        w(self, 0x00, self.dma_phys as u32 | 2); // horizontal link: back to the head QH (in the control frame)
+        w(self, 0x04, (15 << 28) | ((mps as u32) << 16) | (1 << 14) | (eps << 12) | ((ep as u32) << 8) | dev.addr as u32);
+        w(self, 0x08, (1 << 30) | ((dev.hub_addr as u32) << 23) | ((dev.hub_port as u32) << 16));
+        w(self, 0x0C, 0);
+        w(self, 0x10, ph(0x100) as u32);
+        w(self, 0x14, 1);
+        for k in 0..12 {
+            w(self, 0x18 + k * 4, 0);
+        }
+        // the control frame's head QH: H=1, horizontal link -> the bulk QH
+        self.p32(0x00, (self.ud_phys as u32) | 2);
+        self.p32(0x04, (1 << 15) | (1 << 14) | (2 << 12) | 0x40);
+        self.p32(0x08, 0);
+        self.p32(0x10, 1);
+        self.p32(0x14, 1);
+        self.p32(0x18, 0x40);
+        w32(self.op + ASYNCLIST, self.dma_phys as u32);
+        self.cmd(CMD_ASYNC, 0);
+        if !self.wait_sts(STS_ASS, true) {
+            return Err("EHCI: async schedule did not start");
+        }
+        let mut result: Result<usize, &'static str> = Err("EHCI: bulk transfer timed out");
+        let mut failed = false;
+        for _ in 0..5000 {
+            let mut all_done = true;
+            for i in 0..n_td {
+                let tok = r(self, 0x100 + i * 64 + 8);
+                if tok & 0x40 != 0 || tok & 0x38 != 0 {
+                    result = Err(if tok & 0x40 != 0 && tok & 0x38 == 0 { "EHCI: bulk stall" } else { "EHCI: bulk transfer error" });
+                    failed = true;
+                    all_done = false;
+                    break;
+                }
+                if tok & 0x80 != 0 {
+                    all_done = false;
+                    break;
+                }
+            }
+            if failed {
+                break;
+            }
+            if all_done {
+                let mut left = 0usize;
+                for i in 0..n_td {
+                    left += ((r(self, 0x100 + i * 64 + 8) >> 16) & 0x7FFF) as usize;
+                }
+                result = Ok(len - left);
+                break;
+            }
+            ms(1);
+        }
+        self.cmd(0, CMD_ASYNC);
+        let _ = self.wait_sts(STS_ASS, false);
+        if result.is_ok() {
+            *toggle = tg;
+        }
+        result
+    }
+
+    /// One Bulk-Only command: CBW, optional data stage (through the bounce buffer), CSW.
+    fn scsi(&mut self, m: &mut Msc, cdb: &[u8], data: Option<Data>) -> Result<(), &'static str> {
+        const CBW: usize = 0x1000;
+        const BUF: usize = 0x2000;
+        let (len, is_in) = match &data {
+            Some(Data::In(b)) => (b.len(), true),
+            Some(Data::Out(b)) => (b.len(), false),
+            None => (0, false),
+        };
+        if len > 0x10000 {
+            return Err("USB: transfer too large");
+        }
+        let mut cbw = [0u8; 31];
+        cbw[0..4].copy_from_slice(&0x4342_5355u32.to_le_bytes());
+        let tag = m.tag;
+        m.tag = m.tag.wrapping_add(1);
+        cbw[4..8].copy_from_slice(&tag.to_le_bytes());
+        cbw[8..12].copy_from_slice(&(len as u32).to_le_bytes());
+        cbw[12] = if is_in { 0x80 } else { 0 };
+        cbw[14] = cdb.len() as u8;
+        cbw[15..15 + cdb.len()].copy_from_slice(cdb);
+        unsafe { core::ptr::copy_nonoverlapping(cbw.as_ptr(), self.ud.add(CBW), 31) };
+        if let Some(Data::Out(b)) = &data {
+            unsafe { core::ptr::copy_nonoverlapping(b.as_ptr(), self.ud.add(BUF), b.len()) };
+        }
+        let dev = m.dev;
+        let (epo, epi, mo, mi) = (m.ep_out, m.ep_in, m.mps_out, m.mps_in);
+        let (mut tin, mut tout) = (m.toggle_in, m.toggle_out);
+
+        // Bulk-Only reset recovery: class request, then clear both halts, toggles back to 0
+        macro_rules! fail {
+            ($e:expr) => {{
+                let _ = self.control(dev, setup_pkt(0x21, 0xFF, 0, 0, 0), false, 0);
+                let _ = self.control(dev, setup_pkt(0x02, 1, 0, 0x80 | epi as u16, 0), false, 0);
+                let _ = self.control(dev, setup_pkt(0x02, 1, 0, epo as u16, 0), false, 0);
+                m.toggle_in = false;
+                m.toggle_out = false;
+                return Err($e);
+            }};
+        }
+
+        if let Err(e) = self.bulk(dev, epo, false, mo, &mut tout, CBW, 31) {
+            fail!(e);
+        }
+        if len > 0 {
+            let r = if is_in {
+                self.bulk(dev, epi, true, mi, &mut tin, BUF, len)
+            } else {
+                self.bulk(dev, epo, false, mo, &mut tout, BUF, len)
+            };
+            match r {
+                Ok(_) => {}
+                Err("EHCI: bulk stall") => {
+                    // a stalled data stage: clear the halt, the CSW still follows
+                    let ep = if is_in { 0x80 | epi as u16 } else { epo as u16 };
+                    let _ = self.control(dev, setup_pkt(0x02, 1, 0, ep, 0), false, 0);
+                    if is_in {
+                        tin = false;
+                    } else {
+                        tout = false;
+                    }
+                }
+                Err(e) => fail!(e),
+            }
+        }
+        if let Err(e) = self.bulk(dev, epi, true, mi, &mut tin, CBW, 13) {
+            fail!(e);
+        }
+        m.toggle_in = tin;
+        m.toggle_out = tout;
+        let mut csw = [0u8; 13];
+        unsafe { core::ptr::copy_nonoverlapping(self.ud.add(CBW), csw.as_mut_ptr(), 13) };
+        if u32::from_le_bytes([csw[0], csw[1], csw[2], csw[3]]) != 0x5342_5355 || u32::from_le_bytes([csw[4], csw[5], csw[6], csw[7]]) != tag {
+            fail!("USB: bad CSW");
+        }
+        if csw[12] != 0 {
+            return Err("USB: command failed");
+        }
+        if let Some(Data::In(b)) = data {
+            unsafe { core::ptr::copy_nonoverlapping(self.ud.add(BUF), b.as_mut_ptr(), b.len()) };
+        }
+        Ok(())
+    }
+
+    pub fn has_msc(&self) -> bool {
+        self.msc.is_some()
+    }
+
+    pub fn msc_sectors(&self) -> u64 {
+        self.msc.as_ref().map_or(0, |m| m.sectors)
+    }
+
+    /// READ(10)/WRITE(10) in pieces of at most 64 KiB, each retried a few times (sticks glitch on the first command after a pause).
+    fn msc_rw(&mut self, lba: u64, buf: &mut [u8], write: bool) -> Result<(), &'static str> {
+        let mut m = self.msc.take().ok_or("USB: no mass-storage device")?;
+        let mut res = Ok(());
+        let total = buf.len() / 512;
+        let mut done = 0usize;
+        while done < total {
+            let n = (total - done).min(128);
+            let at = lba + done as u64;
+            let op = if write { 0x2A } else { 0x28 };
+            let cdb = [op, 0, (at >> 24) as u8, (at >> 16) as u8, (at >> 8) as u8, at as u8, 0, (n >> 8) as u8, n as u8, 0];
+            let mut ok = Err("USB: transfer failed");
+            for _ in 0..3 {
+                let chunk = &mut buf[done * 512..(done + n) * 512];
+                ok = if write { self.scsi(&mut m, &cdb, Some(Data::Out(chunk))) } else { self.scsi(&mut m, &cdb, Some(Data::In(chunk))) };
+                if ok.is_ok() {
+                    break;
+                }
+            }
+            if let Err(e) = ok {
+                res = Err(e);
+                break;
+            }
+            done += n;
+        }
+        self.msc = Some(m);
+        res
+    }
+
+    pub fn msc_read(&mut self, lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
+        self.msc_rw(lba, buf, false)
+    }
+
+    pub fn msc_write(&mut self, lba: u64, buf: &[u8]) -> Result<(), &'static str> {
+        let mut copy = buf.to_vec();
+        self.msc_rw(lba, &mut copy, true)
+    }
+
+    pub fn msc_flush(&mut self) -> Result<(), &'static str> {
+        let mut m = self.msc.take().ok_or("USB: no mass-storage device")?;
+        let r = self.scsi(&mut m, &[0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0], None);
+        self.msc = Some(m);
+        r
     }
 
     /// Fetch the keyboard's current 8-byte boot report.
@@ -380,7 +696,13 @@ pub fn init() -> Result<Ehci, &'static str> {
     w32(op + CONFIGFLAG, 1); // route all ports to this controller
     ms(20);
 
-    let mut e = Ehci { op, ports, wide, dma_phys, dma, kbd: None };
+    let (ud_phys, _) = crate::mm::usb_dma();
+    let ud = phys_to_virt(x86_64::PhysAddr::new(ud_phys)).as_mut_ptr::<u8>();
+    if ud_phys >= 1 << 32 {
+        return Err("EHCI: USB DMA region above 4 GiB");
+    }
+    unsafe { core::ptr::write_bytes(ud, 0, 0x2000) };
+    let mut e = Ehci { op, ports, wide, dma_phys, dma, kbd: None, msc: None, ud_phys, ud };
     let _ = e.wide;
     for p in 0..ports {
         let a = op + PORTSC + 4 * p as u64;
@@ -397,14 +719,14 @@ pub fn init() -> Result<Ehci, &'static str> {
         }
         let Some(speed) = e.reset_root_port(p) else { continue };
         if let Ok(dev) = e.enumerate(speed, 0, 0, &mut next) {
-            if e.try_keyboard(dev) {
+            if e.try_keyboard(dev) && e.has_msc() {
                 break;
             }
         }
     }
-    if e.has_keyboard() {
+    if e.has_keyboard() || e.has_msc() {
         Ok(e)
     } else {
-        Err("EHCI: controller up, no USB keyboard found")
+        Err("EHCI: controller up, no USB keyboard or storage found")
     }
 }
