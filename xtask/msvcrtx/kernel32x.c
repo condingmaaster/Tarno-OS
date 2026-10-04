@@ -75,7 +75,7 @@ EXPORT void WINAPI GetLocalTime(SYSTEMTIME *st) { fill_st(st); }
 
 /* ---- process / system ---- */
 EXPORT u32 WINAPI GetCurrentProcessId(void) { return (u32)sc3(S_GETPID, 0, 0, 0); }
-EXPORT u32 WINAPI GetCurrentThreadId(void) { return (u32)sc3(S_GETPID, 0, 0, 0); }
+EXPORT u32 WINAPI GetCurrentThreadId(void) { i64 t; __asm__("mov %%gs:0x30, %0" : "=r"(t)); return (u32)(t >> 8); }
 EXPORT HANDLE WINAPI GetCurrentProcess(void) { return (HANDLE)(i64)-1; }
 EXPORT u32 WINAPI GetVersion(void) { return 0x0A00 | (10u << 0); }
 typedef struct { u32 size, major, minor, build, platform; char csd[128]; } OSVERSIONINFOA;
@@ -342,6 +342,29 @@ EXPORT u32 WINAPI WaitForMultipleObjects(u32 n, HANDLE *h, BOOL all, u32 ms) {
     i64 st = NtWaitForMultipleObjects(n, h, all ? 0 : 1, 0, ms == 0xFFFFFFFFu ? 0 : &t);
     if (st == 0x102) return 0x102;                  /* WAIT_TIMEOUT */
     return st < 0 ? 0xFFFFFFFFu : (u32)st;
+}
+
+/* ---- critical sections (the kernel's built-in ones are no-ops; with real threads they must lock) ---- */
+static inline i64 thread_id(void) { i64 t; __asm__("mov %%gs:0x30, %0" : "=r"(t)); return t; }
+EXPORT void WINAPI InitializeCriticalSection(void *cs) { unsigned char *p = cs; for (int i = 0; i < 40; i++) p[i] = 0; }
+EXPORT BOOL WINAPI InitializeCriticalSectionAndSpinCount(void *cs, u32 spin) { (void)spin; InitializeCriticalSection(cs); return 1; }
+EXPORT void WINAPI DeleteCriticalSection(void *cs) { (void)cs; }
+EXPORT BOOL WINAPI TryEnterCriticalSection(void *cs) {
+    unsigned char *p = cs; i64 me = thread_id();
+    if (*(volatile i64 *)(p + 16) == me) { (*(volatile int *)(p + 12))++; return 1; }
+    if (__sync_lock_test_and_set((volatile int *)(p + 8), 1)) return 0;
+    *(volatile i64 *)(p + 16) = me; *(volatile int *)(p + 12) = 1;
+    return 1;
+}
+EXPORT void WINAPI EnterCriticalSection(void *cs) {
+    unsigned char *p = cs; i64 me = thread_id();
+    if (*(volatile i64 *)(p + 16) == me) { (*(volatile int *)(p + 12))++; return; }
+    while (__sync_lock_test_and_set((volatile int *)(p + 8), 1)) sc3(24, 0, 0, 0);   /* sched_yield */
+    *(volatile i64 *)(p + 16) = me; *(volatile int *)(p + 12) = 1;
+}
+EXPORT void WINAPI LeaveCriticalSection(void *cs) {
+    unsigned char *p = cs;
+    if (--*(volatile int *)(p + 12) == 0) { *(volatile i64 *)(p + 16) = 0; __sync_lock_release((volatile int *)(p + 8)); }
 }
 
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }
