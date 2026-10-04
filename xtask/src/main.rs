@@ -1010,7 +1010,7 @@ fn disk_image() -> PathBuf {
             }
             let k32 = root.join("target/kernel32x.dll");
             if Command::new("x86_64-w64-mingw32-gcc")
-                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", k32.to_str().unwrap(), root.join("xtask/msvcrtx/kernel32x.c").to_str().unwrap(), "-lntdll"])
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", k32.to_str().unwrap(), root.join("xtask/msvcrtx/kernel32x.c").to_str().unwrap(), "-lntdll", "-lkernel32"])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)

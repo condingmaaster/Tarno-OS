@@ -29,9 +29,8 @@ static inline i64 sc6(i64 n, i64 a, i64 b, i64 c, i64 d, i64 e, i64 f) {
 enum { S_READ = 0, S_WRITE = 1, S_OPEN = 2, S_CLOSE = 3, S_LSEEK = 8, S_MMAP = 9, S_MUNMAP = 11, S_GETPID = 39, S_RENAME = 82, S_MKDIR = 83, S_RMDIR = 84,
        S_UNLINK = 87, S_GETCWD = 79, S_CHDIR = 80, S_CLOCK_GETTIME = 228, S_GETDENTS64 = 217, S_NEWFSTATAT = 262, S_NANOSLEEP = 35, S_FSYNC = 74 };
 
-static int g_err;
-EXPORT u32 WINAPI GetLastErrorX(void) { return (u32)g_err; }
-static i64 ret(i64 r) { if (r < 0 && r > -4096) { g_err = r == -2 ? 2 : r == -17 ? 80 : r == -13 ? 5 : r == -21 ? 5 : 1; return -1; } return r; }
+extern void WINAPI SetLastError(u32);       /* the kernel's own last-error slot, so GetLastError keeps working */
+static i64 ret(i64 r) { if (r < 0 && r > -4096) { SetLastError(r == -2 ? 2 : r == -17 ? 80 : r == -13 ? 5 : r == -21 ? 5 : 1); return -1; } return r; }
 
 static size_t slen(const char *s) { size_t n = 0; while (s[n]) n++; return n; }
 static void cpy(char *d, const char *s, size_t cap) { size_t i = 0; for (; s[i] && i + 1 < cap; i++) d[i] = s[i]; d[i] = 0; }
@@ -93,7 +92,7 @@ EXPORT void WINAPI GetSystemInfo(void *p) {
     *(u32 *)(b + 36) = 8664;
     *(u32 *)(b + 44) = 65536;           /* allocation granularity */
 }
-EXPORT u32 WINAPI GetEnvironmentVariableA(const char *n, char *buf, u32 size) { (void)n; (void)buf; (void)size; g_err = 203; return 0; }
+EXPORT u32 WINAPI GetEnvironmentVariableA(const char *n, char *buf, u32 size) { (void)n; (void)buf; (void)size; SetLastError(203); return 0; }
 EXPORT BOOL WINAPI SetEnvironmentVariableA(const char *n, const char *v) { (void)n; (void)v; return 1; }
 EXPORT u32 WINAPI GetCurrentDirectoryA(u32 size, char *buf) {
     char p[512];
@@ -118,8 +117,34 @@ EXPORT int WINAPI lstrcmpiA(const char *a, const char *b) { while (*a && lw((uns
 
 /* ---- files ---- */
 /* CreateFileA with every disposition (the kernel's built-in one only opens existing files). */
+/* The kernel's built-in CreateFileA (CD-ROM / FAT drives, \\Device\\ names): found by walking the export
+   directory of the built-in kernel32 module, since importing it by name would find this very function. */
+extern HANDLE WINAPI GetModuleHandleA(const char *);
+typedef HANDLE (WINAPI *create_file_t)(const char *, u32, u32, void *, u32, u32, HANDLE);
+static create_file_t real_create_file(void) {
+    static create_file_t fn;
+    if (fn) return fn;
+    unsigned char *base = GetModuleHandleA("kernel32.dll");
+    if (!base) return 0;
+    u32 pe = *(u32 *)(base + 0x3C);
+    u32 exp = *(u32 *)(base + pe + 0x88);
+    unsigned char *ed = base + exp;
+    u32 n = *(u32 *)(ed + 0x18), *funcs = (u32 *)(base + *(u32 *)(ed + 0x1C)), *names = (u32 *)(base + *(u32 *)(ed + 0x20));
+    unsigned short *ords = (unsigned short *)(base + *(u32 *)(ed + 0x24));
+    for (u32 i = 0; i < n; i++) {
+        const char *nm = (const char *)(base + names[i]);
+        const char *want = "CreateFileA"; int k = 0;
+        while (nm[k] && nm[k] == want[k]) k++;
+        if (!nm[k] && !want[k]) { fn = (create_file_t)(base + funcs[ords[i]]); return fn; }
+    }
+    return 0;
+}
 EXPORT HANDLE WINAPI CreateFileA(const char *name, u32 access, u32 share, void *sa, u32 disp, u32 flags, HANDLE tmpl) {
-    (void)share; (void)sa; (void)flags; (void)tmpl;
+    /* other drives and device names belong to the kernel's own implementation */
+    if ((name[0] && name[1] == ':' && lw((unsigned char)name[0]) != 'c') || name[0] == '\\') {
+        create_file_t rf = real_create_file();
+        if (rf) return rf(name, access, share, sa, disp, flags, tmpl);
+    }
     char p[512];
     if (name[0] == 'N' && name[1] == 'U' && name[2] == 'L' && !name[3]) cpy(p, "/dev/null", sizeof p); else dos_path(p, name, sizeof p);
     int rd = (access & 0x80000000u) != 0, wr = (access & 0x40000000u) != 0;
@@ -130,16 +155,16 @@ EXPORT HANDLE WINAPI CreateFileA(const char *name, u32 access, u32 share, void *
         case 3: break;                                    /* OPEN_EXISTING */
         case 4: fl |= 0100; break;                        /* OPEN_ALWAYS */
         case 5: fl |= 01000; if (!wr) fl |= 1; break;     /* TRUNCATE_EXISTING */
-        default: g_err = 87; return INVALID_HANDLE;
+        default: SetLastError(87); return INVALID_HANDLE;
     }
     i64 fd = sc3(S_OPEN, p, fl, 0644);
-    if (fd < 0) { g_err = fd == -2 ? 2 : fd == -17 ? 80 : fd == -13 ? 5 : 3; return INVALID_HANDLE; }
+    if (fd < 0) { SetLastError(fd == -2 ? 2 : fd == -17 ? 80 : fd == -13 ? 5 : 3); return INVALID_HANDLE; }
     return (HANDLE)fd;
 }
 EXPORT u32 WINAPI SetFilePointer(HANDLE h, int lo, int *hi, u32 method) {
     i64 off = lo; if (hi) off |= (i64)*hi << 32;
     i64 r = sc3(S_LSEEK, (i64)h, off, method);
-    if (r < 0) { g_err = 87; return 0xFFFFFFFFu; }
+    if (r < 0) { SetLastError(87); return 0xFFFFFFFFu; }
     if (hi) *hi = (int)(r >> 32);
     return (u32)r;
 }
@@ -172,9 +197,9 @@ EXPORT BOOL WINAPI MoveFileExA(const char *a, const char *b, u32 flags) { (void)
 EXPORT BOOL WINAPI CopyFileA(const char *a, const char *b, BOOL fail_if_exists) {
     char x[512], y[512]; dos_path(x, a, sizeof x); dos_path(y, b, sizeof y);
     i64 in = sc3(S_OPEN, x, 0, 0);
-    if (in < 0) { g_err = 2; return 0; }
+    if (in < 0) { SetLastError(2); return 0; }
     i64 out = sc3(S_OPEN, y, 1 | 0100 | (fail_if_exists ? 0200 : 01000), 0644);
-    if (out < 0) { sc3(S_CLOSE, in, 0, 0); g_err = fail_if_exists ? 80 : 5; return 0; }
+    if (out < 0) { sc3(S_CLOSE, in, 0, 0); SetLastError(fail_if_exists ? 80 : 5); return 0; }
     char buf[4096]; i64 n;
     while ((n = sc3(S_READ, in, buf, sizeof buf)) > 0) { i64 off = 0; while (off < n) { i64 w = sc3(S_WRITE, out, buf + off, n - off); if (w <= 0) goto done; off += w; } }
 done:
@@ -187,7 +212,7 @@ static int stat_path(const char *dos, unsigned char *st) {
 }
 EXPORT u32 WINAPI GetFileAttributesA(const char *p) {
     unsigned char st[144];
-    if (stat_path(p, st) < 0) { g_err = 2; return 0xFFFFFFFFu; }
+    if (stat_path(p, st) < 0) { SetLastError(2); return 0xFFFFFFFFu; }
     u32 mode = *(u32 *)(st + 24);
     return (mode & 0xF000) == 0x4000 ? 0x10 : 0x80;
 }
@@ -206,7 +231,7 @@ static int find_next(FIND *f, unsigned char *data) {
     for (;;) {
         if (f->pos >= f->len) {
             i64 n = sc3(S_GETDENTS64, f->fd, f->buf, sizeof f->buf);
-            if (n <= 0) { g_err = 18; return 0; }   /* ERROR_NO_MORE_FILES */
+            if (n <= 0) { SetLastError(18); return 0; }   /* ERROR_NO_MORE_FILES */
             f->pos = 0; f->len = (int)n;
         }
         unsigned char *e = (unsigned char *)f->buf + f->pos;
@@ -237,13 +262,13 @@ EXPORT HANDLE WINAPI FindFirstFileA(const char *path, void *data) {
     size_t n = slen(q); size_t cut = n;
     while (cut > 0 && q[cut - 1] != '/') cut--;
     FIND *f = (FIND *)(i64)sc6(S_MMAP, 0, (i64)((sizeof(FIND) + 4095) & ~4095UL), 3, 0x22, -1, 0);
-    if ((i64)f < 0 && (i64)f > -4096) { g_err = 8; return INVALID_HANDLE; }
+    if ((i64)f < 0 && (i64)f > -4096) { SetLastError(8); return INVALID_HANDLE; }
     if (cut == 0) cpy(f->dir, ".", sizeof f->dir); else { for (size_t i = 0; i < cut; i++) f->dir[i] = q[i]; f->dir[cut] = 0; if (cut > 1) f->dir[cut - 1] = 0; }
     cpy(f->pat, q + cut, sizeof f->pat);
     f->fd = (int)sc3(S_OPEN, f->dir, 0, 0);
-    if (f->fd < 0) { g_err = 3; sc3(S_MUNMAP, f, (sizeof(FIND) + 4095) & ~4095UL, 0); return INVALID_HANDLE; }
+    if (f->fd < 0) { SetLastError(3); sc3(S_MUNMAP, f, (sizeof(FIND) + 4095) & ~4095UL, 0); return INVALID_HANDLE; }
     f->pos = f->len = 0;
-    if (!find_next(f, data)) { sc3(S_CLOSE, f->fd, 0, 0); sc3(S_MUNMAP, f, (sizeof(FIND) + 4095) & ~4095UL, 0); g_err = 2; return INVALID_HANDLE; }
+    if (!find_next(f, data)) { sc3(S_CLOSE, f->fd, 0, 0); sc3(S_MUNMAP, f, (sizeof(FIND) + 4095) & ~4095UL, 0); SetLastError(2); return INVALID_HANDLE; }
     return f;
 }
 EXPORT BOOL WINAPI FindNextFileA(HANDLE h, void *data) { return find_next((FIND *)h, data); }
@@ -262,7 +287,7 @@ typedef struct { u64 size; u64 magic; } mh;
 static void *mem_alloc(u64 n, int zero) {
     u64 total = (n + sizeof(mh) + 4095) & ~4095ULL;
     char *p = (char *)sc6(S_MMAP, 0, (i64)total, 3, 0x22, -1, 0);
-    if ((i64)p < 0 && (i64)p > -4096) { g_err = 8; return 0; }
+    if ((i64)p < 0 && (i64)p > -4096) { SetLastError(8); return 0; }
     (void)zero;                                 /* anonymous memory is zero-filled */
     mh *h = (mh *)p; h->size = total - sizeof(mh); h->magic = 0x4C4F43;
     return h + 1;
@@ -300,7 +325,7 @@ EXPORT HANDLE WINAPI CreateThread(void *sa, u64 stack, void *start, void *arg, u
     (void)sa; (void)stack; (void)flags;
     HANDLE h = 0;
     i64 st = NtCreateThreadEx(&h, 0x1FFFFF, 0, (HANDLE)(i64)-1, start, arg, 0, 0, 0, 0, 0);
-    if (st != 0) { g_err = 8; return 0; }
+    if (st != 0) { SetLastError(8); return 0; }
     if (tid) *tid = ++g_tid_counter;
     return h;
 }
