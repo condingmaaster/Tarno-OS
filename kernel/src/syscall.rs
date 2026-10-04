@@ -196,6 +196,7 @@ const SYS_SETITIMER: u64 = 38;
 const SYS_GETRLIMIT: u64 = 97;
 const SYS_ACCESS: u64 = 21;
 const SYS_FACCESSAT: u64 = 269;
+const SYS_FACCESSAT2: u64 = 439;
 const SYS_PREAD64: u64 = 17;
 const SYS_RT_SIGPENDING: u64 = 127;
 const SYS_RT_SIGSUSPEND: u64 = 130;
@@ -209,6 +210,7 @@ const SYS_CLOCK_GETTIME: u64 = 228;
 const SYS_CLOCK_GETRES: u64 = 229;
 const SYS_CAPGET: u64 = 125;
 const SYS_GETCPU: u64 = 309;
+const SYS_GETRUSAGE: u64 = 98;
 const SYS_GETRESUID: u64 = 118;
 const SYS_GETRESGID: u64 = 120;
 const SYS_CAPSET: u64 = 126;
@@ -1630,7 +1632,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         SYS_PREAD64 => sys_pread64(a1, a2, a3, a4),
         SYS_ACCESS => sys_access(a1, a2),
-        SYS_FACCESSAT => sys_access(a2, a3),
+        SYS_FACCESSAT | SYS_FACCESSAT2 => sys_access(a2, a3),
 
         SYS_GETRANDOM => match usercopy::slice_mut(a1, a2 as usize) {
             Ok(buf) => {
@@ -1924,6 +1926,14 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             }
             0
         }
+        SYS_GETRUSAGE => match usercopy::slice_mut(a2, 144) {
+            // struct rusage: all zero is a valid (if unimpressive) answer; user time = process cpu time is not tracked
+            Ok(b) => {
+                b.fill(0);
+                0
+            }
+            Err(e) => e,
+        },
         SYS_GETCPU => {
             let cpu = crate::smp::this_cpu();
             if a1 != 0 {

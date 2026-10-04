@@ -523,6 +523,22 @@ fn main() {
                 exit(1);
             }
         }
+        "gcc-test" => {
+            // self-hosting: the host's gcc (cc1, as, ld, glibc headers) compiles and links a program inside THOS, which then runs
+            std::env::set_var("THOS_FS_MIB", "448");
+            std::env::set_var("THOS_GCC", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "gcc", "/busybox sh /gcc.sh", "gcc-script-done", 900);
+            if out.lines().any(|l| l.trim() == "gcc-built-42-on-thos") && out.lines().any(|l| l.trim() == "gcc-rc-0") {
+                println!("gcc-test PASSED: gcc compiled, assembled and linked a C program inside THOS, and it ran");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS: net")).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
+                    eprintln!("  {l}");
+                }
+                eprintln!("gcc-test FAILED");
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1383,6 +1399,39 @@ fn disk_image() -> PathBuf {
                         let _ = Command::new("debugfs").args(["-w", "-R", &format!("write /usr/lib/locale/C.utf8/{f} usr/lib/locale/C.utf8/{f}"), img.to_str().unwrap()]).output();
                     }
                 }
+            }
+            // gcc inside THOS (self-hosting; needs THOS_FS_MIB=448 and THOS_GCC=1, see `gcc-test`)
+            if std::env::var("THOS_GCC").is_ok() && std::path::Path::new("/usr/libexec/gcc/x86_64-linux-gnu/14/cc1").exists() {
+                let mut cdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                for prog in ["/usr/bin/x86_64-linux-gnu-gcc-14", "/usr/libexec/gcc/x86_64-linux-gnu/14/cc1", "/usr/libexec/gcc/x86_64-linux-gnu/14/collect2", "/usr/libexec/gcc/x86_64-linux-gnu/14/liblto_plugin.so", "/usr/bin/x86_64-linux-gnu-as", "/usr/bin/x86_64-linux-gnu-ld.bfd"] {
+                    add_dynamic_program(&img, prog, &mut cdirs);
+                }
+                for (target, link) in [("x86_64-linux-gnu-gcc-14", "/usr/bin/gcc"), ("x86_64-linux-gnu-gcc-14", "/usr/bin/cc"), ("x86_64-linux-gnu-as", "/usr/bin/as"), ("x86_64-linux-gnu-ld.bfd", "/usr/bin/ld"), ("x86_64-linux-gnu-ld.bfd", "/usr/bin/x86_64-linux-gnu-ld")] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("symlink {link} {target}"), img.to_str().unwrap()]).output();
+                }
+                for d in ["usr/lib/gcc", "usr/lib/gcc/x86_64-linux-gnu", "usr/lib/gcc/x86_64-linux-gnu/14", "usr/lib/x86_64-linux-gnu"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                for f in ["crtbegin.o", "crtbeginS.o", "crtend.o", "crtendS.o", "libgcc.a", "libgcc_eh.a", "libgcc_s.so"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("write /usr/lib/gcc/x86_64-linux-gnu/14/{f} usr/lib/gcc/x86_64-linux-gnu/14/{f}"), img.to_str().unwrap()]).output();
+                }
+                copy_tree_into_image(&img, "/usr/lib/gcc/x86_64-linux-gnu/14/include", "/usr/lib/gcc/x86_64-linux-gnu/14/include");
+                for f in ["crt1.o", "Scrt1.o", "crti.o", "crtn.o", "libc.so", "libc_nonshared.a"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("write /usr/lib/x86_64-linux-gnu/{f} usr/lib/x86_64-linux-gnu/{f}"), img.to_str().unwrap()]).output();
+                }
+                let _ = Command::new("debugfs").args(["-w", "-R", "mkdir usr/include", img.to_str().unwrap()]).output();
+                if let Ok(rd) = std::fs::read_dir("/usr/include") {
+                    for e in rd.flatten() {
+                        if e.path().extension().is_some_and(|x| x == "h") {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} usr/include/{n}", e.path().display()), img.to_str().unwrap()]).output();
+                        }
+                    }
+                }
+                copy_tree_into_image(&img, "/usr/include/x86_64-linux-gnu", "/usr/include/x86_64-linux-gnu");
+                copy_tree_into_image(&img, "/usr/include/asm-generic", "/usr/include/asm-generic");
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gcchello.c", root.join("xtask/testdata/gcchello.c").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gcc.sh", root.join("xtask/testdata/gcc.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {

@@ -18,6 +18,10 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
   Beide brauchen ein größeres Root-Dateisystem: `THOS_FS_MIB=384` (`node-test`) bzw. `512` (`java-test`); die Tests setzen es selbst.
   Neue Syscalls dafür: `capget/capset`, `clock_getres`, `getcpu`, `fallocate`.
 
+- **GTK 3** (unverändertes Toolkit, Wayland-Backend, Menüs als `xdg_popup`) läuft; der Compositor erkennt Client-seitige Dekoration (GTK) und zeichnet dann keinen zweiten Rahmen.
+  Fenster lassen sich an Ecke/Kante ziehen (xdg `configure`) und mit Alt+Up maximieren.
+- **Selbst-Hosting**: `gcc` (cc1, as, ld, glibc-Header) übersetzt und linkt ein C-Programm *in* THOS, das danach läuft (`gcc-test`, 448 MiB Dateisystem).
+
 ## Gefunden und behoben
 - AHCI: nach einem fehlgeschlagenen `READ LOG EXT` blieb das Task-File-ERR-Bit stehen und ließ den **nächsten gesunden Befehl** scheitern
   (zeigte sich erst, seit beim Beenden `sync_all()` schreibt). Fix: harmloser Befehl nach der Recovery. Relevant für echte Platten.
