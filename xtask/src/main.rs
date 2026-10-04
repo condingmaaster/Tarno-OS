@@ -232,7 +232,9 @@ fn main() {
             let out = boot_and_run(&img, "winc", "/busybox sh /winc.sh", "winc-done", 120);
             let n = |t: &str| out.lines().filter(|l| l.trim() == t).count();
             if n("hello from win32 2 alpha") == 1 && n("rc-7-end") == 1 && n("hello from win32 1 -") == 2
-                && n("w1 1-2-9 42 ctype") == 1 && n("line-two") + n("w2 line-two") >= 1 && n("w3 rand-ok time-ok") == 1 && n("w4  3.14|ab   |00042|ff") == 1 {
+                && n("w1 1-2-9 42 ctype") == 1 && n("line-two") + n("w2 line-two") >= 1 && n("w3 rand-ok time-ok") == 1 && n("w4  3.14|ab   |00042|ff") == 1
+                && n("k1 year-ok tick-ok qpc-ok pid-ok") == 1 && n("k2 size-10 read-456 attr-dir") == 1 && n("k3 found-1 bytes-10 name-a.txt") == 1
+                && n("k4 moved-ok") == 1 && n("k5 gone-ok") == 1 && n("k6 heap") == 1 {
                 println!("winc-test PASSED: an unmodified mingw console program (msvcrt printf/malloc/strcpy) gets its real argv, returns its exit status and honours pipes and redirection");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: ") || l.contains("msvcrt") || l.contains("PE")) {
@@ -950,7 +952,7 @@ fn disk_image() -> PathBuf {
             // THOS's C runtime extension for Windows programs: a real PE DLL the loader consults before the built-in msvcrt
             let mx = root.join("target/msvcrtx.dll");
             if Command::new("x86_64-w64-mingw32-gcc")
-                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", mx.to_str().unwrap(), root.join("xtask/msvcrtx/msvcrtx.c").to_str().unwrap(), "-lmsvcrt"])
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", mx.to_str().unwrap(), root.join("xtask/msvcrtx/msvcrtx.c").to_str().unwrap(), "-lmsvcrt"])
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false)
@@ -959,6 +961,19 @@ fn disk_image() -> PathBuf {
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/msvcrtx.dll", mx.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let k32 = root.join("target/kernel32x.dll");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", k32.to_str().unwrap(), root.join("xtask/msvcrtx/kernel32x.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/kernel32x.dll", k32.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let w3 = root.join("target/w32test.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", w3.to_str().unwrap(), root.join("xtask/testdata/w32test.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} w32test.exe", w3.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let wt = root.join("target/wtest.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wt.to_str().unwrap(), root.join("xtask/testdata/wtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {

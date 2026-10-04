@@ -233,7 +233,7 @@ struct Loader<'a> {
     depth: u32,
     tls: TlsBuild,
     tls_cbs: Vec<(u64, u64)>, // (module base, callback VA) run at process start
-    ext_tried: bool,          // msvcrtx.dll has been looked for
+    ext_tried: Vec<String>,   // extension DLLs that have been looked for
 }
 
 impl<'a> Loader<'a> {
@@ -280,7 +280,7 @@ impl<'a> Loader<'a> {
             depth: 0,
             tls: TlsBuild { frame_phys: 0, n_mods: 0, blk_next: TLS_BLOCKS_OFF },
             tls_cbs: Vec::new(),
-            ext_tried: false,
+            ext_tried: Vec::new(),
         }
     }
 
@@ -463,7 +463,12 @@ impl<'a> Loader<'a> {
                 } else {
                     let func = cstr_at(img, (thunk & 0x7FFF_FFFF) + 2)?; // skip the 2-byte hint
                     // The C-runtime extension DLL (a real PE in System32) overrides the built-in msvcrt.
-                    let ext = if self.mods[midx].name == "msvcrt.dll" { self.ext_export(func) } else { None };
+                    let ext_name = match self.mods[midx].name.as_str() {
+                        "msvcrt.dll" => Some("msvcrtx.dll"),
+                        "kernel32.dll" => Some("kernel32x.dll"),
+                        _ => None,
+                    };
+                    let ext = ext_name.and_then(|n| self.ext_export(n, func));
                     match ext {
                         Some(a) => a,
                         None => self.resolve_export_name(midx, func, 0).map_err(|e| {
@@ -481,18 +486,20 @@ impl<'a> Loader<'a> {
 
     /// `name` from `msvcrtx.dll` (THOS's C runtime extension), loading it on first use; `None` when
     /// the DLL is absent or does not export `name`.
-    fn ext_export(&mut self, name: &str) -> Option<u64> {
-        let idx = match self.mods.iter().position(|m| m.name == "msvcrtx.dll") {
+    fn ext_export(&mut self, dll: &str, name: &str) -> Option<u64> {
+        let idx = match self.mods.iter().position(|m| m.name == dll) {
             Some(i) => i,
             None => {
-                if self.ext_tried {
+                if self.ext_tried.iter().any(|d| d == dll) {
                     return None;
                 }
-                self.ext_tried = true;
-                match self.resolve_module("msvcrtx.dll") {
+                self.ext_tried.push(String::from(dll));
+                match self.resolve_module(dll) {
                     Ok(i) => i,
                     Err(e) => {
-                        crate::kprintln!("THOS: pe msvcrtx      not usable: {e}");
+                        if e != "PE: DLL not found in System32" {
+                            crate::kprintln!("THOS: pe {dll}      not usable: {e}");
+                        }
                         return None;
                     }
                 }
