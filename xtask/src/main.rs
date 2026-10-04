@@ -452,12 +452,16 @@ fn main() {
                 if wait_for(&tlog, "term ready", 40) {
                     std::thread::sleep(ms(1500));
                     mon(&tsock, "sendkey alt-f4"); // compositor shortcut: close the focused window
+                    std::thread::sleep(ms(1500));
+                    mon(&tsock, "sendkey ctrl-alt-q"); // compositor shortcut: leave the desktop
                 }
             });
+            let t0 = std::time::Instant::now();
             let out = boot_and_run(&img, "deskkeys", "/busybox sh /desk-keys.sh", "desk ok:", 150);
+            let quick = t0.elapsed().as_secs() < 35; // the script alone would wait 40 s before asking the compositor to quit
             let (started, closed) = (out.contains("term ready"), out.contains("term done"));
-            if started && closed {
-                println!("desk-keys-test PASSED: Alt+Enter opened a terminal window, Alt+F4 closed it again");
+            if started && closed && quick {
+                println!("desk-keys-test PASSED: Alt+Enter opened a terminal window, Alt+F4 closed it again, Ctrl+Alt+Q left the desktop");
             } else {
                 for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault")) {
                     eprintln!("  {l}");

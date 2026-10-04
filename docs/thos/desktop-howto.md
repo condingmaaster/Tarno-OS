@@ -17,7 +17,7 @@ First boot asks for an administrator name and password, later boots for the logi
 | `python3`, `perl`, `git`, `gawk`, `make`, `rstest` ... | unmodified Debian / Rust binaries (see the `real*-test` and `rust-test` commands in `xtask`) |
 
 Keys in the desktop (the compositor owns the keyboard while it runs): **Alt+Enter** new terminal, **Alt+Tab** cycle windows,
-**Alt+F4** close the top window; click a titlebar to raise/drag, red square to close. German layout incl. ä ö ü ß € in terminals.
+**Alt+F4** close the top window, **Ctrl+Alt+Q** leave the desktop (back to the text console); click a titlebar to raise/drag, red square to close. German layout incl. ä ö ü ß € in terminals.
 The panel's "Terminal" button starts another terminal. The text console comes back when the compositor exits (`thoswin quit` from a
 terminal, or when it crashes — the framebuffer is released when its last file descriptor closes).
 

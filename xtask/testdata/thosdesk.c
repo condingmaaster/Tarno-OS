@@ -255,6 +255,7 @@ int main(int argc, char **argv) {
             int t = nwin - 1;
             while (t >= 0 && !wins[t].deco) t--;
             ssize_t kn = read(kbd, ev, 8);
+            if (kn == 8 && ev[0] && ev[1] == 0x14 && (ev[2] & 0x11) && (ev[2] & 0x44)) { quit = 1; kn = 0; }   /* Ctrl+Alt+Q: leave the desktop */
             if (kn == 8 && ev[0] && (ev[2] & 0x44) && !(ev[2] & 0x40)) {
                 /* Left-Alt shortcuts (AltGr is not Alt): Enter = new terminal, Tab = cycle, F4 = close */
                 if (ev[1] == 0x28) {
