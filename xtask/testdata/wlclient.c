@@ -29,7 +29,7 @@ static struct xdg_surface *xs;
 static struct xdg_toplevel *top;
 static struct wl_buffer *buf;
 static uint32_t *px;
-static int configured, closing, frames, phase, nframes_max = 6;
+static int configured, closing, frames, phase, nframes_max = 6, once;
 static struct wl_callback *frame_cb;
 
 static void make_buffer(int w, int h) {
@@ -71,7 +71,7 @@ static void frame_done(void *d, struct wl_callback *cb, uint32_t t) {
     (void)d; (void)t;
     wl_callback_destroy(cb);
     frames++; phase++;
-    if (frames == nframes_max) { printf("wlclient: frames %d\n", frames); fflush(stdout); }
+    if (frames == nframes_max) { printf("wlclient: frames %d\n", frames); fflush(stdout); if (once) closing = 1; }
     if (!closing) next_frame();
 }
 
@@ -187,6 +187,7 @@ static const struct wl_registry_listener reg_l = { reg_global, reg_remove };
 
 int main(int argc, char **argv) {
     if (argc > 1) nframes_max = atoi(argv[1]);
+    if (argc > 2) once = 1;
     struct wl_display *dpy = wl_display_connect(NULL);
     if (!dpy) { printf("wlclient FAIL: cannot connect\n"); return 1; }
     struct wl_registry *reg = wl_display_get_registry(dpy);

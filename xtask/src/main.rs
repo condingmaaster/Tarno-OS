@@ -641,6 +641,24 @@ fn main() {
                 exit(1);
             }
         }
+        "soak-test" => {
+            // open and close a GTK window six times: the kernel must give back (almost) all the memory
+            std::env::set_var("THOS_FS_MIB", "192");
+            std::env::set_var("THOS_GTK", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "soak", if std::env::var("SOAK2").is_ok() { "/busybox sh /soak2.sh" } else if std::env::var("SOAK3").is_ok() { "/busybox sh /soak3.sh" } else if std::env::var("SOAK4").is_ok() { "/busybox sh /soak4.sh" } else { "/busybox sh /soak.sh" }, if std::env::var("SOAK2").is_ok() { "s2-done" } else if std::env::var("SOAK3").is_ok() || std::env::var("SOAK4").is_ok() { "soak-free-after" } else { "desk ok:" }, 600);
+            for l in out.lines().filter(|l| l.trim().starts_with("s2-") || l.trim().starts_with("soak-")) { println!("{}", l.trim()); }
+            let get = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k).and_then(|v| v.trim().parse::<i64>().ok()));
+            let (before, after) = (get("soak-free-before="), get("soak-free-after="));
+            println!("soak: free memory before {:?} KiB, after {:?} KiB; windows closed: {}", before, after, out.matches("gtk: bye").count());
+            match (before, after) {
+                (Some(b), Some(a)) if b - a < 6000 && out.matches("gtk: bye").count() >= 6 => println!("soak-test PASSED: six GTK windows opened and closed, memory returned (lost {} KiB)", b - a),
+                _ => {
+                    eprintln!("soak-test FAILED");
+                    exit(1);
+                }
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1491,6 +1509,10 @@ fn disk_image() -> PathBuf {
                         ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
                         (root.join("xtask/testdata/fonts.conf").to_str().unwrap(), "etc/fonts/fonts.conf"),
                         (root.join("xtask/testdata/gtk.sh").to_str().unwrap(), "gtk.sh"),
+                        (root.join("xtask/testdata/soak.sh").to_str().unwrap(), "soak.sh"),
+                        (root.join("xtask/testdata/soak2.sh").to_str().unwrap(), "soak2.sh"),
+                        (root.join("xtask/testdata/soak3.sh").to_str().unwrap(), "soak3.sh"),
+                        (root.join("xtask/testdata/soak4.sh").to_str().unwrap(), "soak4.sh"),
                     ] {
                         let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {from} {to}"), img.to_str().unwrap()]).output();
                     }

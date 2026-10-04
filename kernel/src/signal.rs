@@ -435,7 +435,11 @@ pub fn sys_sigsuspend(mask: u64, size: u64) -> i64 {
 /// touching the already-recorded exit status.
 pub fn thread_die(task: &Arc<Task>) -> ! {
     process::thread_exit_cleanup();
-    task.thread_leaving();
+    if task.thread_leaving() {
+        // the process's other threads were already gone: this casualty is the last one out, so it gives the
+        // address space back (the exit status is already recorded)
+        process::free_address_space_at_exit();
+    }
     sched::exit()
 }
 

@@ -374,6 +374,8 @@ impl Process {
             self.release_page(v);
             v += 4096;
         }
+        // a demand-paged memfd mapping that is gone entirely lets go of its file (the pages go with the last reference)
+        self.lazy.lock().retain(|l| !(l.base >= start && l.base + l.pages as u64 * 4096 <= end));
     }
 
     /// `mprotect`. `PROT_NONE` removes the pages (their frames go back — decommitting is what
