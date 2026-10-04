@@ -266,7 +266,7 @@ impl Process {
     /// is mapped; `MAP_FIXED` over an old mapping removes it). With `file` the pages are
     /// filled from `(data, offset)` — a private copy, which is what `MAP_PRIVATE` means.
     /// Returns the base.
-    pub fn mmap_region(&self, addr: u64, fixed: bool, len: u64, prot: u64, data: Option<&[u8]>) -> u64 {
+    pub fn mmap_region(&self, addr: u64, fixed: bool, len: u64, prot: u64, file: Option<(&dyn FileOps, u64)>) -> u64 {
         let len = (len + 0xFFF) & !0xFFF;
         let base = if fixed {
             addr
@@ -291,11 +291,18 @@ impl Process {
                 };
                 let dst = phys_to_virt(frame.start_address()).as_mut_ptr::<u8>();
                 unsafe { core::ptr::write_bytes(dst, 0, 4096) };
-                if let Some(d) = data {
-                    let off = (v - base) as usize;
-                    if off < d.len() {
-                        let n = (d.len() - off).min(4096);
-                        unsafe { core::ptr::copy_nonoverlapping(d.as_ptr().add(off), dst, n) };
+                if let Some((f, foff)) = file {
+                    // Fill the page straight from the file: a 50 MiB library never exists as one buffer.
+                    let page = unsafe { core::slice::from_raw_parts_mut(dst, 4096) };
+                    if f.seek((foff + (v - base)) as i64, 0) >= 0 {
+                        let mut got = 0;
+                        while got < 4096 {
+                            let n = f.read(&mut page[got..]);
+                            if n <= 0 {
+                                break;
+                            }
+                            got += n as usize;
+                        }
                     }
                 }
                 self.map(v, frame.start_address().as_u64(), writable, exec);

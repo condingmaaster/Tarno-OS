@@ -387,7 +387,7 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
     if len > crate::mm::FRAME_ALLOC.lock().free_frames() * 4096 && prot != 0 {
         return ENOMEM;
     }
-    let data: Option<alloc::vec::Vec<u8>> = if flags & MAP_ANON != 0 {
+    let file: Option<alloc::sync::Arc<dyn crate::file::FileOps>> = if flags & MAP_ANON != 0 {
         None
     } else {
         let Some(f) = cur_fd(fd) else { return EBADF };
@@ -406,26 +406,18 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
             }
             return proc.mmap_device(addr, fixed, len.min(dev_len - off), prot, phys + off) as i64;
         }
-        let save = f.seek(0, 1);
-        if f.seek(off as i64, 0) < 0 {
-            return EINVAL;
-        }
-        let mut buf = alloc::vec![0u8; len as usize];
-        let mut got = 0usize;
-        while got < buf.len() {
-            let n = f.read(&mut buf[got..]);
-            if n <= 0 {
-                break;
-            }
-            got += n as usize;
-        }
-        buf.truncate(got);
-        if save >= 0 {
-            f.seek(save, 0);
-        }
-        Some(buf)
+        Some(f)
     };
-    proc.mmap_region(addr, fixed, len, prot, data.as_deref()) as i64
+    // MAP_PRIVATE file mapping: each page is copied from the file at its offset; the caller's own file
+    // position is restored afterwards.
+    let saved = file.as_ref().map(|f| f.seek(0, 1));
+    let r = proc.mmap_region(addr, fixed, len, prot, file.as_ref().map(|f| (&**f, off)));
+    if let (Some(f), Some(pos)) = (&file, saved) {
+        if pos >= 0 {
+            f.seek(pos, 0);
+        }
+    }
+    r as i64
 }
 
 /// `prlimit64(pid, resource, new, old)` / `getrlimit(resource, rlim)`: report the limits (new
