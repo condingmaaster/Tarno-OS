@@ -26,4 +26,7 @@ echo date=$(/usr/bin/date -u -d @0 +%Y)
 echo uname=$(/usr/bin/uname -s)
 echo env=$(/usr/bin/env FOO=bar /usr/bin/printenv FOO)
 echo tee=$(echo hi | /usr/bin/tee t.out)
+printf 'alpha\nbeta\n' > v.txt
+/usr/bin/vim.tiny -u NONE -es -c '%s/alpha/GAMMA/' -c 'wq' v.txt
+echo vim=$(/usr/bin/head -n 1 v.txt)
 echo real5-done

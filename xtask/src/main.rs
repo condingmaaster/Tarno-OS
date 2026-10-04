@@ -161,7 +161,7 @@ fn main() {
             let out = boot_and_run(&img, "real5", "/usr/bin/bash /real5.sh", "real5-done", 250);
             let want = [
                 "sort=a a b c", "uniq=3", "head=b,a,", "tail=a", "cut=y", "sha=ba7816bf8f01cfea", "md5=90015098", "seq=1 2 3 4 5", "expr=42",
-                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi",
+                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi", "vim=GAMMA",
             ];
             let mut missing: Vec<&str> = want.iter().copied().filter(|w| !out.lines().any(|l| l.trim() == *w)).collect();
             if !out.lines().any(|l| l.trim().starts_with("find=") && l.contains("./in.txt") && l.contains("./moved.txt") && l.contains("./empty")) {
@@ -824,7 +824,7 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv"] {
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv", "/usr/bin/vim.tiny"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
