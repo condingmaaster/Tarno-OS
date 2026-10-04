@@ -211,6 +211,22 @@ fn main() {
                 exit(1);
             }
         }
+        "aslr-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "aslr", "asltest; asltest; asltest; echo aslr-after-$((11))", "aslr-after-11", 90);
+            let runs: Vec<Vec<&str>> = out.lines().filter(|l| l.trim().starts_with("asl 0x")).map(|l| l.split_whitespace().skip(1).collect()).collect();
+            // every one of the five addresses (program, heap, big heap, mmap, stack) must differ between at least two runs
+            let moved = |i: usize| runs.len() == 3 && (runs[0][i] != runs[1][i] || runs[1][i] != runs[2][i]);
+            if runs.len() == 3 && (0..5).all(moved) {
+                println!("aslr-test PASSED: program, heap, mmap and stack addresses differ from run to run ({} / {})", runs[0].join(" "), runs[1].join(" "));
+            } else {
+                for l in out.lines().filter(|l| l.contains("asl")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("aslr-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -891,6 +907,10 @@ fn disk_image() -> PathBuf {
             let oomt = root.join("target/oomtest");
             if Command::new("gcc").args(["-O1", "-o", oomt.to_str().unwrap(), root.join("xtask/testdata/oomtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} oomtest", oomt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let asl = root.join("target/asltest");
+            if Command::new("gcc").args(["-O1", "-o", asl.to_str().unwrap(), root.join("xtask/testdata/asltest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} asltest", asl.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let lot = root.join("target/lotest");
             if Command::new("gcc").args(["-O1", "-o", lot.to_str().unwrap(), root.join("xtask/testdata/lotest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -4148,7 +4168,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

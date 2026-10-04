@@ -42,6 +42,8 @@ pub struct Process {
     /// The main stack grows downwards on demand: `[stack_floor, stack_low)` is reserved but not mapped yet.
     stack_floor: AtomicU64,
     stack_low: AtomicU64,
+    /// Randomised start of the heap (`brk`) for this address space.
+    brk_base: AtomicU64,
     /// `teardown` ran (the exit path frees the space early; `sched::reap` must not do it again).
     freed: AtomicBool,
 }
@@ -58,7 +60,7 @@ const USER_STACK_SIZE: u64 = 64 * 1024;
 /// How far the main stack may grow (the usual 8 MiB `RLIMIT_STACK`).
 const USER_STACK_MAX: u64 = 8 * 1024 * 1024;
 const BRK_BASE: u64 = 0x0000_6800_0000_0000;
-const BRK_MAX: u64 = BRK_BASE + 256 * 1024 * 1024;
+const BRK_SPAN: u64 = 256 * 1024 * 1024;
 
 /// Called by the last thread of a process on its way out: switch to the kernel's page tables and give
 /// the address space back at once (not when the scheduler gets around to reaping the corpse), so
@@ -114,10 +116,13 @@ impl Process {
             *(dst as *mut u64) = 0; // PML4[0]
         }
 
+        let brk0 = BRK_BASE + ((crate::random::u64() & 0x3FFF) << 12);
         Arc::new(Self {
             pml4_phys,
-            next_user_va: AtomicU64::new(USER_ALLOC_BASE),
-            brk: AtomicU64::new(BRK_BASE),
+            // ASLR: the mmap area, the heap and (in elf.rs) the program/interpreter bases move per process
+            next_user_va: AtomicU64::new(USER_ALLOC_BASE + ((crate::random::u64() & 0x3FFF) << 21)),
+            brk: AtomicU64::new(brk0),
+            brk_base: AtomicU64::new(brk0),
             views: Mutex::new(Vec::new()),
             stack_floor: AtomicU64::new(0),
             stack_low: AtomicU64::new(0),
@@ -133,6 +138,7 @@ impl Process {
         self.next_user_va
             .store(other.next_user_va.load(Ordering::Relaxed), Ordering::Relaxed);
         self.brk.store(other.brk.load(Ordering::Relaxed), Ordering::Relaxed);
+        self.brk_base.store(other.brk_base.load(Ordering::Relaxed), Ordering::Relaxed);
         self.stack_floor.store(other.stack_floor.load(Ordering::Relaxed), Ordering::Relaxed);
         self.stack_low.store(other.stack_low.load(Ordering::Relaxed), Ordering::Relaxed);
     }
@@ -223,7 +229,8 @@ impl Process {
     /// `brk(0)` returns the current break; `brk(addr)` grows/sets it.
     pub fn brk(&self, req: u64) -> u64 {
         let cur = self.brk.load(Ordering::Relaxed);
-        if req < BRK_BASE || req > BRK_MAX {
+        let base = self.brk_base.load(Ordering::Relaxed);
+        if req < base || req > base + BRK_SPAN {
             return cur;
         }
         let mut v = (cur + 0xFFF) & !0xFFF;
