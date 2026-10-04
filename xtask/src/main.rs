@@ -466,8 +466,8 @@ fn main() {
             std::env::set_var("THOS_JAVA", "1");
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "java", "/busybox sh /java.sh", "java-script-done", 600);
-            if out.contains("openjdk version") {
-                println!("java-test PASSED: OpenJDK started and printed its version");
+            if out.contains("openjdk version") && out.contains("java-says-385") && out.contains("thread-says") {
+                println!("java-test PASSED: OpenJDK 21 ran a program (collections, streams, a second thread)");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: net") ).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
                     eprintln!("  {l}");
@@ -1276,6 +1276,7 @@ fn disk_image() -> PathBuf {
                         }
                     }
                 }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Hello.class", root.join("xtask/testdata/Hello.class").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} java.sh", root.join("xtask/testdata/java.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)

@@ -14,6 +14,10 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - **Desktop-Look**: weiche Schatten, runde Ecken (AA), Verlauf-Titelleiste, Einblenden, Pfeil-Cursor, vorgerenderter Hintergrund, Hover-Schließknopf.
 - **Root-Dateisystem 64 → 128 MiB** (war voll). Scratch-LBAs: 300000 (AHCI), 301000 (ESP), 290000 (NCQ), 291000 (Fehlerinjektion).
 
+- **Node.js** (V8 + libuv, Debian-Paket vom Host) und **OpenJDK 21** (Lambdas, Streams, zweiter Thread; `-Xint`) laufen unverändert.
+  Beide brauchen ein größeres Root-Dateisystem: `THOS_FS_MIB=384` (`node-test`) bzw. `512` (`java-test`); die Tests setzen es selbst.
+  Neue Syscalls dafür: `capget/capset`, `clock_getres`, `getcpu`, `fallocate`.
+
 ## Gefunden und behoben
 - AHCI: nach einem fehlgeschlagenen `READ LOG EXT` blieb das Task-File-ERR-Bit stehen und ließ den **nächsten gesunden Befehl** scheitern
   (zeigte sich erst, seit beim Beenden `sync_all()` schreibt). Fix: harmloser Befehl nach der Recovery. Relevant für echte Platten.
