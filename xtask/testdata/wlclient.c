@@ -18,6 +18,12 @@ static struct wl_compositor *comp;
 static struct wl_shm *shm;
 static struct wl_seat *seat;
 static struct xdg_wm_base *wm;
+static struct wl_data_device_manager *ddm;
+static struct wl_data_device *ddev;
+static struct wl_data_source *dsrc;
+static int clip_fd = -1, ep_global = -1;
+static const struct wl_data_device_listener dd_l;
+static const struct wl_data_source_listener src_l;
 static struct wl_surface *surf;
 static struct xdg_surface *xs;
 static struct xdg_toplevel *top;
@@ -76,6 +82,14 @@ static void xs_configure(void *d, struct xdg_surface *s, uint32_t serial) {
         configured = 1;
         printf("wlclient: configured\n"); fflush(stdout);
         next_frame();
+        if (ddm && seat) {
+            ddev = wl_data_device_manager_get_data_device(ddm, seat);
+            wl_data_device_add_listener(ddev, &dd_l, 0);
+            dsrc = wl_data_device_manager_create_data_source(ddm);
+            wl_data_source_add_listener(dsrc, &src_l, 0);
+            wl_data_source_offer(dsrc, "text/plain");
+            wl_data_device_set_selection(ddev, dsrc, 0);
+        }
     }
 }
 static const struct xdg_surface_listener xs_l = { xs_configure };
@@ -126,11 +140,46 @@ static void seat_caps(void *d, struct wl_seat *s, uint32_t caps) {
 static void seat_name(void *d, struct wl_seat *s, const char *n) { (void)d; (void)s; (void)n; }
 static const struct wl_seat_listener seat_l = { seat_caps, seat_name };
 
+/* clipboard: copy "thos-clip" ourselves, then paste it back through the compositor */
+static void src_target(void *d, struct wl_data_source *s, const char *m) { (void)d; (void)s; (void)m; }
+static void src_send(void *d, struct wl_data_source *s, const char *mime, int32_t fd) {
+    (void)d; (void)s; (void)mime;
+    if (write(fd, "thos-clip", 9) != 9) {}
+    close(fd);
+}
+static void src_cancelled(void *d, struct wl_data_source *s) { (void)d; (void)s; }
+static void src_dnd_drop(void *d, struct wl_data_source *s) { (void)d; (void)s; }
+static void src_dnd_fin(void *d, struct wl_data_source *s) { (void)d; (void)s; }
+static void src_action(void *d, struct wl_data_source *s, uint32_t a) { (void)d; (void)s; (void)a; }
+static const struct wl_data_source_listener src_l = { src_target, src_send, src_cancelled, src_dnd_drop, src_dnd_fin, src_action };
+static void off_offer(void *d, struct wl_data_offer *o, const char *m) { (void)d; (void)o; (void)m; }
+static void off_src_actions(void *d, struct wl_data_offer *o, uint32_t a) { (void)d; (void)o; (void)a; }
+static void off_action(void *d, struct wl_data_offer *o, uint32_t a) { (void)d; (void)o; (void)a; }
+static const struct wl_data_offer_listener off_l = { off_offer, off_src_actions, off_action };
+static void dd_offer(void *d, struct wl_data_device *dd, struct wl_data_offer *o) { (void)d; (void)dd; wl_data_offer_add_listener(o, &off_l, 0); }
+static void dd_enter(void *d, struct wl_data_device *dd, uint32_t s, struct wl_surface *sf, wl_fixed_t x, wl_fixed_t y, struct wl_data_offer *o) { (void)d; (void)dd; (void)s; (void)sf; (void)x; (void)y; (void)o; }
+static void dd_leave(void *d, struct wl_data_device *dd) { (void)d; (void)dd; }
+static void dd_motion(void *d, struct wl_data_device *dd, uint32_t t, wl_fixed_t x, wl_fixed_t y) { (void)d; (void)dd; (void)t; (void)x; (void)y; }
+static void dd_drop(void *d, struct wl_data_device *dd) { (void)d; (void)dd; }
+static void dd_selection(void *d, struct wl_data_device *dd, struct wl_data_offer *o) {
+    (void)d; (void)dd;
+    if (!o || clip_fd >= 0) return;
+    int p[2];
+    if (pipe(p) != 0) return;
+    wl_data_offer_receive(o, "text/plain", p[1]);
+    close(p[1]);
+    clip_fd = p[0];
+    struct epoll_event e = { .events = EPOLLIN, .data.fd = clip_fd };
+    epoll_ctl(ep_global, EPOLL_CTL_ADD, clip_fd, &e);
+}
+static const struct wl_data_device_listener dd_l = { dd_offer, dd_enter, dd_leave, dd_motion, dd_drop, dd_selection };
+
 static void reg_global(void *d, struct wl_registry *r, uint32_t name, const char *iface, uint32_t ver) {
     (void)d;
     if (!strcmp(iface, "wl_compositor")) comp = wl_registry_bind(r, name, &wl_compositor_interface, ver < 4 ? ver : 4);
     else if (!strcmp(iface, "wl_shm")) shm = wl_registry_bind(r, name, &wl_shm_interface, 1);
     else if (!strcmp(iface, "wl_seat")) { seat = wl_registry_bind(r, name, &wl_seat_interface, ver < 5 ? ver : 5); wl_seat_add_listener(seat, &seat_l, 0); }
+    else if (!strcmp(iface, "wl_data_device_manager")) ddm = wl_registry_bind(r, name, &wl_data_device_manager_interface, ver < 3 ? ver : 3);
     else if (!strcmp(iface, "xdg_wm_base")) { wm = wl_registry_bind(r, name, &xdg_wm_base_interface, 1); xdg_wm_base_add_listener(wm, &wm_l, 0); }
 }
 static void reg_remove(void *d, struct wl_registry *r, uint32_t name) { (void)d; (void)r; (void)name; }
@@ -157,6 +206,7 @@ int main(int argc, char **argv) {
     wl_surface_commit(surf);                                /* first commit: no buffer, asks for the configure */
     /* the event loop the way toolkits do it: epoll on the display fd, prepare_read/read_events */
     int ep = epoll_create1(EPOLL_CLOEXEC);
+    ep_global = ep;
     struct epoll_event ee = { .events = EPOLLIN, .data.fd = wl_display_get_fd(dpy) };
     epoll_ctl(ep, EPOLL_CTL_ADD, ee.data.fd, &ee);
     while (!closing) {
@@ -164,9 +214,16 @@ int main(int argc, char **argv) {
         if (wl_display_flush(dpy) < 0 && errno != EAGAIN) break;
         struct epoll_event ev;
         int n = epoll_wait(ep, &ev, 1, -1);
-        if (n > 0) { if (wl_display_read_events(dpy) < 0) break; } else wl_display_cancel_read(dpy);
+        if (n > 0 && ev.data.fd == clip_fd) {
+            wl_display_cancel_read(dpy);
+            char cb[64] = {0};
+            ssize_t got = read(clip_fd, cb, sizeof cb - 1);
+            if (got > 0) { printf("wlclient: clipboard got %s\n", cb); fflush(stdout); }
+            epoll_ctl(ep, EPOLL_CTL_DEL, clip_fd, 0); close(clip_fd);
+        } else if (n > 0) { if (wl_display_read_events(dpy) < 0) break; } else wl_display_cancel_read(dpy);
         if (wl_display_dispatch_pending(dpy) < 0) break;
     }
+    if (!closing) printf("wlclient: loop ended, display error %d\n", wl_display_get_error(dpy));
     printf("wlclient: bye\n"); fflush(stdout);
     return 0;
 }

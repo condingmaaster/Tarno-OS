@@ -16,7 +16,7 @@
 #define WLS_INCAP 16384
 
 enum { O_FREE = 0, O_DISPLAY, O_REGISTRY, O_COMPOSITOR, O_SHM, O_POOL, O_BUFFER, O_SURFACE, O_CALLBACK, O_SEAT,
-       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP, O_POSITIONER, O_POPUP };
+       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP, O_POSITIONER, O_POPUP, O_DSRC, O_DDEV, O_DOFFER };
 
 struct wlpos { int w, h, ax, ay, aw, ah, anchor, gravity, ox, oy; };
 struct wlpool { void *base; size_t size; int fd, refs, destroyed; };
@@ -47,7 +47,7 @@ struct wlc {
     uint8_t *out; size_t outlen, outcap;
     struct wlobj *objs; uint32_t nobjs;
     struct wlsurf *surfs;
-    uint32_t serial, ptr_id, kbd_id, ptr_ver;
+    uint32_t serial, ptr_id, kbd_id, ptr_ver, ddev_id, soff;
 };
 
 static struct wlc wlcl[WLS_MAXCL];
@@ -113,21 +113,24 @@ static void wl_error(struct wlc *c, uint32_t obj, uint32_t code, const char *msg
 }
 
 /* ---------- objects ---------- */
-static struct wlobj *obj_get(struct wlc *c, uint32_t id) { return id && id < c->nobjs && c->objs[id].type ? &c->objs[id] : 0; }
+/* client ids live below 0xF000; ids the server allocates (data offers) start at 0xff000000 and are mapped just above */
+static uint32_t oidx(uint32_t id) { return id >= 0xff000000u ? 0xF000u + (id - 0xff000000u) : id; }
+static struct wlobj *obj_get(struct wlc *c, uint32_t id) { uint32_t i = oidx(id); return id && i < c->nobjs && c->objs[i].type ? &c->objs[i] : 0; }
 static struct wlobj *obj_new(struct wlc *c, uint32_t id, int type, uint32_t ver, void *p) {
-    if (id == 0 || id >= 0x10000) { wl_error(c, 1, 0, "bad new id"); return 0; }
-    if (id >= c->nobjs) {
-        uint32_t n = id + 64;
+    uint32_t i = oidx(id);
+    if (id == 0 || i >= 0x10000 || (id < 0xff000000u && id >= 0xF000u)) { wl_error(c, 1, 0, "bad new id"); return 0; }
+    if (i >= c->nobjs) {
+        uint32_t n = i + 64;
         struct wlobj *q = realloc(c->objs, n * sizeof *q);
         if (!q) return 0;
         memset(q + c->nobjs, 0, (n - c->nobjs) * sizeof *q);
         c->objs = q; c->nobjs = n;
     }
-    if (c->objs[id].type) { wl_error(c, 1, 0, "object id already in use"); return 0; }
-    c->objs[id] = (struct wlobj){ type, ver, p };
-    return &c->objs[id];
+    if (c->objs[i].type) { wl_error(c, 1, 0, "object id already in use"); return 0; }
+    c->objs[i] = (struct wlobj){ type, ver, p };
+    return &c->objs[i];
 }
-static void obj_free(struct wlc *c, uint32_t id) { if (id < c->nobjs) c->objs[id] = (struct wlobj){ 0, 0, 0 }; }
+static void obj_free(struct wlc *c, uint32_t id) { uint32_t i = oidx(id); if (i < c->nobjs) c->objs[i] = (struct wlobj){ 0, 0, 0 }; }
 
 /* ---------- argument parsing ---------- */
 struct msg { const uint8_t *p; size_t len, off; int bad; struct wlc *c; };
@@ -175,6 +178,8 @@ static uint32_t swizzle(uint32_t px) {
 }
 
 static void wls_focus_keyboard(struct wlsurf *s);
+struct wlc;
+static void wls_send_selection(struct wlc *c);
 static void desk_begin_move(int winid);
 static void desk_begin_resize(int winid, int edges);
 static void desk_set_maximized(int winid, int on);
@@ -317,6 +322,7 @@ static void wls_focus_keyboard(struct wlsurf *s) {
         wl_emit(c, c->kbd_id, 1, &o);
         wl_ev(c, c->kbd_id, 4, 5, ++c->serial, wls_mods, 0u, 0u, 0u);
         wl_flush(c);
+        wls_send_selection(c);
     }
 }
 
@@ -414,6 +420,54 @@ static void wls_request_close(struct wlsurf *s) {
     }
     s->close_sent = 1;
     if (s->top_id) { wl_ev(c, s->top_id, 1, 0); wl_flush(c); }
+}
+
+
+/* ---------- clipboard (wl_data_device selection) ---------- */
+struct wlsrc { struct wlc *c; uint32_t id; char *mimes[16]; int nm; };
+static struct wlsrc *wls_sel;
+
+/* an event that carries a file descriptor */
+static void wl_emit_fd(struct wlc *c, uint32_t id, uint32_t op, const struct ob *o, int fd) {
+    wl_flush(c);
+    uint8_t buf[8 + 640];
+    uint32_t h[2] = { id, (uint32_t)((8 + o->n) << 16) | op };
+    memcpy(buf, h, 8); memcpy(buf + 8, o->b, o->n);
+    struct iovec iv = { buf, 8 + o->n };
+    union { char b[CMSG_SPACE(sizeof(int))]; struct cmsghdr al; } cu;
+    memset(&cu, 0, sizeof cu);
+    struct msghdr mh = { 0 };
+    mh.msg_iov = &iv; mh.msg_iovlen = 1; mh.msg_control = cu.b; mh.msg_controllen = sizeof cu.b;
+    struct cmsghdr *cm = CMSG_FIRSTHDR(&mh);
+    cm->cmsg_level = SOL_SOCKET; cm->cmsg_type = SCM_RIGHTS; cm->cmsg_len = CMSG_LEN(sizeof(int));
+    memcpy(CMSG_DATA(cm), &fd, sizeof fd);
+    (void)!sendmsg(c->fd, &mh, MSG_NOSIGNAL);
+}
+
+static void wls_send_selection(struct wlc *c) {
+    if (!c->ddev_id) return;
+    if (!wls_sel) { wl_ev(c, c->ddev_id, 5, 1, 0u); wl_flush(c); return; }
+    if (c->soff >= 0xF00) return;                          /* (server-side ids are handed out in sequence) */
+    uint32_t oid = 0xff000000u + c->soff++;
+    if (!obj_new(c, oid, O_DOFFER, 3, wls_sel)) return;
+    wl_ev(c, c->ddev_id, 0, 1, oid);                       /* data_offer(new object) */
+    for (int i = 0; i < wls_sel->nm; i++) {
+        struct ob e = { .n = 0 };
+        ob_str(&e, wls_sel->mimes[i]);
+        wl_emit(c, oid, 0, &e);                            /* offer(mime) */
+    }
+    wl_ev(c, c->ddev_id, 5, 1, oid);                       /* selection(offer) */
+    wl_flush(c);
+}
+static void wls_selection_to_focus(void) { if (wls_kfocus) wls_send_selection(wls_kfocus->c); }
+
+static void src_free(struct wlsrc *src) {
+    if (wls_sel == src) { wls_sel = 0; wls_selection_to_focus(); }
+    for (int i = 0; i < WLS_MAXCL; i++)                    /* offers made from it can no longer be received */
+        if (wlcl[i].used) for (uint32_t k = 0; k < wlcl[i].nobjs; k++)
+            if (wlcl[i].objs[k].type == O_DOFFER && wlcl[i].objs[k].p == src) wlcl[i].objs[k].p = 0;
+    for (int i = 0; i < src->nm; i++) free(src->mimes[i]);
+    free(src);
 }
 
 /* ---------- request dispatch ---------- */
@@ -569,8 +623,47 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
     case O_OUTPUT:
         if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
         break;
-    case O_DDM:                                           /* create_data_source(id) / get_data_device(id, seat): inert objects */
-        if (op == 0 || op == 1) { uint32_t nid = m_u32(m); if (!m->bad) obj_new(c, nid, O_STUB, 1, 0); }
+    case O_DDM:
+        if (op == 0) {                                    /* create_data_source */
+            uint32_t nid = m_u32(m);
+            struct wlsrc *src = calloc(1, sizeof *src);
+            if (m->bad || !src || !obj_new(c, nid, O_DSRC, o->ver, src)) { free(src); return; }
+            src->c = c; src->id = nid;
+        } else if (op == 1) {                             /* get_data_device */
+            uint32_t nid = m_u32(m);
+            if (!m->bad && obj_new(c, nid, O_DDEV, o->ver, 0)) { c->ddev_id = nid; if (wls_kfocus && wls_kfocus->c == c) wls_send_selection(c); }
+        }
+        break;
+    case O_DSRC: {
+        struct wlsrc *src = o->p;
+        if (op == 0) {                                    /* offer(mime) */
+            char t[128];
+            if (m_str(m, t, sizeof t) >= 0 && src->nm < 16) src->mimes[src->nm++] = strdup(t);
+        } else if (op == 1) { src_free(src); wl_delete_id(c, id); obj_free(c, id); }
+        break; }
+    case O_DDEV:
+        if (op == 1) {                                    /* set_selection(source, serial) */
+            uint32_t sid = m_u32(m);
+            struct wlobj *so = obj_get(c, sid);
+            struct wlsrc *src = so && so->type == O_DSRC ? so->p : 0;
+            if (wls_sel && wls_sel != src) { wl_ev(wls_sel->c, wls_sel->id, 2, 0); wl_flush(wls_sel->c); }   /* cancelled */
+            wls_sel = src;
+            wls_selection_to_focus();
+        } else if (op == 2) { c->ddev_id = 0; wl_delete_id(c, id); obj_free(c, id); }
+        break;
+    case O_DOFFER:
+        if (op == 1) {                                    /* receive(mime, fd): ask the source to write into the pipe */
+            char t[128];
+            int ok = m_str(m, t, sizeof t) >= 0;
+            int fd = m_fd(m);
+            struct wlsrc *src = o->p;
+            if (ok && src && fd >= 0) {
+                struct ob e = { .n = 0 };
+                ob_str(&e, t);
+                wl_emit_fd(src->c, src->id, 1, &e, fd);   /* data_source.send(mime, fd) */
+            }
+            if (fd >= 0) close(fd);
+        } else if (op == 2) obj_free(c, id);
         break;
     case O_SUBCOMP:                                       /* get_subsurface(id, surface, parent): accepted, not composited */
         if (op == 1) { uint32_t nid = m_u32(m); if (!m->bad) obj_new(c, nid, O_STUB, 1, 0); }
@@ -668,7 +761,8 @@ static void client_close(struct wlc *c) {
         surf_free(s);
     }
     for (uint32_t i = 0; i < c->nobjs; i++) {
-        if (c->objs[i].type == O_BUFFER) { struct wlbuf *b = c->objs[i].p; pool_unref(b->pool); free(b); }
+        if (c->objs[i].type == O_DSRC) src_free(c->objs[i].p);
+        else if (c->objs[i].type == O_BUFFER) { struct wlbuf *b = c->objs[i].p; pool_unref(b->pool); free(b); }
         else if (c->objs[i].type == O_POOL) { struct wlpool *p = c->objs[i].p; p->destroyed = 1; pool_unref(p); }
     }
     for (int i = 0; i < c->ninfd; i++) close(c->infd[i]);

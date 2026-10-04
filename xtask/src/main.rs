@@ -709,6 +709,7 @@ fn main() {
                 ("key press and release reach the client", has("wlclient: key 30 down") && has("wlclient: key 30 up")),
                 ("pointer enter + button", has("wlclient: pointer enter") && has("wlclient: button 272 pressed") && has("wlclient: button 272 released")),
                 ("dragging the corner resizes the client, Alt+Up maximizes it", has("wlclient: resized 420x260") && has("maximized")),
+                ("clipboard: copy and paste through the compositor", has("wlclient: clipboard got thos-clip")),
                 ("Alt+F4 asks the client to close", has("wlclient: close requested")),
                 ("client exits, compositor quits cleanly", has("wlclient: bye") && has("desk ok:")),
             ];
