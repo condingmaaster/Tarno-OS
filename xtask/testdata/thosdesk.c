@@ -35,7 +35,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -349,6 +349,38 @@ static void anim_tick(void) {
     for (int i = 0; i < nwin; i++)
         if (wins[i].fade) { wins[i].fade -= wins[i].fade > 36 ? 36 : wins[i].fade; compose(outer_of(&wins[i])); }
 }
+
+/* ---- resizing and maximizing (Wayland windows: the client is asked for the new size) ---- */
+static int rs_id, rs_dir, rs_x0, rs_y0, rs_w0, rs_h0;
+static unsigned long long rs_last, click_ms;
+static int click_id;
+static int resize_dir(struct win *w, int px, int py) {
+    if (!w->wl || !w->deco || w->maxed) return 0;
+    struct rect f = frame_of(w);
+    const int m = 6;
+    int right = px >= f.x1 - m && px < f.x1 + m && py >= w->y && py < f.y1 + m;
+    int bottom = py >= f.y1 - m && py < f.y1 + m && px >= f.x0 && px < f.x1 + m;
+    return (right ? 1 : 0) | (bottom ? 2 : 0);
+}
+static int work_bottom(void) {          /* a panel along the bottom edge is not covered by maximized windows */
+    int b = H;
+    for (int i = 0; i < nwin; i++) if (!wins[i].deco && wins[i].y > H / 2 && wins[i].y < b) b = wins[i].y;
+    return b;
+}
+static void toggle_maximize(struct win *w) {
+    struct rect old = outer_of(w);
+    if (!w->maxed) {
+        w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
+        w->x = BORDER; w->y = TITLE;
+        int nw = W - 2 * BORDER, nh = work_bottom() - TITLE - BORDER;
+        w->maxed = 1; w->cfg_w = nw; w->cfg_h = nh;
+        wls_configure(w->wl, nw, nh, 1);
+    } else {
+        w->maxed = 0; w->x = w->rx; w->y = w->ry; w->cfg_w = w->rw; w->cfg_h = w->rh;
+        wls_configure(w->wl, w->rw, w->rh, 0);
+    }
+    compose(uni(old, outer_of(w)));
+}
 /* the close button under the pointer lights up */
 static void update_hover(void) {
     int nh = -1;
@@ -463,6 +495,8 @@ int main(int argc, char **argv) {
                     int b = 0;
                     while (b < nwin && !wins[b].deco) b++;
                     if (b < nwin && b != nwin - 1) { int ot = wins[nwin - 1].id; raise_win(b); struct win *o = win_by_id(ot); if (o) compose(outer_of(o)); compose(outer_of(&wins[nwin - 1])); }
+                } else if (ev[1] == 0x52 && t >= 0 && wins[t].wl) {      /* Alt+Up: maximize / restore */
+                    toggle_maximize(&wins[t]);
                 } else if (ev[1] == 0x3D && t >= 0) {
                     struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
                     if (wins[t].wl) wls_request_close(wins[t].wl);
@@ -501,7 +535,23 @@ int main(int argc, char **argv) {
             if (mx > W - 1) mx = W - 1;
             if (my > H - 1) my = H - 1;
             int btn = pkt[0] & 1;
+            int started_resize = 0;
             if (btn && !prev_btn) {
+                for (int i = nwin - 1; i >= 0 && !started_resize; i--) {
+                    struct win *w = &wins[i];
+                    int d = resize_dir(w, mx, my);
+                    if (!d) { if (in(frame_of(w), mx, my)) break; continue; }
+                    int ot = wins[nwin - 1].id;
+                    if (i != nwin - 1) raise_win(i);
+                    w = &wins[nwin - 1];
+                    if (ot != w->id) { struct win *o = win_by_id(ot); if (o) compose(outer_of(o)); }
+                    rs_id = w->id; rs_dir = d; rs_x0 = mx; rs_y0 = my; rs_w0 = w->w; rs_h0 = w->h; rs_last = 0;
+                    w->cfg_w = w->w; w->cfg_h = w->h;
+                    compose(outer_of(w));
+                    started_resize = 1;
+                }
+            }
+            if (btn && !prev_btn && !started_resize) {
                 for (int i = nwin - 1; i >= 0; i--) {
                     struct win *w = &wins[i];
                     if (!in(frame_of(w), mx, my)) continue;
@@ -523,16 +573,35 @@ int main(int argc, char **argv) {
                             struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - w->x), (uint32_t)(my - w->y), 1, 0 };
                             (void)!write(w->fd, &pm, sizeof pm);
                         }
-                        if (w->deco && my < w->y) { drag = 1; dx0 = mx - w->x; dy0 = my - w->y; }
+                        if (w->deco && my < w->y) {
+                            unsigned long long tnow = now_ms();
+                            if (w->wl && click_id == w->id && tnow - click_ms < 400) { toggle_maximize(w); click_id = 0; }
+                            else { click_id = w->id; click_ms = tnow; if (!w->maxed) { drag = 1; dx0 = mx - w->x; dy0 = my - w->y; } }
+                        }
                         compose(outer_of(w));
                     }
                     break;
                 }
             }
             if (!btn) drag = 0;
+            if (rs_id) {
+                struct win *w = win_by_id(rs_id);
+                if (!w || !w->wl) rs_id = 0;
+                else {
+                    int nw = rs_w0 + ((rs_dir & 1) ? mx - rs_x0 : 0), nh = rs_h0 + ((rs_dir & 2) ? my - rs_y0 : 0);
+                    if (nw < 160) nw = 160;
+                    if (nh < 100) nh = 100;
+                    unsigned long long tnow = now_ms();
+                    if ((nw != w->cfg_w || nh != w->cfg_h) && (tnow - rs_last >= 30 || !btn)) {
+                        w->cfg_w = nw; w->cfg_h = nh; rs_last = tnow;
+                        wls_configure(w->wl, nw, nh, 0);
+                    }
+                    if (!btn) rs_id = 0;
+                }
+            }
             int pb = prev_btn;
             prev_btn = btn;
-            wls_pointer(mx, my, btn, pb);
+            if (!rs_id && !started_resize) wls_pointer(mx, my, btn, pb);
             update_hover();
             if (drag && nwin) {
                 struct win *w = &wins[nwin - 1];

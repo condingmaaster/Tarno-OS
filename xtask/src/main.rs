@@ -606,6 +606,17 @@ fn main() {
                 std::thread::sleep(ms(300));
                 mon(&tsock, "mouse_button 0");
                 wait_for(&tlog, "wlclient: button 272 released", 20);
+                // resize by dragging the bottom-right corner (window content 100,80 320x200): +100,+60
+                walk(419 - 250, 279 - 180);
+                std::thread::sleep(ms(300));
+                mon(&tsock, "mouse_button 1");
+                walk(100, 60);
+                std::thread::sleep(ms(300));
+                mon(&tsock, "mouse_button 0");
+                wait_for(&tlog, "wlclient: resized 420x260", 20);
+                // Alt+Up maximizes
+                mon(&tsock, "sendkey alt-up");
+                wait_for(&tlog, "maximized", 20);
                 // the compositor's own shortcut asks the client to close
                 mon(&tsock, "sendkey alt-f4");
                 wait_for(&tlog, "wlclient: bye", 30);
@@ -634,6 +645,7 @@ fn main() {
                 ("pixels reach the screen (marker, background, titlebar)", drew),
                 ("key press and release reach the client", has("wlclient: key 30 down") && has("wlclient: key 30 up")),
                 ("pointer enter + button", has("wlclient: pointer enter") && has("wlclient: button 272 pressed") && has("wlclient: button 272 released")),
+                ("dragging the corner resizes the client, Alt+Up maximizes it", has("wlclient: resized 420x260") && has("maximized")),
                 ("Alt+F4 asks the client to close", has("wlclient: close requested")),
                 ("client exits, compositor quits cleanly", has("wlclient: bye") && has("desk ok:")),
             ];

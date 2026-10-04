@@ -358,6 +358,20 @@ static void wls_pointer(int mx_, int my_, int btn, int prev_btn) {
     wl_flush(c);
 }
 
+/* ask the client to use a new size (and tell it whether it is maximized) */
+static void wls_configure(struct wlsurf *s, int w, int h, int maximized) {
+    struct wlc *c = s->c;
+    if (!s->top_id || !s->xdg_id) return;
+    struct ob e = { .n = 0 };
+    ob_u32(&e, (uint32_t)w); ob_u32(&e, (uint32_t)h);
+    ob_u32(&e, maximized ? 8 : 4);                    /* states array: activated [, maximized] */
+    ob_u32(&e, 4);
+    if (maximized) ob_u32(&e, 1);
+    wl_emit(c, s->top_id, 0, &e);
+    wl_ev(c, s->xdg_id, 0, 1, ++c->serial);
+    wl_flush(c);
+}
+
 static void wls_request_close(struct wlsurf *s) {
     struct wlc *c = s->c;
     if (s->close_sent) {                                  /* the client ignored the first request: hang up */

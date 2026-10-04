@@ -12,8 +12,7 @@
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
 
-#define W 320
-#define H 200
+static int W = 320, H = 200, want_w = 320, want_h = 200, maxstate;
 
 static struct wl_compositor *comp;
 static struct wl_shm *shm;
@@ -27,12 +26,26 @@ static uint32_t *px;
 static int configured, closing, frames, phase, nframes_max = 6;
 static struct wl_callback *frame_cb;
 
+static void make_buffer(int w, int h) {
+    if (buf) wl_buffer_destroy(buf);
+    if (px) munmap(px, W * H * 4);
+    W = w; H = h;
+    int fd = memfd_create("wlclient-pool", MFD_CLOEXEC);
+    if (fd < 0 || ftruncate(fd, W * H * 4) != 0) { printf("wlclient FAIL: memfd\n"); exit(1); }
+    px = mmap(0, W * H * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (px == MAP_FAILED) { printf("wlclient FAIL: mmap\n"); exit(1); }
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, W * H * 4);
+    buf = wl_shm_pool_create_buffer(pool, 0, W, H, W * 4, WL_SHM_FORMAT_XRGB8888);
+    wl_shm_pool_destroy(pool);
+    close(fd);
+}
+
 static void draw(void) {
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
             uint32_t c = 0x00203080;                         /* blue background */
             if (x < 40 && y < 40) c = 0x00C82828;              /* red marker, top-left */
-            if (y >= 180) c = (x / 10 == phase % 32) ? 0x00FFFF00 : 0x00101010;   /* moving bar */
+            if (y >= H - 20) c = (x / 10 == phase % (W / 10)) ? 0x00FFFF00 : 0x00101010;   /* moving bar */
             px[y * W + x] = c;
         }
 }
@@ -40,6 +53,7 @@ static void draw(void) {
 static void frame_done(void *d, struct wl_callback *cb, uint32_t t);
 static const struct wl_callback_listener frame_l = { frame_done };
 static void next_frame(void) {
+    if (want_w != W || want_h != H) { make_buffer(want_w, want_h); printf("wlclient: resized %dx%d%s\n", W, H, maxstate ? " maximized" : ""); fflush(stdout); }
     frame_cb = wl_surface_frame(surf);
     wl_callback_add_listener(frame_cb, &frame_l, 0);
     draw();
@@ -65,7 +79,13 @@ static void xs_configure(void *d, struct xdg_surface *s, uint32_t serial) {
     }
 }
 static const struct xdg_surface_listener xs_l = { xs_configure };
-static void top_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h, struct wl_array *st) { (void)d; (void)t; (void)w; (void)h; (void)st; }
+static void top_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h, struct wl_array *st) {
+    (void)d; (void)t;
+    maxstate = 0;
+    uint32_t *e;
+    wl_array_for_each(e, st) if (*e == XDG_TOPLEVEL_STATE_MAXIMIZED) maxstate = 1;
+    if (w > 0 && h > 0) { want_w = w; want_h = h; }
+}
 static void top_close(void *d, struct xdg_toplevel *t) { (void)d; (void)t; closing = 1; printf("wlclient: close requested\n"); fflush(stdout); }
 static const struct xdg_toplevel_listener top_l = { top_configure, top_close };
 static void wm_ping(void *d, struct xdg_wm_base *w, uint32_t s) { (void)d; xdg_wm_base_pong(w, s); }
@@ -126,14 +146,7 @@ int main(int argc, char **argv) {
     if (!comp || !shm || !wm) { printf("wlclient FAIL: missing globals comp=%p shm=%p wm=%p\n", (void *)comp, (void *)shm, (void *)wm); return 1; }
     printf("wlclient: globals ok\n"); fflush(stdout);
 
-    int fd = memfd_create("wlclient-pool", MFD_CLOEXEC);
-    if (fd < 0 || ftruncate(fd, W * H * 4) != 0) { printf("wlclient FAIL: memfd\n"); return 1; }
-    px = mmap(0, W * H * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (px == MAP_FAILED) { printf("wlclient FAIL: mmap\n"); return 1; }
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, W * H * 4);
-    buf = wl_shm_pool_create_buffer(pool, 0, W, H, W * 4, WL_SHM_FORMAT_XRGB8888);
-    wl_shm_pool_destroy(pool);
-    close(fd);
+    make_buffer(W, H);
 
     surf = wl_compositor_create_surface(comp);
     xs = xdg_wm_base_get_xdg_surface(wm, surf);
