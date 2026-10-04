@@ -1,4 +1,4 @@
-# Schichtbericht — Nacht auf 2026-10-04 (ab 21:45, Stand ca. 05:00)
+# Schichtbericht — Nacht auf 2026-10-04 (ab 21:45, Stand 07:30)
 
 ## Kurzfassung
 
@@ -6,7 +6,7 @@ Heute stand "viel Fortschritt mit kurzen, effizienten Tests" im Vordergrund. Erg
 Userspace-Compositor, Terminal-Fenster mit echter BusyBox-Shell auf einem Pseudo-Terminal, Panel, deutsche Tastatur (ä ö ü ß €), echte Win32-Programme als Fenster
 neben Linux-Clients — und es läuft **ein Dutzend unveränderter Debian-/Rust-/mingw-Programme** (Python 3.13, Perl, git, gawk, make, tar, jq, bc, vim, Rust-`std`,
 Windows-Konsolenprogramme). Zwei alte, hartnäckige Fehler sind **gefunden und behoben** (B17 = Absturz beim `exit`, B15 = AHCI-Hänger). Die komplette Test-Suite
-(44 Tests, parallel in ca. 18 min) ist grün.
+(47 Tests, parallel in ca. 20 min) lief zuletzt grün; die Abschlussläufe stehen unten.
 
 Zum Ausprobieren: `docs/thos/desktop-howto.md` (`cargo xtask bios-run`, dann `desktop`).
 
@@ -31,6 +31,8 @@ Zum Ausprobieren: `docs/thos/desktop-howto.md` (`cargo xtask bios-run`, dann `de
 
 **Netz**: Loopback (127.0.0.0/8 + eigene Adresse), **e1000-Treiber** (82540EM und 82574L/e1000e, getestet in QEMU), DNS/Ping/wget wie zuvor.
 
+**Speicher & Dateisystem**: Sektor-Cache + ein Flush pro Operation (Datei anlegen 215 ms -> 29 ms, `real4-test` 128 s -> 28 s), Verzeichnisse über 12 Blöcke, Backup-Superblöcke träge; der Kernel-Heap lief bei jedem `exec` voll (ELF-Puffer wurde nie freigegeben).
+
 **Härtung / Zuverlässigkeit**: ASLR (PIE, Interpreter, mmap, Heap, Stack), Speichererschöpfung endet in `ENOMEM` statt Kernel-Panic (und der Adressraum wird beim Exit sofort frei),
 Dateideskriptoren schließen sofort beim Prozessende, Register werden vor dem Start eines Programms genullt (kein Kernel-Leck), Kernel-Heap 64 MiB.
 
@@ -45,6 +47,8 @@ Dateideskriptoren schließen sofort beim Prozessende, Register werden vor dem St
 | Hauptstack wuchs nie (64 KiB fest) | — | 8 MiB per Seitenfehler |
 | `read_file` verdoppelte den Puffer bei 7-MiB-Datei | Kapazität = Dateigröße, letzter Block darüber hinaus | volle Blöcke reservieren |
 | `git`: "dubious ownership" | `stat` meldete uid 0 | Eigentümer/Modus aus dem Inode |
+| **Exec-Gate-Deadlock**: zwei gleichzeitig startende Programme (jede Pipeline) hängten beide CPUs | Spinlock um das blockierende Warten auf den Security Service | schlafende Sperre; Diagnose per `*-regs.txt` |
+| **Heap-Leck bei jedem exec** (Panik "heap OOM" nach ~30 BusyBox-Starts) | `execve` kehrt nie zurück, die ELF-Datei wurde nie freigegeben | von Hand freigegeben |
 | `shortcuts-test`/`desk-test` rannten gegen Laufzeit-Races | Test-Annahmen (Login-Prompt sofort, Fensterreihenfolge) | Tests gewartet / sequenziert |
 | glibc-`ioctl()` schneidet Adressen auf 32 Bit | `int`-Rückgabe | `syscall()` (Compositor) |
 
