@@ -197,6 +197,20 @@ fn main() {
                 exit(1);
             }
         }
+        "oom-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "oom", "oomtest; oomtest; echo oom-after-$((11))", "oom-after-11", 200);
+            let oks = out.lines().filter(|l| l.contains("oom ok:")).count();
+            if oks == 2 && !out.contains("PANIC") {
+                println!("oom-test PASSED: exhausting memory ends in ENOMEM (twice, so nothing leaked) instead of a kernel panic");
+            } else {
+                for l in out.lines().filter(|l| l.contains("oom") || l.contains("PANIC") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("oom-test FAILED ({oks} of 2 runs ok)");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -873,6 +887,10 @@ fn disk_image() -> PathBuf {
             if Command::new("rustc").args(["-O", "-o", rst.to_str().unwrap(), root.join("xtask/testdata/rstest.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rstest", rst.to_str().unwrap()), img.to_str().unwrap()]));
                 add_dynamic_program(&img, "/lib/x86_64-linux-gnu/libgcc_s.so.1", &mut dirs);
+            }
+            let oomt = root.join("target/oomtest");
+            if Command::new("gcc").args(["-O1", "-o", oomt.to_str().unwrap(), root.join("xtask/testdata/oomtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} oomtest", oomt.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let lot = root.join("target/lotest");
             if Command::new("gcc").args(["-O1", "-o", lot.to_str().unwrap(), root.join("xtask/testdata/lotest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -4130,7 +4148,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

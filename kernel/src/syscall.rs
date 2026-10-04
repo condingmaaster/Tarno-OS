@@ -1922,11 +1922,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         // exit_group ends the whole process (the other threads notice and follow).
         SYS_EXIT_GROUP => {
             process::thread_exit_cleanup();
+            let last = sched::current().task().map_or(true, |t| t.thread_leaving());
+            if last {
+                process::free_address_space_at_exit(); // before the parent can see the exit
+            }
             process::set_exit_status(a1 as i32);
             USER_EXITS.fetch_add(1, Ordering::Release);
-            if let Some(t) = sched::current().task() {
-                t.thread_leaving();
-            }
             sched::exit()
         }
         // exit ends only this thread; the last one to leave ends the process.
@@ -1934,6 +1935,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             let last = sched::current().task().map_or(true, |t| t.thread_leaving());
             process::thread_exit_cleanup();
             if last {
+                process::free_address_space_at_exit();
                 process::set_exit_status(a1 as i32);
                 USER_EXITS.fetch_add(1, Ordering::Release);
             }
