@@ -27,3 +27,16 @@ BIOS-Übergabe, Reset, Port-Reset, Steuerübertragungen über den asynchronen Ze
 `ehci-test` (QEMU, PS/2-Controller abgeschaltet): Anmeldung und Tippen laufen allein über die USB-Tastatur — **bestanden**.
 Der Weg über einen **Hub** (so hängt am Acer alles: interner Rate-Matching-Hub 8087:0020) ist implementiert, aber **ungetestet**, weil
 QEMUs `usb-hub` nur Fullspeed kann und nicht an einen EHCI-Port passt. Erster echter Test: am Acer.
+
+## tg3-Treiber für den BCM57780 (kernel/src/tg3.rs, 2026-10-04)
+Gigabit-Ethernet, gepollt (keine Interrupts), ein Sende- und ein Empfangsring, 48 Empfangspuffer, keine Offloads.
+Aufbau und Registerfolge nach `tg3.c` aus Linux (GPL-2.0), auf diesen einen Chip (ASIC-Rev. 57780, CPMU-Teil) reduziert; alle Registeradressen
+wurden mit `tg3.h` abgeglichen. MAC-Adresse aus dem SRAM-Postfach des Bootcodes (Signatur 0x484B), sonst aus den MAC-Registern.
+Link: Autonegotiation 10/100/1000 über MDIO (PHY-Adresse 1), alle 250 ms geprüft; MAC-Modus/Duplex folgen dem Ergebnis.
+`net::init` probiert nacheinander virtio-net, e1000, tg3 — in QEMU ändert sich nichts (`net-test`, `e1000-test` grün).
+
+**Ungetestet auf echter Hardware** (QEMU emuliert den Chip nicht). Die PCI-Suche (`pci::find_id`) läuft jetzt über die Busse 0–7, weil der
+Chip hinter einem PCIe-Root-Port auf Bus 2 sitzt (setzt voraus, dass das BIOS die Bridge-Busnummern vergeben hat).
+Erster Test am Acer: `cargo xtask bios-image --interactive` auf einen Stick, Kabel einstecken, im Boot-Log nach
+`THOS: net nic          tg3 ...`, `THOS: tg3 link        up 1000 Mb/s full duplex` und dem Ping auf das Gateway schauen.
+Wenn nichts erscheint: Meldung der Form `THOS: net              tg3: ...` nennt den Grund (z. B. "device not responding", "buffer manager did not start").

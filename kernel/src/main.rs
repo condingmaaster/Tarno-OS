@@ -72,6 +72,7 @@ mod signal;
 mod serial;
 mod smp;
 mod syscall;
+mod tg3;
 mod timer;
 mod unix;
 mod usercopy;

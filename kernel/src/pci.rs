@@ -99,19 +99,23 @@ pub fn find_class(class: u8, subclass: u8, progif: u8) -> Option<Location> {
     None
 }
 
-/// Scan bus 0 for the first device with this vendor/device id.
+/// Scan the first buses (bridges forward config cycles to the buses the BIOS numbered) for the first device
+/// with this vendor/device id. Bus 0 comes first, so integrated devices are found as before; the Acer's
+/// Ethernet chip sits behind a PCIe root port on bus 2.
 pub fn find_id(vendor: u16, device: u16) -> Option<Location> {
-    for dev in 0..32u8 {
-        for func in 0..8u8 {
-            let loc = Location { bus: 0, dev, func };
-            if read16(loc, 0x00) == 0xFFFF {
-                if func == 0 {
-                    break;
+    for bus in 0..8u8 {
+        for dev in 0..32u8 {
+            for func in 0..8u8 {
+                let loc = Location { bus, dev, func };
+                if read16(loc, 0x00) == 0xFFFF {
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
                 }
-                continue;
-            }
-            if read16(loc, 0x00) == vendor && read16(loc, 0x02) == device {
-                return Some(loc);
+                if read16(loc, 0x00) == vendor && read16(loc, 0x02) == device {
+                    return Some(loc);
+                }
             }
         }
     }

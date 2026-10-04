@@ -18,12 +18,14 @@ use spin::Mutex;
 
 use crate::kprintln;
 use crate::e1000::E1000;
+use crate::tg3::Tg3;
 use crate::virtio_net::{VirtioNet, MTU};
 
 /// The NIC drivers behind one interface.
 enum Driver {
     Virtio(VirtioNet),
     E1000(E1000),
+    Tg3(Tg3),
 }
 
 impl Driver {
@@ -31,36 +33,42 @@ impl Driver {
         match self {
             Driver::Virtio(d) => d.poll_rx(),
             Driver::E1000(d) => d.poll_rx(),
+            Driver::Tg3(d) => d.poll_rx(),
         }
     }
     fn pop_rx(&mut self) -> Option<Vec<u8>> {
         match self {
             Driver::Virtio(d) => d.rx_queue.pop_front(),
             Driver::E1000(d) => d.rx_queue.pop_front(),
+            Driver::Tg3(d) => d.rx_queue.pop_front(),
         }
     }
     fn tx_ready(&mut self) -> bool {
         match self {
             Driver::Virtio(d) => d.tx_ready(),
             Driver::E1000(d) => d.tx_ready(),
+            Driver::Tg3(d) => d.tx_ready(),
         }
     }
     fn transmit<F: FnOnce(&mut [u8])>(&mut self, len: usize, fill: F) -> bool {
         match self {
             Driver::Virtio(d) => d.transmit(len, fill),
             Driver::E1000(d) => d.transmit(len, fill),
+            Driver::Tg3(d) => d.transmit(len, fill),
         }
     }
     fn mac(&self) -> [u8; 6] {
         match self {
             Driver::Virtio(d) => d.mac,
             Driver::E1000(d) => d.mac,
+            Driver::Tg3(d) => d.mac,
         }
     }
     fn name(&self) -> &'static str {
         match self {
             Driver::Virtio(_) => "virtio-net",
             Driver::E1000(_) => "e1000",
+            Driver::Tg3(_) => "tg3",
         }
     }
 }
@@ -270,7 +278,10 @@ pub fn local_ip() -> [u8; 4] {
 pub fn init() -> Result<(), &'static str> {
     let drv = match VirtioNet::probe() {
         Ok(d) => Driver::Virtio(d),
-        Err(_) => Driver::E1000(E1000::probe()?),
+        Err(_) => match E1000::probe() {
+            Ok(d) => Driver::E1000(d),
+            Err(_) => Driver::Tg3(Tg3::probe()?),
+        },
     };
     let mac = drv.mac();
     let mut dev = Nic { drv, lo: alloc::collections::VecDeque::new(), mac };
