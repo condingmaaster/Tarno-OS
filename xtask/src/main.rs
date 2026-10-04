@@ -491,6 +491,46 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-vim-test" => {
+            // an interactive full-screen editor inside the terminal window: raw tty mode, cursor addressing, scrolling
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/deskvim-serial.log");
+            let sock = root.join("target/deskvim-mon.sock");
+            let _ = std::fs::remove_file(&log);
+            let _ = std::fs::remove_file(&sock);
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "term ready", 200) {
+                    return;
+                }
+                std::thread::sleep(ms(3000));
+                type_line(&tsock, "/usr/bin/vim.tiny -u NONE /tmp/vt.txt");
+                std::thread::sleep(ms(5000));
+                mon(&tsock, "sendkey i");
+                type_raw(&tsock, "hellovim");
+                mon(&tsock, "sendkey esc");
+                std::thread::sleep(ms(500));
+                type_line(&tsock, ":wq");
+                std::thread::sleep(ms(2500));
+                type_line(&tsock, "cat /tmp/vt.txt");
+                wait_for(&tlog, "term-line: hellovim", 20);
+                std::thread::sleep(ms(500));
+                type_line(&tsock, "exit");
+            });
+            let out = boot_and_run(&img, "deskvim", "/busybox sh /desk-vim.sh", "term done", 180);
+            let hits = out.lines().filter(|l| l.trim() == "term-line: hellovim").count();
+            if hits >= 1 {
+                println!("desk-vim-test PASSED: vim.tiny ran full-screen in the terminal window, text typed in insert mode was saved");
+            } else {
+                for l in out.lines().filter(|l| l.contains("term") || l.contains("vim") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("desk-vim-test FAILED");
+                exit(1);
+            }
+        }
         "thr-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "thr", "thrtest; echo thr-after-$((11))", "thr-after-11", 120);
@@ -908,6 +948,11 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-keys.sh", root.join("xtask/testdata/desk-keys.sh").to_str().unwrap()), img.to_str().unwrap()]));
             copy_tree_into_image(&img, "/usr/lib/x86_64-linux-gnu/perl-base", "/usr/lib/x86_64-linux-gnu/perl-base");
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real5.sh", root.join("xtask/testdata/real5.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            for d in ["usr", "usr/share", "usr/share/terminfo", "usr/share/terminfo/l"] {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+            }
+            run(Command::new("debugfs").args(["-w", "-R", "write /usr/share/terminfo/l/linux usr/share/terminfo/l/linux", img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-vim.sh", root.join("xtask/testdata/desk-vim.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -3881,7 +3926,7 @@ fn mon(sock: &Path, cmd: &str) {
 }
 
 /// Type `text` (ascii `a-z0-9` only — QEMU `sendkey` names) then Enter.
-fn type_line(sock: &Path, text: &str) {
+fn type_raw(sock: &Path, text: &str) {
     for c in text.chars() {
         // QEMU `sendkey` wants key *names*, not glyphs, for non-alphanumerics.
         // Key *names* / chords for QEMU `sendkey`. The kernel console maps
@@ -3918,6 +3963,11 @@ fn type_line(sock: &Path, text: &str) {
         };
         mon(sock, &format!("sendkey {key}"));
     }
+}
+
+/// [`type_raw`] followed by Enter.
+fn type_line(sock: &Path, text: &str) {
+    type_raw(sock, text);
     mon(sock, "sendkey ret");
 }
 
@@ -4220,7 +4270,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
