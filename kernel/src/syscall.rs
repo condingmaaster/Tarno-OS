@@ -1811,10 +1811,16 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_UNAME => match usercopy::slice_mut(a1, 6 * 65) {
             Ok(b) => {
                 b.fill(0);
+                // sysname, nodename, release, version, machine, domainname (65 bytes each). THOS reports
+                // itself as a Linux 6.1-compatible kernel — that is the ABI it implements.
+                for (i, v) in ["Linux", "thos", "6.1.0-thos", "#1 THOS", "x86_64", "(none)"].iter().enumerate() {
+                    b[i * 65..i * 65 + v.len()].copy_from_slice(v.as_bytes());
+                }
                 0
             }
             Err(e) => e,
         },
+        221 | 326 => ENOSYS, // fadvise64 is only a hint; copy_file_range: callers fall back to read/write
 
         SYS_FORK => process::fork(frame),
 

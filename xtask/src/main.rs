@@ -156,6 +156,27 @@ fn main() {
                 exit(1);
             }
         }
+        "real5-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "real5", "/usr/bin/bash /real5.sh", "real5-done", 250);
+            let want = [
+                "sort=a a b c", "uniq=3", "head=b,a,", "tail=a", "cut=y", "sha=ba7816bf8f01cfea", "md5=90015098", "seq=1 2 3 4 5", "expr=42",
+                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi",
+            ];
+            let mut missing: Vec<&str> = want.iter().copied().filter(|w| !out.lines().any(|l| l.trim() == *w)).collect();
+            if !out.lines().any(|l| l.trim().starts_with("find=") && l.contains("./in.txt") && l.contains("./moved.txt") && l.contains("./empty")) {
+                missing.push("find=...");
+            }
+            if missing.is_empty() {
+                println!("real5-test PASSED: {} coreutils/findutils/diffutils behave (sort, cut, sha256sum, find, xargs, cp, mv, stat, date, ...)", want.len() + 1);
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS:")).take(60) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("real5-test FAILED, missing: {missing:?}");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -799,10 +820,11 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real4.sh", root.join("xtask/testdata/real4.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-keys.sh", root.join("xtask/testdata/desk-keys.sh").to_str().unwrap()), img.to_str().unwrap()]));
             copy_tree_into_image(&img, "/usr/lib/x86_64-linux-gnu/perl-base", "/usr/lib/x86_64-linux-gnu/perl-base");
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real5.sh", root.join("xtask/testdata/real5.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git"] {
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
@@ -4059,7 +4081,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
