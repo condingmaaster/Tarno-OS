@@ -294,8 +294,11 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
     }
     let deadline = (timeout_ns >= 0).then(|| crate::timer::monotonic_ns().saturating_add(timeout_ns as u64));
     let task = match sched::current().task() { Some(t) => t, None => return EBADF };
+    let _listening = crate::wait::Pollers::enter();
     loop {
+        let gen = crate::wait::POLL_GEN.load(core::sync::atomic::Ordering::Acquire);
         let mut ready = 0i64;
+        let mut wake_at: Option<u64> = None;
         for i in 0..n {
             let base = fds + (i * 8) as u64;
             let Ok(fd) = usercopy::read_u32(base) else { return EFAULT };
@@ -305,7 +308,12 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
                 0
             } else {
                 match task.fd_get(fd as i32) {
-                    Some(f) => f.poll_mask(want | POLLIN * 0) & (want | POLLERR | crate::file::POLLHUP),
+                    Some(f) => {
+                        if let Some(t) = f.next_wake_ns() {
+                            wake_at = Some(wake_at.map_or(t, |w| w.min(t)));
+                        }
+                        f.poll_mask(want | POLLIN * 0) & (want | POLLERR | crate::file::POLLHUP)
+                    }
                     None => 0x20, // POLLNVAL
                 }
             };
@@ -324,7 +332,7 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
             Some(d) if crate::timer::monotonic_ns() >= d => return 0,
             _ => {}
         }
-        crate::timer::sleep_ns(2_000_000);
+        crate::eventpoll::poll_block(gen, deadline, wake_at);
     }
 }
 
@@ -548,7 +556,10 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
     };
     let task = match sched::current().task() { Some(t) => t, None => return EBADF };
     let deadline = (timeout_ns >= 0).then(|| crate::timer::monotonic_ns().saturating_add(timeout_ns as u64));
+    let _listening = crate::wait::Pollers::enter();
     loop {
+        let gen = crate::wait::POLL_GEN.load(core::sync::atomic::Ordering::Acquire);
+        let mut wake_at: Option<u64> = None;
         let mut got_r = alloc::vec![0u64; words];
         let mut got_w = alloc::vec![0u64; words];
         let mut ready = 0i64;
@@ -559,6 +570,9 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
                 continue;
             }
             let Some(f) = task.fd_get(fd as i32) else { return EBADF };
+            if let Some(t) = f.next_wake_ns() {
+                wake_at = Some(wake_at.map_or(t, |w| w.min(t)));
+            }
             let ev = f.poll_mask((if r_on { POLLIN } else { 0 }) | (if w_on { POLLOUT } else { 0 }));
             if r_on && ev & (POLLIN | crate::file::POLLHUP | POLLERR) != 0 {
                 got_r[w] |= b;
@@ -586,7 +600,7 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
         if signal::interrupted() {
             return -4;
         }
-        crate::timer::sleep_ns(2_000_000);
+        crate::eventpoll::poll_block(gen, deadline, wake_at);
     }
 }
 

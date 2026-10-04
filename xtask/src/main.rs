@@ -444,6 +444,23 @@ fn main() {
                 exit(1);
             }
         }
+        "event-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "event", "evtest; echo ev-after-$((11))", "ev-after-11", 120);
+            let ok = out.lines().find(|l| l.contains("ev ok:")).map(str::trim);
+            if let (Some(l), true) = (ok, !out.contains("page fault")) {
+                println!("event-test PASSED: {l}");
+                for l in out.lines().filter(|l| l.contains("wake-up latency")) {
+                    println!("  {}", l.trim());
+                }
+            } else {
+                for l in out.lines().filter(|l| l.contains("ev") || l.contains("unhandled") || l.contains("fault")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("event-test FAILED");
+                exit(1);
+            }
+        }
         "ipc-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "ipc", "ipctest; echo ipc-after-$((11))", "ipc-after-11", 90);
@@ -1142,6 +1159,15 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false);
             if ipc_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let evt = root.join("target/evtest");
+            let evt_ok = Command::new("gcc")
+                .args(["-O1", "-o", evt.to_str().unwrap(), root.join("xtask/testdata/evtest.c").to_str().unwrap()])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if evt_ok {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} evtest", evt.to_str().unwrap()), img.to_str().unwrap()]));
             }
             // Wayland: a stock `wayland-info`, our libwayland-client test program, the keymap and the script
             {
@@ -4453,7 +4479,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "wayland-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "wayland-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

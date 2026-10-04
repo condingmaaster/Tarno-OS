@@ -91,6 +91,23 @@ const SYS_UTIMENSAT: u64 = 280;
 const THOS_BASE: u64 = 0x5448_0000; // 'T' 'H'
 const SYS_THOS_ELEVATE: u64 = THOS_BASE;
 const SYS_POLL: u64 = 7;
+const SYS_EPOLL_CREATE: u64 = 213;
+const SYS_EPOLL_WAIT: u64 = 232;
+const SYS_EPOLL_CTL: u64 = 233;
+const SYS_EPOLL_PWAIT: u64 = 281;
+const SYS_EPOLL_CREATE1: u64 = 291;
+const SYS_EPOLL_PWAIT2: u64 = 441;
+const SYS_EVENTFD: u64 = 284;
+const SYS_EVENTFD2: u64 = 290;
+const SYS_TIMERFD_CREATE: u64 = 283;
+const SYS_TIMERFD_SETTIME: u64 = 286;
+const SYS_TIMERFD_GETTIME: u64 = 287;
+const SYS_SIGNALFD: u64 = 282;
+const SYS_SIGNALFD4: u64 = 289;
+const SYS_INOTIFY_INIT: u64 = 253;
+const SYS_INOTIFY_ADD_WATCH: u64 = 254;
+const SYS_INOTIFY_RM_WATCH: u64 = 255;
+const SYS_INOTIFY_INIT1: u64 = 294;
 const SYS_DUP: u64 = 32;
 const SYS_DUP2: u64 = 33;
 const SYS_DUP3: u64 = 292;
@@ -1737,6 +1754,35 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
 
         SYS_WAITID => ECHILD,
 
+        SYS_EPOLL_CREATE => crate::eventpoll::sys_epoll_create(0),
+        SYS_EPOLL_CREATE1 => crate::eventpoll::sys_epoll_create(a1),
+        SYS_EPOLL_CTL => crate::eventpoll::sys_epoll_ctl(a1, a2, a3, a4),
+        SYS_EPOLL_WAIT | SYS_EPOLL_PWAIT => crate::eventpoll::sys_epoll_wait(a1, a2, a3, if (a4 as i32) < 0 { -1 } else { (a4 as i32 as i64) * 1_000_000 }),
+        SYS_EPOLL_PWAIT2 => {
+            let ns = if a4 == 0 {
+                -1
+            } else {
+                match (usercopy::read_u64(a4), usercopy::read_u64(a4.wrapping_add(8))) {
+                    (Ok(s), Ok(n)) => (s as i64).saturating_mul(1_000_000_000).saturating_add(n as i64),
+                    _ => {
+                        frame.rax = EFAULT as u64;
+                        return;
+                    }
+                }
+            };
+            crate::eventpoll::sys_epoll_wait(a1, a2, a3, ns)
+        }
+        SYS_EVENTFD => crate::eventpoll::sys_eventfd(a1, 0),
+        SYS_EVENTFD2 => crate::eventpoll::sys_eventfd(a1, a2),
+        SYS_TIMERFD_CREATE => crate::eventpoll::sys_timerfd_create(a1, a2),
+        SYS_TIMERFD_SETTIME => crate::eventpoll::sys_timerfd_settime(a1, a2, a3, a4),
+        SYS_TIMERFD_GETTIME => crate::eventpoll::sys_timerfd_gettime(a1, a2),
+        SYS_SIGNALFD => crate::eventpoll::sys_signalfd(a1, a2, a3, 0),
+        SYS_SIGNALFD4 => crate::eventpoll::sys_signalfd(a1, a2, a3, a4),
+        SYS_INOTIFY_INIT => crate::eventpoll::sys_inotify_init(0),
+        SYS_INOTIFY_INIT1 => crate::eventpoll::sys_inotify_init(a1),
+        SYS_INOTIFY_ADD_WATCH => crate::eventpoll::sys_inotify_add_watch(a1),
+        SYS_INOTIFY_RM_WATCH => 0,
         SYS_POLL => sock_sys::sys_poll(a1, a2, if (a3 as i32) < 0 { -1 } else { (a3 as i64) * 1_000_000 }),
         SYS_PPOLL => {
             // a3 = *timespec or NULL (forever)

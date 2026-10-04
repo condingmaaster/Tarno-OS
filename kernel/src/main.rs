@@ -88,6 +88,7 @@ mod ps2;
 mod random;
 mod rtc;
 mod ehci;
+mod eventpoll;
 mod xhci;
 mod wait;
 

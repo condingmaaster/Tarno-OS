@@ -99,6 +99,21 @@ pub trait FileOps: Send + Sync {
     fn is_nonblock(&self) -> bool {
         false
     }
+    /// For `poll`/`epoll`: the monotonic time (ns) at which this object becomes ready by itself (a `timerfd`),
+    /// so a poller sleeping on it knows when to look again.
+    fn next_wake_ns(&self) -> Option<u64> {
+        None
+    }
+    fn as_epoll(&self) -> Option<&crate::eventpoll::Epoll> {
+        None
+    }
+    fn as_timerfd(&self) -> Option<&crate::eventpoll::TimerFd> {
+        None
+    }
+    /// `inotify_add_watch` on an inotify descriptor: a fresh watch descriptor.
+    fn as_inotify_wd(&self) -> Option<i64> {
+        None
+    }
 }
 
 pub const POLLIN: u16 = 0x1;

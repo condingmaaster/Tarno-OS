@@ -198,6 +198,30 @@ pub fn send(task: &Arc<Task>, sig: u32) {
         CONT_WQ.wake_all();
     }
     task.wake_all_threads();
+    SIGFD_WQ.wake_all(); // signalfd readers (and pollers)
+}
+
+/// Woken whenever any signal is queued: `signalfd` readers wait here.
+pub static SIGFD_WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+
+/// Is any signal of `mask` pending (not yet blocked-or-not distinction: a signalfd wants blocked ones)?
+pub fn pending_in(mask: u64) -> bool {
+    let Some(task) = sched::current().task() else { return false };
+    let p = task.sig.lock().pending & mask;
+    p != 0
+}
+
+/// Take the lowest pending signal of `mask` (for `signalfd`); `None` if there is none.
+pub fn take_pending(mask: u64) -> Option<u32> {
+    let task = sched::current().task()?;
+    let mut st = task.sig.lock();
+    let avail = st.pending & mask;
+    if avail == 0 {
+        return None;
+    }
+    let sig = avail.trailing_zeros() + 1;
+    st.pending &= !bit(sig);
+    Some(sig)
 }
 
 /// Woken when a stopped process is continued or killed.
