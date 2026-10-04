@@ -44,6 +44,8 @@ pub fn user_ok(ptr: u64, len: usize, write: bool) -> bool {
     while page < end {
         match vmm::user_page_access(pml4, page) {
             Some(w) if w || !write => {}
+            // a not-yet-touched page of a demand-paged memfd mapping: bring it in, as a user fault would
+            None if proc.fault_lazy(page) && vmm::user_page_access(pml4, page).is_some_and(|w| w || !write) => {}
             _ => return false,
         }
         page += 4096;

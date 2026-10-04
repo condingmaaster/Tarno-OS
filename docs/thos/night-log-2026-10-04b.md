@@ -25,4 +25,4 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - tg3 und EHCI-Hub-Pfad auf dem Acer testen (Kabel einstecken, Boot-Log lesen: `docs/thos/acer-hardware.md`).
 - Popups/Subsurfaces/Zwischenablage im Wayland-Server, `xdg-decoration`, Fenstergröße ändern.
 - Signale weiter pro Prozess (kein `tgkill` pro Thread).
-- Kernel-Zugriff auf noch nicht eingelagerte Seiten eines Lazy-memfd-Mappings (`read()` in ein frisches memfd-Mapping) läuft über `usercopy`, nicht über `fault_lazy`.
+- (erledigt) Kernel-Zugriff (`usercopy`) auf noch nicht eingelagerte Lazy-memfd-Seiten holt sie jetzt ein.
