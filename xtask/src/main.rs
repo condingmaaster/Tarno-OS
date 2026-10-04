@@ -478,6 +478,87 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_win32_test(&img);
         }
+        "wayland-test" => {
+            // an unmodified libwayland client (and the stock wayland-info) against the compositor's Wayland server
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/wayland-serial.log");
+            let sock = root.join("target/wayland-mon.sock");
+            let shot = root.join("target/wayland.ppm");
+            for f in [&log, &sock, &shot] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "wlclient: frames 6", 240) {
+                    return;
+                }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+                std::thread::sleep(ms(1000));
+                let Some((w, h, _)) = read_ppm(&tshot) else { return };
+                // keyboard: the window is the top one, so it has the keyboard focus
+                mon(&tsock, "sendkey a");
+                wait_for(&tlog, "wlclient: key 30 up", 20);
+                // pointer: the cursor starts at the screen centre; the window spans 100..420 x 80..280
+                let walk = |dx: i32, dy: i32| {
+                    let (mut rx, mut ry) = (dx, dy);
+                    while rx != 0 || ry != 0 {
+                        let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+                        mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                        rx -= sx;
+                        ry -= sy;
+                    }
+                };
+                walk(250 - (w as i32) / 2, 180 - (h as i32) / 2);
+                wait_for(&tlog, "wlclient: pointer enter", 20);
+                mon(&tsock, "mouse_button 1");
+                std::thread::sleep(ms(300));
+                mon(&tsock, "mouse_button 0");
+                wait_for(&tlog, "wlclient: button 272 released", 20);
+                // the compositor's own shortcut asks the client to close
+                mon(&tsock, "sendkey alt-f4");
+                wait_for(&tlog, "wlclient: bye", 30);
+                std::thread::sleep(ms(1000));
+                type_line(&tsock, "thoswin quit");
+            });
+            let out = boot_and_run(&img, "wayland", "/busybox sh /wl.sh", "desk ok:", 300);
+            let has = |needle: &str| out.contains(needle);
+            let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+                let (w, h, d) = read_ppm(&shot)?;
+                if x >= w || y >= h {
+                    return None;
+                }
+                let o = (y * w + x) * 3;
+                Some((*d.get(o)?, *d.get(o + 1)?, *d.get(o + 2)?))
+            };
+            let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24);
+            // wayland-info: compositor, shm, seat, output, xdg_wm_base, data_device_manager, subcompositor
+            let info_ok = out.lines().any(|l| l.trim() == "wi-interfaces=7");
+            let drew = near(px(110, 90), (200, 40, 40)) && near(px(300, 200), (32, 48, 128)) && near(px(200, 68), (40, 120, 220));
+            let checks = [
+                ("wayland-info lists 7 globals", info_ok),
+                ("client connected and mapped a window", has("desk: wayland window 1 mapped 320x200")),
+                ("frame callbacks arrive", has("wlclient: frames 6")),
+                ("keymap delivered", has("keymap format 1") && has("text ok")),
+                ("pixels reach the screen (marker, background, titlebar)", drew),
+                ("key press and release reach the client", has("wlclient: key 30 down") && has("wlclient: key 30 up")),
+                ("pointer enter + button", has("wlclient: pointer enter") && has("wlclient: button 272 pressed") && has("wlclient: button 272 released")),
+                ("Alt+F4 asks the client to close", has("wlclient: close requested")),
+                ("client exits, compositor quits cleanly", has("wlclient: bye") && has("desk ok:")),
+            ];
+            let bad: Vec<_> = checks.iter().filter(|c| !c.1).map(|c| c.0).collect();
+            if bad.is_empty() {
+                println!("wayland-test PASSED: stock wayland-info + a libwayland-client program: registry, shm buffers, xdg toplevel, frame callbacks, keymap, keyboard, pointer, close");
+            } else {
+                for l in out.lines().filter(|l| l.contains("wlclient") || l.contains("desk") || l.contains("wi-") || l.contains("fault") || l.contains("wayland") || l.contains("error")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("wayland-test FAILED: {}", bad.join("; "));
+                exit(1);
+            }
+        }
         "desk-keys-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -1061,6 +1142,29 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false);
             if ipc_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} ipctest", ipc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // Wayland: a stock `wayland-info`, our libwayland-client test program, the keymap and the script
+            {
+                let xml = "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml";
+                let t = root.join("target");
+                let scan = |kind: &str, out: &str| Command::new("wayland-scanner").args([kind, xml, t.join(out).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false);
+                if std::path::Path::new("/usr/bin/wayland-info").exists()
+                    && scan("client-header", "xdg-shell-client-protocol.h")
+                    && scan("private-code", "xdg-shell-protocol.c")
+                    && Command::new("gcc")
+                        .args(["-O1", "-o", t.join("wlclient").to_str().unwrap(), root.join("xtask/testdata/wlclient.c").to_str().unwrap(), t.join("xdg-shell-protocol.c").to_str().unwrap(), "-I", t.to_str().unwrap(), "-lwayland-client"])
+                        .status()
+                        .map(|s| s.success())
+                        .unwrap_or(false)
+                {
+                    let mut wdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                    add_dynamic_program(&img, "/usr/bin/wayland-info", &mut wdirs);
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wlclient", t.join("wlclient").to_str().unwrap()), img.to_str().unwrap()]));
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} de.xkb", root.join("xtask/testdata/de.xkb").to_str().unwrap()), img.to_str().unwrap()]));
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wl.sh", root.join("xtask/testdata/wl.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                } else {
+                    println!("note: wayland-scanner / libwayland-dev / wayland-info not found — the Wayland test will not be in the image");
+                }
             }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk.sh", root.join("xtask/testdata/desk.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-kbd.sh", root.join("xtask/testdata/desk-kbd.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -4349,7 +4453,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "wayland-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

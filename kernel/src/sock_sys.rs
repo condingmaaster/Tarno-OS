@@ -337,6 +337,7 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
 const MSG_MAX: usize = 64 * 1024;
 const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
 const MSG_CTRUNC: u32 = 8;
+const MSG_DONTWAIT: u64 = 0x40;
 
 /// The descriptors named by `SCM_RIGHTS` control messages of a msghdr, as open files of the caller.
 fn read_scm_rights(msg: u64) -> Result<alloc::vec::Vec<Arc<dyn FileOps>>, i64> {
@@ -412,11 +413,11 @@ fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
     Ok(out)
 }
 
-pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
+pub fn sys_sendmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     if let Some(u) = f.as_unix() {
         let fds = match read_scm_rights(msg) { Ok(v) => v, Err(e) => return e };
-        return match gather_iov(msg) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }), Err(e) => e };
+        return match gather_iov(msg) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }, flags & MSG_DONTWAIT != 0), Err(e) => e };
     }
     let name = usercopy::read_u64(msg).unwrap_or(0);
     let namelen = usercopy::read_u32(msg + 8).unwrap_or(0) as u64;
@@ -448,7 +449,7 @@ pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let mut buf = alloc::vec![0u8; total.min(MSG_MAX)];
     let mut rights = alloc::vec::Vec::new();
     let (got, from) = if let Some(u) = f.as_unix() {
-        let (g, r) = u.recv_fds(&mut buf);
+        let (g, r) = u.recv_fds(&mut buf, flags & MSG_DONTWAIT != 0);
         rights = r;
         (g, None)
     } else {
@@ -495,7 +496,7 @@ pub fn sys_sendmmsg(fd: u64, vec: u64, vlen: u64) -> i64 {
     let mut sent = 0i64;
     for i in 0..vlen.min(1024) {
         let m = vec + 64 * i;
-        let r = sys_sendmsg(fd, m);
+        let r = sys_sendmsg(fd, m, 0);
         if r < 0 {
             return if sent > 0 { sent } else { r };
         }

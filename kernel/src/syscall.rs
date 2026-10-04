@@ -1793,7 +1793,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_SENDTO => sock_sys::sys_sendto(a1, a2, a3, a5, frame.r9),
         SYS_RECVFROM => sock_sys::sys_recvfrom(a1, a2, a3, a5, frame.r9),
         SYS_SHUTDOWN => sock_sys::sys_shutdown(a1, a2),
-        SYS_SENDMSG => sock_sys::sys_sendmsg(a1, a2),
+        SYS_SENDMSG => sock_sys::sys_sendmsg(a1, a2, a3),
         SYS_RECVMSG => sock_sys::sys_recvmsg(a1, a2, a3),
         SYS_SENDMMSG => sock_sys::sys_sendmmsg(a1, a2, a3),
         SYS_RECVMMSG => sock_sys::sys_recvmmsg(a1, a2, a3),

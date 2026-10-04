@@ -22,23 +22,66 @@ const MAX_SEG: usize = 64 << 20;
 /// `memfd_create` file: a section whose size is set by `ftruncate`.
 pub struct MemFd {
     sec: Mutex<Option<Arc<Section>>>,
+    pos: core::sync::atomic::AtomicU64,
 }
 
 impl MemFd {
     pub fn new() -> Arc<Self> {
-        Arc::new(MemFd { sec: Mutex::new(None) })
+        Arc::new(MemFd { sec: Mutex::new(None), pos: core::sync::atomic::AtomicU64::new(0) })
     }
 }
 
 impl FileOps for MemFd {
-    fn read(&self, _buf: &mut [u8]) -> i64 {
-        -9
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        let Some(sec) = self.sec.lock().clone() else { return 0 };
+        let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
+        if pos >= sec.size {
+            return 0;
+        }
+        let n = buf.len().min(sec.size - pos);
+        let mut done = 0;
+        while done < n {
+            let off = pos + done;
+            let chunk = (n - done).min(4096 - off % 4096);
+            let Some(p) = sec.ptr_at(off) else { break };
+            buf[done..done + chunk].copy_from_slice(unsafe { core::slice::from_raw_parts(p, chunk) });
+            done += chunk;
+        }
+        self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
+        done as i64
     }
-    fn write(&self, _buf: &[u8]) -> i64 {
-        -9
+    fn write(&self, buf: &[u8]) -> i64 {
+        let Some(sec) = self.sec.lock().clone() else { return -28 }; // ENOSPC: size is set by ftruncate
+        let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
+        if pos >= sec.size {
+            return -28;
+        }
+        let n = buf.len().min(sec.size - pos);
+        let mut done = 0;
+        while done < n {
+            let off = pos + done;
+            let chunk = (n - done).min(4096 - off % 4096);
+            let Some(p) = sec.ptr_at(off) else { break };
+            unsafe { core::slice::from_raw_parts_mut(p, chunk) }.copy_from_slice(&buf[done..done + chunk]);
+            done += chunk;
+        }
+        self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
+        done as i64
     }
-    fn seek(&self, _o: i64, _w: u32) -> i64 {
-        0
+    fn seek(&self, o: i64, w: u32) -> i64 {
+        let size = self.sec.lock().as_ref().map_or(0, |s| s.size) as i64;
+        let cur = self.pos.load(core::sync::atomic::Ordering::Relaxed) as i64;
+        let np = match w {
+            0 => o,
+            1 => cur + o,
+            2 => size + o,
+            _ => return EINVAL,
+        };
+        if np < 0 {
+            return EINVAL;
+        }
+        self.pos.store(np as u64, core::sync::atomic::Ordering::Relaxed);
+        np
     }
     fn stat(&self) -> (u32, u64) {
         (S_IFREG | 0o600, self.sec.lock().as_ref().map_or(0, |s| s.size as u64))

@@ -215,7 +215,7 @@ impl Drop for UnixSock {
 impl UnixSock {
     /// Read up to `buf.len()` bytes; the second value holds the descriptors that were sent with them.
     /// A read never runs across the start of a later descriptor group, so descriptors stay with their message.
-    pub fn recv_fds(&self, buf: &mut [u8]) -> (i64, Vec<Arc<dyn FileOps>>) {
+    pub fn recv_fds(&self, buf: &mut [u8], nb: bool) -> (i64, Vec<Arc<dyn FileOps>>) {
         let Some((rx, _)) = self.chans() else { return (ENOTCONN, Vec::new()) };
         if buf.is_empty() {
             return (0, Vec::new());
@@ -247,7 +247,7 @@ impl UnixSock {
                     return (0, Vec::new());
                 }
             }
-            if self.nonblock.load(Ordering::Relaxed) {
+            if nb || self.nonblock.load(Ordering::Relaxed) {
                 return (EAGAIN, Vec::new());
             }
             if crate::signal::interrupted() {
@@ -260,7 +260,7 @@ impl UnixSock {
     }
 
     /// Write `data`; `fds` (if any) ride with its first byte.
-    pub fn send_fds(&self, data: &[u8], mut fds: Option<Vec<Arc<dyn FileOps>>>) -> i64 {
+    pub fn send_fds(&self, data: &[u8], mut fds: Option<Vec<Arc<dyn FileOps>>>, nb: bool) -> i64 {
         let Some((_, tx)) = self.chans() else { return EPIPE };
         let mut done = 0;
         while done < data.len() {
@@ -287,7 +287,7 @@ impl UnixSock {
                     continue;
                 }
             }
-            if self.nonblock.load(Ordering::Relaxed) {
+            if nb || self.nonblock.load(Ordering::Relaxed) {
                 return if done > 0 { done as i64 } else { EAGAIN };
             }
             if crate::signal::interrupted() {
@@ -301,11 +301,11 @@ impl UnixSock {
 
 impl FileOps for UnixSock {
     fn read(&self, buf: &mut [u8]) -> i64 {
-        self.recv_fds(buf).0 // descriptors sent with these bytes are dropped (closed)
+        self.recv_fds(buf, false).0 // descriptors sent with these bytes are dropped (closed)
     }
 
     fn write(&self, data: &[u8]) -> i64 {
-        self.send_fds(data, None)
+        self.send_fds(data, None, false)
     }
 
     fn seek(&self, _o: i64, _w: u32) -> i64 {

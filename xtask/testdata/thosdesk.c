@@ -4,6 +4,7 @@
 // buffer and blits them, draws a software cursor, raises/focuses on click, drags by the
 // titlebar, closes on the red button. Quits on a WL_QUIT message.
 #define _GNU_SOURCE
+#include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <stdio.h>
@@ -15,6 +16,7 @@
 #include <sys/mman.h>
 #include <sys/shm.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #include "thoswl.h"
@@ -29,7 +31,8 @@ struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; };
+struct wlsurf;
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -130,6 +133,7 @@ static void ws_send(unsigned kind, unsigned hwnd, unsigned a, unsigned b, unsign
 static void remove_win(int i) {
     struct rect f = frame_of(&wins[i]);
     if (wins[i].hwnd) ws_send(14, wins[i].hwnd, 0, 0, 0);
+    else if (wins[i].is_wl) free(wins[i].px);
     else { close(wins[i].fd); if (wins[i].px) shmdt(wins[i].px); }
     memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof wins[0]);
     nwin--;
@@ -181,6 +185,8 @@ static void on_winsys(unsigned *e) {
     }
 }
 
+#include "thoswls.h"
+
 static void on_new_client(int ls) {
     int c = accept(ls, 0, 0);
     if (c < 0) return;
@@ -231,6 +237,8 @@ int main(int argc, char **argv) {
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
     if (bind(ls, (void *)&a, 2 + WL_SOCK_LEN) != 0 || listen(ls, 8) != 0) { puts("desk FAIL: socket"); return 1; }
 
+    mkdir("/run", 0755);
+    wls_init();
     mx = W / 2; my = H / 2;
     compose(rect_xywh(0, 0, W, H));
     printf("desk: ready %dx%d\n", W, H);
@@ -243,13 +251,22 @@ int main(int argc, char **argv) {
 
     int drag = 0, dx0 = 0, dy0 = 0, prev_btn = 0;
     int idle = 0;
+    unsigned long long last_act = now_ms();
     for (; idle < 1200 && !quit;) {
-        struct pollfd p[4 + MAXWIN] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 }, { wsfd, POLLIN, 0 } };
+        struct pollfd p[4 + MAXWIN + 1 + WLS_MAXCL] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 }, { wsfd, POLLIN, 0 } };
         for (int i = 0; i < nwin; i++) p[4 + i] = (struct pollfd){ wins[i].hwnd ? -1 : wins[i].fd, POLLIN, 0 };
-        int pr = poll(p, 4 + nwin, 100);
+        int wbase = 4 + nwin, nwl = wls_pollfds(&p[wbase]);
+        int pr = poll(p, wbase + nwl, wls_have_callbacks() ? 16 : 100);
         if (pr < 0) { printf("desk: poll %d\n", pr); break; }
-        if (pr == 0) { idle++; continue; }
-        idle = 0;
+        wls_tick();
+        if (pr == 0) { if (now_ms() - last_act > 120000) idle = 1200; continue; }
+        last_act = now_ms();
+        if (nwl) wls_dispatch_poll(&p[wbase], nwl);
+        if (p[0].revents == 0 && p[1].revents == 0 && p[2].revents == 0 && p[3].revents == 0) {
+            int any = 0;
+            for (int i = 0; i < nwin && 4 + i < wbase; i++) if (p[4 + i].revents) any = 1;
+            if (!any) continue;
+        }
         if (p[0].revents & POLLIN) {
             unsigned char ev[8];
             int t = nwin - 1;
@@ -266,17 +283,22 @@ int main(int argc, char **argv) {
                     if (b < nwin && b != nwin - 1) { raise_win(b); compose(frame_of(&wins[nwin - 1])); }
                 } else if (ev[1] == 0x3D && t >= 0) {
                     struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
-                    if (wins[t].hwnd) ws_send(12, wins[t].hwnd, 0, 0, 0);
-                    else (void)!write(wins[t].fd, &c, sizeof c);
-                    remove_win(t);
+                    if (wins[t].wl) wls_request_close(wins[t].wl);
+                    else {
+                        if (wins[t].hwnd) ws_send(12, wins[t].hwnd, 0, 0, 0);
+                        else (void)!write(wins[t].fd, &c, sizeof c);
+                        remove_win(t);
+                    }
                 }
                 kn = 0;
             }
             if (kn == 8 && t >= 0) {
                 unsigned cp = ev[3] ? ev[3] : (ev[4] | (ev[5] << 8) | (ev[6] << 16));   /* ASCII, else the code point */
                 struct wl_msg k = { WL_KEY, ev[1], ev[0], cp, ev[2] };
-                if (wins[t].hwnd) { if (ev[0] && ev[3]) ws_send(11, wins[t].hwnd, ev[3], 0, 0); }
+                if (wins[t].wl) wls_key(wins[t].wl, ev[1], ev[0], ev[2]);
+                else if (wins[t].hwnd) { if (ev[0] && ev[3]) ws_send(11, wins[t].hwnd, ev[3], 0, 0); }
                 else (void)!write(wins[t].fd, &k, sizeof k);
+                if (!wins[t].wl && wls_kfocus) wls_focus_keyboard(0);
             }
         }
         if (p[3].revents & POLLIN) {
@@ -303,9 +325,12 @@ int main(int argc, char **argv) {
                     if (!in(frame_of(w), mx, my)) continue;
                     if (in(close_btn(w), mx, my)) {
                         struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
-                        if (w->hwnd) ws_send(12, w->hwnd, 0, 0, 0);
-                        else (void)!write(w->fd, &c, sizeof c);
-                        remove_win(i);
+                        if (w->wl) wls_request_close(w->wl);
+                        else {
+                            if (w->hwnd) ws_send(12, w->hwnd, 0, 0, 0);
+                            else (void)!write(w->fd, &c, sizeof c);
+                            remove_win(i);
+                        }
                     } else {
                         if (i != nwin - 1) raise_win(i);
                         w = &wins[nwin - 1];
@@ -321,7 +346,9 @@ int main(int argc, char **argv) {
                 }
             }
             if (!btn) drag = 0;
+            int pb = prev_btn;
             prev_btn = btn;
+            wls_pointer(mx, my, btn, pb);
             if (drag && nwin) {
                 struct win *w = &wins[nwin - 1];
                 struct rect old = frame_of(w);
