@@ -35,7 +35,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -44,6 +44,8 @@ static uint8_t *fbmap;
 static uint32_t *bb;                     /* back buffer, W*H */
 static uint32_t rs, gs, bs;
 static int mx, my, quit;
+static int drag, dx0, dy0;                       /* a window move in progress (titlebar, or asked for by the client) */
+static int rs_id, rs_dir, rs_x0, rs_y0, rs_w0, rs_h0;   /* an edge/corner resize in progress */
 
 static uint32_t rgb(int r, int g, int b) { return ((uint32_t)r << rs) | ((uint32_t)g << gs) | ((uint32_t)b << bs); }
 
@@ -351,11 +353,12 @@ static void anim_tick(void) {
 }
 
 /* ---- resizing and maximizing (Wayland windows: the client is asked for the new size) ---- */
-static int rs_id, rs_dir, rs_x0, rs_y0, rs_w0, rs_h0;
 static unsigned long long rs_last, click_ms;
 static int click_id;
 static int resize_dir(struct win *w, int px, int py) {
-    if (!w->wl || !w->deco || w->maxed) return 0;
+    if (!w->wl || w->maxed) return 0;
+    if (w->csd) return 0;                          /* the client draws its own borders and asks for resizes itself */
+    if (!w->deco) return 0;
     struct rect f = frame_of(w);
     const int m = 6;
     int right = px >= f.x1 - m && px < f.x1 + m && py >= w->y && py < f.y1 + m;
@@ -364,15 +367,16 @@ static int resize_dir(struct win *w, int px, int py) {
 }
 static int work_bottom(void) {          /* a panel along the bottom edge is not covered by maximized windows */
     int b = H;
-    for (int i = 0; i < nwin; i++) if (!wins[i].deco && wins[i].y > H / 2 && wins[i].y < b) b = wins[i].y;
+    for (int i = 0; i < nwin; i++) if (!wins[i].deco && !wins[i].is_wl && wins[i].y > H / 2 && wins[i].y < b) b = wins[i].y;
     return b;
 }
 static void toggle_maximize(struct win *w) {
     struct rect old = outer_of(w);
     if (!w->maxed) {
         w->rx = w->x; w->ry = w->y; w->rw = w->w; w->rh = w->h;
-        w->x = BORDER; w->y = TITLE;
-        int nw = W - 2 * BORDER, nh = work_bottom() - TITLE - BORDER;
+        int nw, nh;
+        if (w->csd) { w->x = -w->gx; w->y = -w->gy; nw = W; nh = work_bottom(); }   /* the client's own frame fills the screen */
+        else { w->x = BORDER; w->y = TITLE; nw = W - 2 * BORDER; nh = work_bottom() - TITLE - BORDER; }
         w->maxed = 1; w->cfg_w = nw; w->cfg_h = nh;
         wls_configure(w->wl, nw, nh, 1);
     } else {
@@ -380,6 +384,24 @@ static void toggle_maximize(struct win *w) {
         wls_configure(w->wl, w->rw, w->rh, 0);
     }
     compose(uni(old, outer_of(w)));
+}
+
+/* requests from Wayland clients that draw their own decorations (xdg_toplevel.move / resize / set_maximized) */
+static void desk_begin_move(int winid) {
+    struct win *w = win_by_id(winid);
+    if (!w || w->maxed) return;
+    drag = 1; dx0 = mx - w->x; dy0 = my - w->y;
+}
+static void desk_begin_resize(int winid, int edges) {
+    struct win *w = win_by_id(winid);
+    int d = ((edges & 8) ? 1 : 0) | ((edges & 2) ? 2 : 0);          /* right / bottom edges only */
+    if (!w || !d || w->maxed) return;
+    rs_id = w->id; rs_dir = d; rs_x0 = mx; rs_y0 = my; rs_w0 = w->csd ? w->gw : w->w; rs_h0 = w->csd ? w->gh : w->h; rs_last = 0;
+    w->cfg_w = rs_w0; w->cfg_h = rs_h0;
+}
+static void desk_set_maximized(int winid, int on) {
+    struct win *w = win_by_id(winid);
+    if (w && w->wl && (!w->maxed) == (on != 0)) toggle_maximize(w);
 }
 /* the close button under the pointer lights up */
 static void update_hover(void) {
@@ -462,7 +484,7 @@ int main(int argc, char **argv) {
         if (fork() == 0) { execl("/thosterm", "thosterm", verbose ? "-l" : (char *)0, (char *)0); _exit(127); }
     }
 
-    int drag = 0, dx0 = 0, dy0 = 0, prev_btn = 0;
+    int prev_btn = 0;
     int idle = 0;
     unsigned long long last_act = now_ms();
     for (; idle < 1200 && !quit;) {
@@ -484,7 +506,7 @@ int main(int argc, char **argv) {
         if (p[0].revents & POLLIN) {
             unsigned char ev[8];
             int t = nwin - 1;
-            while (t >= 0 && !wins[t].deco) t--;
+            while (t >= 0 && !wins[t].deco && !wins[t].is_wl) t--;
             ssize_t kn = read(kbd, ev, 8);
             if (kn == 8 && ev[0] && ev[1] == 0x14 && (ev[2] & 0x11) && (ev[2] & 0x44)) { quit = 1; kn = 0; }   /* Ctrl+Alt+Q: leave the desktop */
             if (kn == 8 && ev[0] && (ev[2] & 0x44) && !(ev[2] & 0x40)) {
@@ -493,7 +515,7 @@ int main(int argc, char **argv) {
                     if (fork() == 0) { execl("/thosterm", "thosterm", "-l", (char *)0); _exit(127); }
                 } else if (ev[1] == 0x2B && nwin > 1) {
                     int b = 0;
-                    while (b < nwin && !wins[b].deco) b++;
+                    while (b < nwin && !wins[b].deco && !wins[b].is_wl) b++;
                     if (b < nwin && b != nwin - 1) { int ot = wins[nwin - 1].id; raise_win(b); struct win *o = win_by_id(ot); if (o) compose(outer_of(o)); compose(outer_of(&wins[nwin - 1])); }
                 } else if (ev[1] == 0x52 && t >= 0 && wins[t].wl) {      /* Alt+Up: maximize / restore */
                     toggle_maximize(&wins[t]);

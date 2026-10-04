@@ -33,6 +33,7 @@ struct wlsurf {
     uint32_t xdg_id, top_id;                  /* the xdg_surface and xdg_toplevel objects */
     int role_top, configured, winid, close_sent;
     char title[17];
+    int gx, gy, gw, gh, has_geo;               /* xdg_surface.set_window_geometry */
 };
 
 struct wlc {
@@ -170,6 +171,9 @@ static uint32_t swizzle(uint32_t px) {
 }
 
 static void wls_focus_keyboard(struct wlsurf *s);
+static void desk_begin_move(int winid);
+static void desk_begin_resize(int winid, int edges);
+static void desk_set_maximized(int winid, int on);
 static void surf_commit(struct wlc *c, struct wlsurf *s) {
     for (int i = 0; i < s->ncb_pending && s->ncb_ready < 16; i++) s->cb_ready[s->ncb_ready++] = s->cb_pending[i];
     s->ncb_pending = 0;
@@ -194,6 +198,11 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         int k = next_id - 1;
         *w = (struct win){ -1, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), b->w, b->h, calloc((size_t)b->w * b->h, 4) };
         w->deco = 1; w->wl = s; w->is_wl = 1;
+        /* a translucent buffer with a smaller window geometry = the client draws its own frame and shadow (GTK) */
+        if (b->fmt == 0 && s->has_geo && (s->gw < b->w || s->gh < b->h)) {
+            w->deco = 0; w->csd = 1; w->gx = s->gx; w->gy = s->gy; w->gw = s->gw; w->gh = s->gh;
+            w->x -= s->gx; w->y -= s->gy;
+        }
         memcpy(w->title, s->title, sizeof w->title);
         s->winid = w->id;
         s->has_dmg = 0;
@@ -212,6 +221,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         x1 = s->dx1 > b->w ? b->w : s->dx1; y1 = s->dy1 > b->h ? b->h : s->dy1;
         if (x1 <= x0 || y1 <= y0) { x0 = 0; y0 = 0; x1 = b->w; y1 = b->h; }
     }
+    if (w->csd && s->has_geo) { w->gx = s->gx; w->gy = s->gy; w->gw = s->gw; w->gh = s->gh; }
     int fast = rs == 16 && gs == 8 && bs == 0;
     w->alpha = b->fmt == 0;                           /* ARGB8888 (premultiplied); XRGB8888 is opaque */
     for (int y = y0; y < y1; y++) {
@@ -565,6 +575,9 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
         } else if (op == 2) {                             /* get_popup: accepted, never shown */
             uint32_t nid = m_u32(m);
             if (!m->bad) obj_new(c, nid, O_STUB, 1, 0);
+        } else if (op == 3) {                             /* set_window_geometry */
+            s->gx = (int)m_u32(m); s->gy = (int)m_u32(m); s->gw = (int)m_u32(m); s->gh = (int)m_u32(m);
+            s->has_geo = !m->bad && s->gw > 0 && s->gh > 0;
         } else if (op == 4) {                             /* ack_configure */
             s->configured = 1;
         } else if (op == 0) {
@@ -579,6 +592,13 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             memset(s->title, 0, sizeof s->title); memcpy(s->title, t, 16);
             struct win *w = s->winid ? win_by_id(s->winid) : 0;
             if (w) { memcpy(w->title, s->title, sizeof w->title); compose(frame_of(w)); }
+        } else if (op == 5) {                             /* move(seat, serial) */
+            if (s->winid) desk_begin_move(s->winid);
+        } else if (op == 6) {                             /* resize(seat, serial, edges) */
+            m_u32(m); m_u32(m); uint32_t edges = m_u32(m);
+            if (s->winid) desk_begin_resize(s->winid, (int)edges);
+        } else if (op == 9 || op == 10) {                 /* set_maximized / unset_maximized */
+            if (s->winid) desk_set_maximized(s->winid, op == 9);
         } else if (op == 0) {
             surf_unmap(s); s->top_id = 0; s->role_top = 0; wl_delete_id(c, id); obj_free(c, id);
         }
