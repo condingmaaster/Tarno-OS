@@ -209,6 +209,8 @@ const SYS_CLOCK_GETTIME: u64 = 228;
 const SYS_CLOCK_GETRES: u64 = 229;
 const SYS_CAPGET: u64 = 125;
 const SYS_GETCPU: u64 = 309;
+const SYS_GETRESUID: u64 = 118;
+const SYS_GETRESGID: u64 = 120;
 const SYS_CAPSET: u64 = 126;
 const SYS_PPOLL: u64 = 271;
 const SYS_READLINKAT: u64 = 267;
@@ -1912,6 +1914,16 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
         SYS_CAPSET => 0,
 
+        SYS_GETRESUID | SYS_GETRESGID => {
+            let id = if nr == SYS_GETRESUID { process::current_uid() as u32 } else { process::current_gid() as u32 };
+            for p in [a1, a2, a3] {
+                if let Err(e) = usercopy::write_u32(p, id) {
+                    frame.rax = e as u64;
+                    return;
+                }
+            }
+            0
+        }
         SYS_GETCPU => {
             let cpu = crate::smp::this_cpu();
             if a1 != 0 {

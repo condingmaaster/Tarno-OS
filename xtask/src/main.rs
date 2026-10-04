@@ -476,6 +476,43 @@ fn main() {
                 exit(1);
             }
         }
+        "gtk-test" => {
+            // an unmodified GTK 3 program on the Wayland backend
+            std::env::set_var("THOS_FS_MIB", "192");
+            std::env::set_var("THOS_GTK", "1");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/gtk-serial.log");
+            let sock = root.join("target/gtk-mon.sock");
+            let shot = root.join("target/gtk.ppm");
+            for f in [&log, &sock, &shot] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "gtk: shown", 300) {
+                    return;
+                }
+                std::thread::sleep(ms(5000));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+                std::thread::sleep(ms(1000));
+                mon(&tsock, "sendkey ret");
+                wait_for(&tlog, "gtk: clicked", 20);
+            });
+            let out = boot_and_run(&img, "gtk", "/busybox sh /gtk.sh", "desk ok:", 400);
+            let lit = read_ppm(&shot).map_or(0, |(_, _, d)| d.chunks(3).filter(|p| p.len() == 3 && p[0] > 200 && p[1] > 200 && p[2] > 200).count());
+            let mapped = out.lines().find(|l| l.contains("wayland window 1 mapped")).map(str::trim);
+            if mapped.is_some() && lit > 2000 && out.contains("gtk: clicked") {
+                println!("gtk-test PASSED: {} — GTK 3 drew its window ({lit} light pixels) and a key press activated the button", mapped.unwrap());
+            } else {
+                for l in out.lines().filter(|l| l.contains("gtk") || l.contains("Gtk") || l.contains("GLib") || l.contains("desk") || l.contains("unhandled") || l.contains("killed") || l.contains("trap") || l.contains("rror")).take(40) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("gtk-test FAILED (mapped {}, light pixels {lit})", mapped.is_some());
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1290,6 +1327,52 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Hello.class", root.join("xtask/testdata/Hello.class").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} java.sh", root.join("xtask/testdata/java.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // GTK 3 hello (unmodified toolkit; needs THOS_FS_MIB=192 and THOS_GTK=1, see `gtk-test`)
+            if std::env::var("THOS_GTK").is_ok() && std::path::Path::new("/usr/share/glib-2.0/schemas/gschemas.compiled").exists() {
+                let mut gdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                let hello = root.join("target/gtkhello");
+                let ok = Command::new("sh").arg("-c").arg(format!("gcc -O1 -o {} {} $(pkg-config --cflags --libs gtk+-3.0)", hello.display(), root.join("xtask/testdata/gtkhello.c").display())).status().map(|s| s.success()).unwrap_or(false);
+                if ok {
+                    add_dynamic_program(&img, hello.to_str().unwrap(), &mut gdirs);
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gtkhello", hello.to_str().unwrap()), img.to_str().unwrap()]));
+                    for d in ["usr/share", "usr/share/glib-2.0", "usr/share/glib-2.0/schemas", "usr/share/fonts", "usr/share/fonts/truetype", "usr/share/fonts/truetype/dejavu", "etc", "etc/fonts", "usr/share/X11", "usr/share/X11/xkb", "usr/share/icons", "usr/share/icons/hicolor"] {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                    }
+                    for (from, to) in [
+                        ("/usr/share/glib-2.0/schemas/gschemas.compiled", "usr/share/glib-2.0/schemas/gschemas.compiled"),
+                        ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+                        ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+                        (root.join("xtask/testdata/fonts.conf").to_str().unwrap(), "etc/fonts/fonts.conf"),
+                        (root.join("xtask/testdata/gtk.sh").to_str().unwrap(), "gtk.sh"),
+                    ] {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {from} {to}"), img.to_str().unwrap()]).output();
+                    }
+                    // gdk-pixbuf loaders (PNG is a module in Debian) + their cache; the mime database helps sniffing
+                    let pb = "/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0";
+                    for d in ["usr/lib/x86_64-linux-gnu", "usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0", "usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0", "usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders", "usr/share/mime"] {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                    }
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {pb}/loaders.cache usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache"), img.to_str().unwrap()]).output();
+                    if let Ok(rd) = std::fs::read_dir(format!("{pb}/loaders")) {
+                        for e in rd.flatten() {
+                            let n = e.file_name().to_string_lossy().to_string();
+                            if n.contains("png") || n.contains("jpeg") {
+                                add_dynamic_program(&img, e.path().to_str().unwrap(), &mut gdirs);
+                            }
+                        }
+                    }
+                    let _ = Command::new("debugfs").args(["-w", "-R", "write /usr/share/mime/mime.cache usr/share/mime/mime.cache", img.to_str().unwrap()]).output();
+                    for sub in ["rules", "keycodes", "types", "compat", "symbols"] {
+                        copy_tree_into_image(&img, &format!("/usr/share/X11/xkb/{sub}"), &format!("/usr/share/X11/xkb/{sub}"));
+                    }
+                    for d in ["usr/lib", "usr/lib/locale", "usr/lib/locale/C.utf8"] {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                    }
+                    for f in ["LC_ADDRESS", "LC_COLLATE", "LC_CTYPE", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_MONETARY", "LC_NAME", "LC_NUMERIC", "LC_PAPER", "LC_TELEPHONE", "LC_TIME"] {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("write /usr/lib/locale/C.utf8/{f} usr/lib/locale/C.utf8/{f}"), img.to_str().unwrap()]).output();
+                    }
+                }
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {
