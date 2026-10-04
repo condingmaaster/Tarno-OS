@@ -231,7 +231,8 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "winc", "/busybox sh /winc.sh", "winc-done", 120);
             let n = |t: &str| out.lines().filter(|l| l.trim() == t).count();
-            if n("hello from win32 2 alpha") == 1 && n("rc-7-end") == 1 && n("hello from win32 1 -") == 2 {
+            if n("hello from win32 2 alpha") == 1 && n("rc-7-end") == 1 && n("hello from win32 1 -") == 2
+                && n("w1 1-2-9 42 ctype") == 1 && n("line-two") + n("w2 line-two") >= 1 && n("w3 rand-ok time-ok") == 1 && n("w4  3.14|ab   |00042|ff") == 1 {
                 println!("winc-test PASSED: an unmodified mingw console program (msvcrt printf/malloc/strcpy) gets its real argv, returns its exit status and honours pipes and redirection");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: ") || l.contains("msvcrt") || l.contains("PE")) {
@@ -946,6 +947,23 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winc.sh", root.join("xtask/testdata/winc.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            // THOS's C runtime extension for Windows programs: a real PE DLL the loader consults before the built-in msvcrt
+            let mx = root.join("target/msvcrtx.dll");
+            if Command::new("x86_64-w64-mingw32-gcc")
+                .args(["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o", mx.to_str().unwrap(), root.join("xtask/msvcrtx/msvcrtx.c").to_str().unwrap(), "-lmsvcrt"])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                for d in ["Windows", "Windows/System32"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/msvcrtx.dll", mx.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let wt = root.join("target/wtest.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wt.to_str().unwrap(), root.join("xtask/testdata/wtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wtest.exe", wt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             let wc = root.join("target/whello.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join("xtask/testdata/whello.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} whello.exe", wc.to_str().unwrap()), img.to_str().unwrap()]));

@@ -233,6 +233,7 @@ struct Loader<'a> {
     depth: u32,
     tls: TlsBuild,
     tls_cbs: Vec<(u64, u64)>, // (module base, callback VA) run at process start
+    ext_tried: bool,          // msvcrtx.dll has been looked for
 }
 
 impl<'a> Loader<'a> {
@@ -279,6 +280,7 @@ impl<'a> Loader<'a> {
             depth: 0,
             tls: TlsBuild { frame_phys: 0, n_mods: 0, blk_next: TLS_BLOCKS_OFF },
             tls_cbs: Vec::new(),
+            ext_tried: false,
         }
     }
 
@@ -460,15 +462,46 @@ impl<'a> Loader<'a> {
                     })?
                 } else {
                     let func = cstr_at(img, (thunk & 0x7FFF_FFFF) + 2)?; // skip the 2-byte hint
-                    self.resolve_export_name(midx, func, 0).map_err(|e| {
-                        crate::kprintln!("THOS: pe unresolved    {}!{}", dll.as_str(), func);
-                        e
-                    })?
+                    // The C-runtime extension DLL (a real PE in System32) overrides the built-in msvcrt.
+                    let ext = if self.mods[midx].name == "msvcrt.dll" { self.ext_export(func) } else { None };
+                    match ext {
+                        Some(a) => a,
+                        None => self.resolve_export_name(midx, func, 0).map_err(|e| {
+                            crate::kprintln!("THOS: pe unresolved    {}!{}", dll.as_str(), func);
+                            e
+                        })?,
+                    }
                 };
                 img[p_off..p_off + 8].copy_from_slice(&addr.to_le_bytes());
                 i += 1;
             }
             idt += 20;
+        }
+    }
+
+    /// `name` from `msvcrtx.dll` (THOS's C runtime extension), loading it on first use; `None` when
+    /// the DLL is absent or does not export `name`.
+    fn ext_export(&mut self, name: &str) -> Option<u64> {
+        let idx = match self.mods.iter().position(|m| m.name == "msvcrtx.dll") {
+            Some(i) => i,
+            None => {
+                if self.ext_tried {
+                    return None;
+                }
+                self.ext_tried = true;
+                match self.resolve_module("msvcrtx.dll") {
+                    Ok(i) => i,
+                    Err(e) => {
+                        crate::kprintln!("THOS: pe msvcrtx      not usable: {e}");
+                        return None;
+                    }
+                }
+            }
+        };
+        let i = *self.mods[idx].names.get(name)?;
+        match self.mods[idx].eat.get(i)? {
+            Export::Addr(a) => Some(*a),
+            _ => None,
         }
     }
 
@@ -730,7 +763,9 @@ fn stage_image(file: &[u8], want_base: Option<u64>) -> Result<StagedImage, &'sta
     };
     let delta = load_base.wrapping_sub(image_base);
     if delta != 0 {
-        if reloc_size == 0 {
+        // An image that declares DYNAMIC_BASE yet has no relocations is position independent: it can
+        // simply be mapped elsewhere.
+        if reloc_size == 0 && dll_chars & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE == 0 {
             return Err("PE: needs relocation but has no .reloc");
         }
         apply_relocs(&mut img, reloc_rva as u64, reloc_size as u64, delta, size_of_image)?;
