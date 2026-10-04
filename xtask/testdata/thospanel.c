@@ -18,6 +18,20 @@
 
 #define PH 32
 static int PW = 1024;
+#define MAXB 8
+static struct { char label[24]; char cmd[160]; int x0, x1; } btn[MAXB];
+static int nbtn;
+
+/* a rounded button, painted into the bar */
+static void draw_button(uint32_t *px, int x0, int x1, const char *label) {
+    for (int y = 4; y < PH - 4; y++)
+        for (int x = x0; x < x1; x++) {
+            int cx = x - x0 < 5 ? 5 - (x - x0) : (x1 - 1 - x < 5 ? 5 - (x1 - 1 - x) : 0), cy = y - 4 < 5 ? 5 - (y - 4) : (PH - 5 - y < 5 ? 5 - (PH - 5 - y) : 0);
+            if (cx * cx + cy * cy > 25) continue;
+            px[y * PW + x] = y < PH / 2 ? 0x00467bb8 : 0x00386aa5;
+        }
+    gfx_str(px, PW, PH, x0 + 10, 8, label, 0x00ffffff, 0xFFFFFFFFu);
+}
 
 int main(void) {
     signal(SIGCHLD, SIG_IGN);
@@ -33,8 +47,25 @@ int main(void) {
     uint32_t *px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
     if (px == (void *)-1 || gfx_load_font() != 0) { puts("panel FAIL: shm/font"); return 1; }
     for (int i = 0; i < PW * PH; i++) px[i] = 0x00282832;
-    for (int y = 4; y < PH - 4; y++) for (int x = 8; x < 104; x++) px[y * PW + x] = 0x003a6ea5;
-    gfx_str(px, PW, PH, 16, 8, "Terminal", 0x00ffffff, 0xFFFFFFFFu);
+    setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);          /* Central Europe, no zone database needed */
+    strcpy(btn[0].label, "Terminal"); strcpy(btn[0].cmd, "");
+    nbtn = 1;
+    FILE *cf = fopen("/panel.conf", "r");                    /* optional: one "Label|command" per line */
+    for (char line[200]; cf && fgets(line, sizeof line, cf) && nbtn < MAXB;) {
+        char *bar = strchr(line, '|');
+        if (!bar) continue;
+        *bar = 0; line[strcspn(bar + 1, "\n")] = 0;
+        char *cmd = bar + 1; cmd[strcspn(cmd, "\n")] = 0;
+        snprintf(btn[nbtn].label, sizeof btn[nbtn].label, "%s", line);
+        snprintf(btn[nbtn].cmd, sizeof btn[nbtn].cmd, "%s", cmd);
+        nbtn++;
+    }
+    if (cf) fclose(cf);
+    for (int i = 0, x = 8; i < nbtn; i++) {
+        btn[i].x0 = x; btn[i].x1 = x + 20 + 8 * (int)strlen(btn[i].label);
+        draw_button(px, btn[i].x0, btn[i].x1, btn[i].label);
+        x = btn[i].x1 + 8;
+    }
     m = (struct wl_msg){ WL_CREATE, PW, PH, (uint32_t)key, 1 };
     (void)!write(s, &m, sizeof m);
     if (read(s, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("panel FAIL: no CREATED"); return 1; }
@@ -49,11 +80,13 @@ int main(void) {
     for (;;) {
         /* clock: HH:MM (UTC) at the right edge, redrawn when the minute changes */
         time_t now = time(0);
+        struct tm lt;
+        localtime_r(&now, &lt);
         int minute = (int)(now / 60);
         if (minute != shown) {
             shown = minute;
             char txt[8];
-            int hh = (int)(now / 3600 % 24), mm = (int)(now / 60 % 60);
+            int hh = lt.tm_hour, mm = lt.tm_min;
             txt[0] = '0' + hh / 10; txt[1] = '0' + hh % 10; txt[2] = ':'; txt[3] = '0' + mm / 10; txt[4] = '0' + mm % 10; txt[5] = 0;
             for (int y = 4; y < PH - 4; y++) for (int x = PW - 70; x < PW - 8; x++) px[y * PW + x] = 0x00282832;
             gfx_str(px, PW, PH, PW - 62, 8, txt, 0x00dddddd, 0xFFFFFFFFu);
@@ -64,11 +97,18 @@ int main(void) {
         if (poll(&pf, 1, 15000) <= 0) continue;
         if (read(s, &m, sizeof m) != (ssize_t)sizeof m) break;
         if (m.op == WL_CLOSE) break;
-        if (m.op == WL_POINTER && m.a >= 8 && m.a < 104) {
-            if (fork() == 0) {
-                close(s);
-                execl("/thosterm", "thosterm", "-l", (char *)0);
-                _exit(127);
+        if (m.op == WL_POINTER) {
+            for (int i = 0; i < nbtn; i++) {
+                if ((int)m.a < btn[i].x0 || (int)m.a >= btn[i].x1) continue;
+                if (fork() == 0) {
+                    close(s);
+                    if (i == 0) execl("/thosterm", "thosterm", "-l", (char *)0);
+                    setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("HOME", "/tmp", 1); setenv("LC_ALL", "C.UTF-8", 1);
+                    setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1); setenv("GDK_BACKEND", "wayland", 1);
+                    execl("/busybox", "sh", "-c", btn[i].cmd, (char *)0);
+                    _exit(127);
+                }
+                break;
             }
         }
     }
