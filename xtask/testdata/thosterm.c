@@ -203,6 +203,7 @@ int main(int argc, char **argv) {
     struct wl_msg m = { WL_CREATE, PW, PH, (uint32_t)ky, 0 };
     (void)!write(sock, &m, sizeof m);
     if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("term FAIL: no CREATED"); return 1; }
+    shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "terminal", 8);
     (void)!write(sock, &t, sizeof t);

@@ -33,6 +33,7 @@ int main(void) {
     struct wl_msg m = { WL_CREATE, PW, PH, (uint32_t)key, 1 };
     (void)!write(s, &m, sizeof m);
     if (read(s, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("panel FAIL: no CREATED"); return 1; }
+    shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg pos = { WL_POS, 0, m.c - PH, 0, 0 };
     (void)!write(s, &pos, sizeof pos);
     struct wl_msg cm = { WL_COMMIT, 0, 0, PW, PH };

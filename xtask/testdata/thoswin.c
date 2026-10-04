@@ -38,6 +38,7 @@ int main(int argc, char **argv) {
     struct wl_msg m = { WL_CREATE, (uint32_t)w, (uint32_t)h, (uint32_t)key, 0 };
     (void)!write(s, &m, sizeof m);
     if (read(s, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("win FAIL: no CREATED"); return 1; }
+    shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg cm = { WL_COMMIT, 0, 0, (uint32_t)w, (uint32_t)h };
     (void)!write(s, &cm, sizeof cm);
     printf("win %u ready\n", m.a);

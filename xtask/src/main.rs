@@ -4390,7 +4390,15 @@ fn shortcuts_test(img: &Path) {
     // 4. Ctrl+D on an empty line ends the shell; the session returns to login.
     let logins = text(&log).matches("THOS login:").count();
     key("ctrl-d");
-    if !wait_for(&log, "THOS: session ended", 20) || text(&log).matches("THOS login:").count() <= logins {
+    let ended = wait_for(&log, "THOS: session ended", 20);
+    for _ in 0..100 {
+        // the login prompt follows the "session ended" line (not necessarily at once)
+        if text(&log).matches("THOS login:").count() > logins {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if !ended || text(&log).matches("THOS login:").count() <= logins {
         fails.push("Ctrl+D did not end the session / return to the login prompt".into());
     }
 
