@@ -160,6 +160,8 @@ const PE_THREAD_STACK_ADDR: u64 = NT_STUB_BASE + 0x0010_0000;
 const PE_THREAD_STACK_BYTES: u64 = 0x8000; // 32 KiB
 const SYNTH_STUBS_OFF: u64 = 0x180; // trampoline table within a synth DLL page
 const SYNTH_EXPDIR_OFF: u64 = 0x400; // IMAGE_EXPORT_DIRECTORY within the page
+/// The command line the next `load` puts in the process parameters (set by `process::spawn_pe_args`).
+pub static NEXT_CMDLINE: spin::Mutex<Option<alloc::vec::Vec<u8>>> = spin::Mutex::new(None);
 /// `GetCommandLineA` returns this.
 pub const PE_ANSI_CMDLINE_ADDR: u64 = PE_PARAMS_ADDR + ANSI_CMDLINE_OFF;
 const ANSI_CMDLINE: &[u8] = b"PE argv0 pe-hello.exe\n\0";
@@ -1117,8 +1119,14 @@ fn map_teb_peb(
         put(b, MOD3_OFF + 0x60, ntd_base_buf);
 
         // --- ANSI command line (GetCommandLineA) + empty environment ---
-        b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + ANSI_CMDLINE.len()]
-            .copy_from_slice(ANSI_CMDLINE);
+        match NEXT_CMDLINE.lock().take() {
+            Some(cl) => {
+                let n = cl.len().min((ENV_OFF - ANSI_CMDLINE_OFF) as usize - 1);
+                b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + n].copy_from_slice(&cl[..n]);
+            }
+            None => b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + ANSI_CMDLINE.len()]
+                .copy_from_slice(ANSI_CMDLINE),
+        }
         // ENV_OFF: leave the two NUL words already zeroed
     })?;
 

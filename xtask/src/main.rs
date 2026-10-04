@@ -227,6 +227,20 @@ fn main() {
                 exit(1);
             }
         }
+        "winc-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "winc", "/busybox sh /winc.sh", "winc-done", 120);
+            let n = |t: &str| out.lines().filter(|l| l.trim() == t).count();
+            if n("hello from win32 2 alpha") == 1 && n("rc-7-end") == 1 && n("hello from win32 1 -") == 2 {
+                println!("winc-test PASSED: an unmodified mingw console program (msvcrt printf/malloc/strcpy) gets its real argv, returns its exit status and honours pipes and redirection");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS: ") || l.contains("msvcrt") || l.contains("PE")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("winc-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -931,6 +945,11 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winc.sh", root.join("xtask/testdata/winc.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            let wc = root.join("target/whello.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join("xtask/testdata/whello.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} whello.exe", wc.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             let wh = root.join("target/winhello.exe");
             if Command::new("x86_64-w64-mingw32-gcc")
                 .args(["-O1", "-nostdlib", "-ffreestanding", "-Wl,-e,start", "-o", wh.to_str().unwrap(), root.join("xtask/testdata/winhello.c").to_str().unwrap(), "-luser32", "-lgdi32", "-lkernel32"])
@@ -4168,7 +4187,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

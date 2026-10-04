@@ -1641,6 +1641,32 @@ pub fn spawn_pe(bytes: &[u8]) -> Result<u64, &'static str> {
     Ok(task.pid)
 }
 
+/// [`spawn_pe`] for a program started from a POSIX shell: it gets the real command line, and the
+/// caller's open files and working directory (so redirections and pipes work).
+pub fn spawn_pe_args(bytes: &[u8], cmdline: &[u8], parent: &Arc<Task>) -> Result<u64, &'static str> {
+    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
+        crate::kprintln!("THOS: exec gate        quarantined a PE — {reason}");
+        return Err("quarantined by the native-exec gate");
+    }
+    let space = Process::new();
+    let stack_top = space.new_user_stack();
+    let img = {
+        *crate::pe::NEXT_CMDLINE.lock() = Some(cmdline.to_vec());
+        let r = crate::pe::load(&space, bytes, stack_top);
+        *crate::pe::NEXT_CMDLINE.lock() = None;
+        r?
+    };
+    let rsp = (stack_top & !0xF) - 8;
+    let task = Task::new(parent.pid, space);
+    *task.fds.lock() = parent.clone_fds();
+    task.set_cwd(parent.cwd());
+    task.set_pgid(parent.pgid());
+    task.set_sid(parent.sid());
+    task.mark_pe();
+    sched::spawn_user_pe("pe", task.clone(), img.entry, rsp, img.teb);
+    Ok(task.pid)
+}
+
 /// `fork`: eager (non-COW) copy of the caller's address space; the child
 /// resumes at the same user instruction with `rax = 0`.
 pub fn fork(frame: &UserFrame) -> i64 {

@@ -1386,7 +1386,23 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         // inside `execve`'s own `expect`.
         // A Windows program: run it as its own (NT-personality) task and stand in for it until it
         // ends; `PE_PROXY_EXIT` tells the dispatcher to exit with its status.
-        Some(bytes) if bytes.starts_with(b"MZ") => match process::spawn_pe(&bytes) {
+        Some(bytes) if bytes.starts_with(b"MZ") => match sched::current().task().ok_or(ENOEXEC).and_then(|me| {
+            // Windows command line: the program name, then the arguments, quoted when they hold blanks
+            let mut cl = alloc::string::String::new();
+            for (i, a) in argv.iter().enumerate() {
+                if i > 0 {
+                    cl.push(' ');
+                }
+                if a.contains(' ') {
+                    cl.push('"');
+                    cl.push_str(a);
+                    cl.push('"');
+                } else {
+                    cl.push_str(a);
+                }
+            }
+            process::spawn_pe_args(&bytes, cl.as_bytes(), &me).map_err(|_| ENOEXEC)
+        }) {
             Ok(pid) => {
                 let Some(t) = process::find_task(pid) else { return ENOEXEC };
                 while !t.is_exited() {
@@ -1397,7 +1413,7 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
                 }
                 PE_PROXY_EXIT + (t.exit_code() & 0xFF) as i64
             }
-            Err(_) => ENOEXEC,
+            Err(e) => e,
         },
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
         Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
