@@ -35,7 +35,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -572,6 +572,11 @@ int main(int argc, char **argv) {
                     compose(outer_of(w));
                     started_resize = 1;
                 }
+            }
+            if (btn && !prev_btn) {                     /* a click outside the open menus closes them */
+                struct wlsurf *hit = 0;
+                for (int i = nwin - 1; i >= 0; i--) if (in(frame_of(&wins[i]), mx, my)) { hit = wins[i].popup ? wins[i].wl : 0; break; }
+                wls_dismiss_popups(hit);
             }
             if (btn && !prev_btn && !started_resize) {
                 for (int i = nwin - 1; i >= 0; i--) {

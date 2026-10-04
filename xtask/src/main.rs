@@ -488,7 +488,8 @@ fn main() {
             for f in [&log, &sock, &shot] {
                 let _ = std::fs::remove_file(f);
             }
-            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            let menu_shot = root.join("target/gtk-menu.ppm");
+            let (tlog, tsock, tshot, tmenu) = (log.clone(), sock.clone(), shot.clone(), menu_shot.clone());
             std::thread::spawn(move || {
                 let ms = std::time::Duration::from_millis;
                 if !wait_for(&tlog, "gtk: shown", 300) {
@@ -499,12 +500,21 @@ fn main() {
                 std::thread::sleep(ms(1000));
                 mon(&tsock, "sendkey ret");
                 wait_for(&tlog, "gtk: clicked", 20);
+                // a menu (xdg_popup): F10 opens it, a second compositor window appears, Down + Enter activates an entry
+                mon(&tsock, "sendkey f10");
+                wait_for(&tlog, "wayland window 2 mapped", 20);
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tmenu.to_str().unwrap()));
+                std::thread::sleep(ms(1000));
+                mon(&tsock, "sendkey down");
+                mon(&tsock, "sendkey ret");
+                wait_for(&tlog, "gtk: menu activated", 20);
             });
             let out = boot_and_run(&img, "gtk", "/busybox sh /gtk.sh", "desk ok:", 400);
             let lit = read_ppm(&shot).map_or(0, |(_, _, d)| d.chunks(3).filter(|p| p.len() == 3 && p[0] > 200 && p[1] > 200 && p[2] > 200).count());
             let mapped = out.lines().find(|l| l.contains("wayland window 1 mapped")).map(str::trim);
-            if mapped.is_some() && lit > 2000 && out.contains("gtk: clicked") {
-                println!("gtk-test PASSED: {} — GTK 3 drew its window ({lit} light pixels) and a key press activated the button", mapped.unwrap());
+            if mapped.is_some() && lit > 2000 && out.contains("gtk: clicked") && out.contains("wayland window 2 mapped") && out.contains("gtk: menu activated") {
+                println!("gtk-test PASSED: {} — GTK 3 drew its window ({lit} light pixels), a key press activated the button, a menu opened as a popup and an entry was activated", mapped.unwrap());
             } else {
                 for l in out.lines().filter(|l| l.contains("gtk") || l.contains("Gtk") || l.contains("GLib") || l.contains("desk") || l.contains("unhandled") || l.contains("killed") || l.contains("trap") || l.contains("rror")).take(40) {
                     eprintln!("  {l}");

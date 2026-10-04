@@ -16,8 +16,9 @@
 #define WLS_INCAP 16384
 
 enum { O_FREE = 0, O_DISPLAY, O_REGISTRY, O_COMPOSITOR, O_SHM, O_POOL, O_BUFFER, O_SURFACE, O_CALLBACK, O_SEAT,
-       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP };
+       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP, O_POSITIONER, O_POPUP };
 
+struct wlpos { int w, h, ax, ay, aw, ah, anchor, gravity, ox, oy; };
 struct wlpool { void *base; size_t size; int fd, refs, destroyed; };
 struct wlbuf { struct wlpool *pool; int off, w, h, stride; uint32_t fmt; };
 struct wlobj { int type; uint32_t ver; void *p; };
@@ -34,6 +35,9 @@ struct wlsurf {
     int role_top, configured, winid, close_sent;
     char title[17];
     int gx, gy, gw, gh, has_geo;               /* xdg_surface.set_window_geometry */
+    int is_popup, popup_x, popup_y, popup_grab, popup_id; /* popup placement (parent window coordinates) */
+    struct wlsurf *parent;
+    uint32_t popup_obj;
 };
 
 struct wlc {
@@ -185,7 +189,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         if (s->winid) surf_unmap(s);
         return;
     }
-    if (!s->role_top || !s->configured || !b->pool->base) { buf_release(c, s->pend_buf); return; }
+    if ((!s->role_top && !s->is_popup) || !s->configured || !b->pool->base) { buf_release(c, s->pend_buf); return; }
     if (b->w <= 0 || b->h <= 0 || b->w > 2000 || b->h > 2000 || b->stride < b->w * 4 ||
         (size_t)b->off + (size_t)b->stride * b->h > b->pool->size) { wl_error(c, s->pend_buf, 0, "buffer outside the pool"); return; }
     struct win *w = s->winid ? win_by_id(s->winid) : 0;
@@ -198,6 +202,12 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         int k = next_id - 1;
         *w = (struct win){ -1, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), b->w, b->h, calloc((size_t)b->w * b->h, 4) };
         w->deco = 1; w->wl = s; w->is_wl = 1;
+        if (s->is_popup) {                                /* menus: no frame, placed relative to the parent window */
+            struct win *pw = s->parent && s->parent->winid ? win_by_id(s->parent->winid) : 0;
+            w->deco = 0; w->popup = 1;
+            w->x = (pw ? pw->x + (pw->csd ? pw->gx : 0) : 100) + s->popup_x;
+            w->y = (pw ? pw->y + (pw->csd ? pw->gy : 0) : 80) + s->popup_y;
+        }
         /* a translucent buffer with a smaller window geometry = the client draws its own frame and shadow (GTK) */
         if (b->fmt == 0 && s->has_geo && (s->gw < b->w || s->gh < b->h)) {
             w->deco = 0; w->csd = 1; w->gx = s->gx; w->gy = s->gy; w->gw = s->gw; w->gh = s->gh;
@@ -382,6 +392,20 @@ static void wls_configure(struct wlsurf *s, int w, int h, int maximized) {
     wl_flush(c);
 }
 
+/* a click outside every grabbing popup dismisses them (xdg_popup.popup_done) */
+static void wls_dismiss_popups(struct wlsurf *except) {
+    for (int i = 0; i < WLS_MAXCL; i++) {
+        if (!wlcl[i].used) continue;
+        for (struct wlsurf *s = wlcl[i].surfs; s; s = s->next)
+            if (s->is_popup && s->popup_grab && s != except && s->winid) {
+                wl_ev(s->c, s->popup_obj, 1, 0);          /* popup_done */
+                wl_flush(s->c);
+                surf_unmap(s);
+                s->popup_grab = 0;
+            }
+    }
+}
+
 static void wls_request_close(struct wlsurf *s) {
     struct wlc *c = s->c;
     if (s->close_sent) {                                  /* the client ignored the first request: hang up */
@@ -554,7 +578,8 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
     case O_XDGWM:
         if (op == 1) {                                    /* create_positioner */
             uint32_t nid = m_u32(m);
-            if (!m->bad) obj_new(c, nid, O_STUB, 1, 0);
+            struct wlpos *ps = calloc(1, sizeof *ps);
+            if (m->bad || !ps || !obj_new(c, nid, O_POSITIONER, o->ver, ps)) free(ps);
         } else if (op == 2) {                             /* get_xdg_surface(id, surface) */
             uint32_t nid = m_u32(m), sid = m_u32(m);
             struct wlsurf *s = surf_of(c, sid);
@@ -562,6 +587,23 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             if (obj_new(c, nid, O_XDGSURF, o->ver, s)) s->xdg_id = nid;
         } else if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
         break;
+    case O_POSITIONER: {
+        struct wlpos *ps = o->p;
+        switch (op) {
+        case 0: free(ps); wl_delete_id(c, id); obj_free(c, id); break;
+        case 1: ps->w = (int)m_u32(m); ps->h = (int)m_u32(m); break;
+        case 2: ps->ax = (int)m_u32(m); ps->ay = (int)m_u32(m); ps->aw = (int)m_u32(m); ps->ah = (int)m_u32(m); break;
+        case 3: ps->anchor = (int)m_u32(m); break;
+        case 4: ps->gravity = (int)m_u32(m); break;
+        case 6: ps->ox = (int)m_u32(m); ps->oy = (int)m_u32(m); break;
+        default: break;
+        }
+        break; }
+    case O_POPUP: {
+        struct wlsurf *s = o->p;
+        if (op == 1) s->popup_grab = 1;                    /* grab(seat, serial) */
+        else if (op == 0) { surf_unmap(s); s->is_popup = 0; wl_delete_id(c, id); obj_free(c, id); }
+        break; }
     case O_XDGSURF: {
         struct wlsurf *s = o->p;
         if (op == 1) {                                    /* get_toplevel */
@@ -572,9 +614,22 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             ob_u32(&e, 0); ob_u32(&e, 0); ob_u32(&e, 0);     /* configure(0, 0, empty states): the client picks its size */
             wl_emit(c, nid, 0, &e);
             wl_ev(c, id, 0, 1, ++c->serial);                 /* xdg_surface.configure(serial) */
-        } else if (op == 2) {                             /* get_popup: accepted, never shown */
-            uint32_t nid = m_u32(m);
-            if (!m->bad) obj_new(c, nid, O_STUB, 1, 0);
+        } else if (op == 2) {                             /* get_popup(id, parent xdg_surface, positioner) */
+            uint32_t nid = m_u32(m), par = m_u32(m), pos = m_u32(m);
+            struct wlobj *po = obj_get(c, pos), *pa = obj_get(c, par);
+            if (m->bad || !po || po->type != O_POSITIONER || !obj_new(c, nid, O_POPUP, o->ver, s)) return;
+            struct wlpos *ps = po->p;
+            s->is_popup = 1; s->popup_obj = nid;
+            s->parent = pa && pa->type == O_XDGSURF ? pa->p : 0;
+            /* anchor point on the rectangle, then the popup extends from it in the gravity direction */
+            int a = ps->anchor, g = ps->gravity;
+            int ax = ps->ax + ((a == 4 || a == 7 || a == 8) ? ps->aw : (a == 3 || a == 5 || a == 6) ? 0 : ps->aw / 2);
+            int ay = ps->ay + ((a == 2 || a == 6 || a == 8) ? ps->ah : (a == 1 || a == 5 || a == 7) ? 0 : ps->ah / 2);
+            int px = (g == 4 || g == 7 || g == 8) ? ax : (g == 3 || g == 5 || g == 6) ? ax - ps->w : ax - ps->w / 2;
+            int py = (g == 2 || g == 6 || g == 8) ? ay : (g == 1 || g == 5 || g == 7) ? ay - ps->h : ay - ps->h / 2;
+            s->popup_x = px + ps->ox; s->popup_y = py + ps->oy;
+            wl_ev(c, nid, 0, 4, (uint32_t)s->popup_x, (uint32_t)s->popup_y, (uint32_t)ps->w, (uint32_t)ps->h);   /* xdg_popup.configure */
+            wl_ev(c, id, 0, 1, ++c->serial);               /* xdg_surface.configure */
         } else if (op == 3) {                             /* set_window_geometry */
             s->gx = (int)m_u32(m); s->gy = (int)m_u32(m); s->gw = (int)m_u32(m); s->gh = (int)m_u32(m);
             s->has_geo = !m->bad && s->gw > 0 && s->gh > 0;
