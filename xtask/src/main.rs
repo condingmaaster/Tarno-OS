@@ -625,7 +625,7 @@ fn main() {
                 std::thread::sleep(ms(15000));
                 mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
             });
-            let out = boot_and_run(&img, "netsurf", "/busybox sh /netsurf.sh", "desk ok:", 400);
+            let out = boot_and_run_args(&img, "netsurf", "/busybox sh /netsurf.sh", "desk ok:", 400, &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"]);
             let (red, blue) = read_ppm(&shot).map_or((0, 0), |(_, _, d)| {
                 let px = d.chunks(3).filter(|p| p.len() == 3);
                 (px.clone().filter(|p| p[0] > 150 && p[1] < 60 && p[2] < 60).count(), px.filter(|p| p[2] > 150 && p[0] < 60 && p[1] < 60).count())
@@ -1467,6 +1467,10 @@ fn disk_image() -> PathBuf {
                         if let Some(tree) = netsurf_tree() {
                             add_dynamic_program_from(&img, tree.join("usr/bin/netsurf-gtk").to_str().unwrap(), &mut gdirs, Some(&tree));
                             copy_tree_into_image(&img, tree.join("usr/share/netsurf").to_str().unwrap(), "/usr/share/netsurf");
+                            for d in ["etc", "etc/ssl", "etc/ssl/certs"] {
+                                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                            }
+                            let _ = Command::new("debugfs").args(["-w", "-R", "write /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/ca-certificates.crt", img.to_str().unwrap()]).output();
                             for f in ["page.html", "netsurf.sh"] {
                                 let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join(format!("xtask/testdata/{f}")).to_str().unwrap()), img.to_str().unwrap()]).output();
                             }
