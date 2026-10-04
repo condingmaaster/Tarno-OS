@@ -180,7 +180,7 @@ extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code:
     // Demand-grown main stack: a not-present access just below the mapped part is fixed up and retried.
     if from_user && vector == 14 && error_code & 1 == 0 {
         if let Some(t) = sched::current().task() {
-            if t.space().grow_stack(cr2) {
+            if t.space().grow_stack(cr2) || t.space().fault_lazy(cr2) {
                 return;
             }
         }

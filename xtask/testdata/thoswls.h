@@ -169,6 +169,7 @@ static uint32_t swizzle(uint32_t px) {
     return ((px >> 16 & 0xFF) << rs) | ((px >> 8 & 0xFF) << gs) | ((px & 0xFF) << bs);
 }
 
+static void wls_focus_keyboard(struct wlsurf *s);
 static void surf_commit(struct wlc *c, struct wlsurf *s) {
     for (int i = 0; i < s->ncb_pending && s->ncb_ready < 16; i++) s->cb_ready[s->ncb_ready++] = s->cb_pending[i];
     s->ncb_pending = 0;
@@ -224,7 +225,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
     }
     s->has_dmg = 0;
     buf_release(c, s->pend_buf);
-    if (fresh) { w->fade = 200; compose(outer_of(w)); }   /* titlebar, border and shadow too */
+    if (fresh) { w->fade = 200; compose(outer_of(w)); wls_focus_keyboard(s); }   /* titlebar, border and shadow too; the new window takes the keyboard */
     else if (old.x1 > old.x0) compose(uni(old, outer_of(w)));
     else compose(isect(content_of(w), rect_xywh(w->x + x0, w->y + y0, x1 - x0, y1 - y0)));
 }
@@ -415,7 +416,7 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
     case O_SHM:
         if (op == 0) {                                    /* create_pool(pool, fd, size) */
             uint32_t pid = m_u32(m); int fd = m_fd(m); uint32_t size = m_u32(m);
-            if (m->bad || size == 0 || size > (64u << 20)) { if (fd >= 0) close(fd); wl_error(c, id, 0, "bad pool"); return; }
+            if (m->bad || size == 0 || size > (1u << 30)) { if (fd >= 0) close(fd); wl_error(c, id, 0, "bad pool"); return; }
             struct wlpool *p = calloc(1, sizeof *p);
             if (!p) { close(fd); return; }
             p->base = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
@@ -440,7 +441,7 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             p->destroyed = 1; wl_delete_id(c, id); obj_free(c, id); pool_unref(p);
         } else if (op == 2) {                             /* resize(size) */
             uint32_t size = m_u32(m);
-            if (m->bad || size < p->size || size > (64u << 20)) return;
+            if (m->bad || size < p->size || size > (1u << 30)) return;
             void *nb = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, p->fd, 0);
             if (nb == MAP_FAILED) return;
             if (p->base) munmap(p->base, p->size);

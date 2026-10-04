@@ -19,57 +19,97 @@ const ENOMEM: i64 = -12;
 const S_IFREG: u32 = 0o100000;
 const MAX_SEG: usize = 64 << 20;
 
-/// `memfd_create` file: a section whose size is set by `ftruncate`.
+/// `memfd_create` file: sparse. Pages are allocated the first time they are touched (read/write, or a fault
+/// in a mapping), so a program can `ftruncate` a few hundred MiB and use a small part of it.
 pub struct MemFd {
-    sec: Mutex<Option<Arc<Section>>>,
+    pages: Mutex<alloc::collections::BTreeMap<usize, x86_64::structures::paging::PhysFrame>>,
     pos: core::sync::atomic::AtomicU64,
+    logical: core::sync::atomic::AtomicU64,
 }
 
 impl MemFd {
     pub fn new() -> Arc<Self> {
-        Arc::new(MemFd { sec: Mutex::new(None), pos: core::sync::atomic::AtomicU64::new(0) })
+        Arc::new(MemFd {
+            pages: Mutex::new(alloc::collections::BTreeMap::new()),
+            pos: core::sync::atomic::AtomicU64::new(0),
+            logical: core::sync::atomic::AtomicU64::new(0),
+        })
+    }
+    fn size(&self) -> usize {
+        self.logical.load(core::sync::atomic::Ordering::Relaxed) as usize
+    }
+    /// Physical address of page `idx`, allocating a zeroed one on first use.
+    fn page(&self, idx: usize, alloc: bool) -> Option<u64> {
+        let mut m = self.pages.lock();
+        if let Some(f) = m.get(&idx) {
+            return Some(f.start_address().as_u64());
+        }
+        if !alloc {
+            return None;
+        }
+        let f = crate::mm::FRAME_ALLOC.lock().alloc()?;
+        let p = f.start_address().as_u64();
+        unsafe { core::ptr::write_bytes(crate::mm::phys_to_virt(f.start_address()).as_mut_ptr::<u8>(), 0, 4096) };
+        m.insert(idx, f);
+        Some(p)
+    }
+}
+
+impl Drop for MemFd {
+    fn drop(&mut self) {
+        let mut fa = crate::mm::FRAME_ALLOC.lock();
+        for (_, f) in core::mem::take(&mut *self.pages.lock()) {
+            fa.dealloc(f);
+        }
     }
 }
 
 impl FileOps for MemFd {
     fn read(&self, buf: &mut [u8]) -> i64 {
-        let Some(sec) = self.sec.lock().clone() else { return 0 };
         let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
-        if pos >= sec.size {
+        let size = self.size();
+        if pos >= size {
             return 0;
         }
-        let n = buf.len().min(sec.size - pos);
+        let n = buf.len().min(size - pos);
         let mut done = 0;
         while done < n {
             let off = pos + done;
             let chunk = (n - done).min(4096 - off % 4096);
-            let Some(p) = sec.ptr_at(off) else { break };
-            buf[done..done + chunk].copy_from_slice(unsafe { core::slice::from_raw_parts(p, chunk) });
+            match self.page(off / 4096, false) {
+                Some(p) => buf[done..done + chunk].copy_from_slice(unsafe {
+                    core::slice::from_raw_parts(crate::mm::phys_to_virt(x86_64::PhysAddr::new(p)).as_ptr::<u8>().add(off % 4096), chunk)
+                }),
+                None => buf[done..done + chunk].fill(0), // a hole reads as zeros
+            }
             done += chunk;
         }
         self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
         done as i64
     }
     fn write(&self, buf: &[u8]) -> i64 {
-        let Some(sec) = self.sec.lock().clone() else { return -28 }; // ENOSPC: size is set by ftruncate
         let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
-        if pos >= sec.size {
-            return -28;
+        let size = self.size();
+        if pos >= size {
+            return -28; // ENOSPC: the size is set by ftruncate
         }
-        let n = buf.len().min(sec.size - pos);
+        let n = buf.len().min(size - pos);
         let mut done = 0;
         while done < n {
             let off = pos + done;
             let chunk = (n - done).min(4096 - off % 4096);
-            let Some(p) = sec.ptr_at(off) else { break };
-            unsafe { core::slice::from_raw_parts_mut(p, chunk) }.copy_from_slice(&buf[done..done + chunk]);
+            let Some(p) = self.page(off / 4096, true) else { return if done > 0 { done as i64 } else { ENOMEM } };
+            unsafe {
+                core::slice::from_raw_parts_mut(crate::mm::phys_to_virt(x86_64::PhysAddr::new(p)).as_mut_ptr::<u8>().add(off % 4096), chunk)
+                    .copy_from_slice(&buf[done..done + chunk])
+            };
             done += chunk;
         }
         self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
         done as i64
     }
     fn seek(&self, o: i64, w: u32) -> i64 {
-        let size = self.sec.lock().as_ref().map_or(0, |s| s.size) as i64;
+        let size = self.size() as i64;
         let cur = self.pos.load(core::sync::atomic::Ordering::Relaxed) as i64;
         let np = match w {
             0 => o,
@@ -84,21 +124,24 @@ impl FileOps for MemFd {
         np
     }
     fn stat(&self) -> (u32, u64) {
-        (S_IFREG | 0o600, self.sec.lock().as_ref().map_or(0, |s| s.size as u64))
+        (S_IFREG | 0o600, self.size() as u64)
     }
     fn truncate(&self, len: u64) -> i64 {
-        if len as usize > MAX_SEG {
+        if len > (1 << 30) {
             return ENOMEM;
         }
-        let mut s = self.sec.lock();
-        if s.as_ref().is_some_and(|x| x.size == len as usize) {
-            return 0;
-        }
-        *s = Some(Arc::new(Section::new(&alloc::vec![0u8; len as usize], None)));
+        // Shrinking only lowers the size: pages stay (they may be mapped somewhere) until the file is dropped.
+        self.logical.store(len, core::sync::atomic::Ordering::Relaxed);
         0
     }
-    fn shm_section(&self) -> Option<Arc<Section>> {
-        self.sec.lock().clone()
+    fn is_memfd(&self) -> bool {
+        true
+    }
+    fn lazy_page(&self, idx: usize) -> Option<u64> {
+        if idx * 4096 >= self.size() {
+            return None;
+        }
+        self.page(idx, true)
     }
 }
 

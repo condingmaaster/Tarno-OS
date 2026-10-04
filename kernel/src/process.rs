@@ -39,6 +39,8 @@ pub struct Process {
     /// `NtUnmapViewOfSection` / `NtFlushVirtualMemory` can find which
     /// `Section` (and how many pages) a base VA names.
     views: Mutex<Vec<SectionView>>,
+    /// Demand-paged shared mappings of sparse memfds.
+    lazy: Mutex<Vec<LazyView>>,
     /// The main stack grows downwards on demand: `[stack_floor, stack_low)` is reserved but not mapped yet.
     stack_floor: AtomicU64,
     stack_low: AtomicU64,
@@ -48,6 +50,13 @@ pub struct Process {
     pe_threads: AtomicU32,
     /// `teardown` ran (the exit path frees the space early; `sched::reap` must not do it again).
     freed: AtomicBool,
+}
+
+struct LazyView {
+    base: u64,
+    pages: usize,
+    off_pages: usize,
+    file: Arc<dyn FileOps>,
 }
 
 struct SectionView {
@@ -127,6 +136,7 @@ impl Process {
             brk: AtomicU64::new(brk0),
             brk_base: AtomicU64::new(brk0),
             views: Mutex::new(Vec::new()),
+            lazy: Mutex::new(Vec::new()),
             stack_floor: AtomicU64::new(0),
             stack_low: AtomicU64::new(0),
             freed: AtomicBool::new(false),
@@ -324,6 +334,7 @@ impl Process {
     fn release_page(&self, virt: u64) {
         let Some(phys) = self.translate(virt) else { return };
         let shared = vmm::is_device_page(self.pml4_phys, virt)
+            || self.lazy.lock().iter().any(|v| virt >= v.base && virt < v.base + v.pages as u64 * 4096)
             || self
                 .views
                 .lock()
@@ -419,6 +430,33 @@ impl Process {
         base
     }
 
+    /// `mmap(MAP_SHARED)` of a memfd: reserve the range; pages are mapped by [`Process::fault_lazy`] as they are touched.
+    pub fn map_lazy_view(&self, file: Arc<dyn FileOps>, offset: usize, len: usize) -> u64 {
+        let pages = len.div_ceil(4096);
+        let base = self.next_user_va.fetch_add(pages as u64 * 4096 + 0x1000, Ordering::Relaxed);
+        self.lazy.lock().push(LazyView { base, pages, off_pages: offset / 4096, file });
+        base
+    }
+
+    /// A not-present fault inside a lazy memfd mapping: map the page (allocated on first use). `true` if fixed.
+    pub fn fault_lazy(&self, addr: u64) -> bool {
+        // The lock stays held across check + map: two threads faulting on the same page must not both map it.
+        let lz = self.lazy.lock();
+        let Some(v) = lz.iter().find(|v| addr >= v.base && addr < v.base + v.pages as u64 * 4096) else { return false };
+        let idx = v.off_pages + ((addr - v.base) / 4096) as usize;
+        let page = addr & !0xFFF;
+        if vmm::page_present_in(self.pml4_phys, page) {
+            return true;
+        }
+        match v.file.lazy_page(idx) {
+            Some(phys) => {
+                self.map(page, phys, true, false);
+                true
+            }
+            None => false,
+        }
+    }
+
     fn view_at(&self, base: u64) -> Option<Arc<Section>> {
         self.views.lock().iter().find(|v| v.base == base).map(|v| v.section.clone())
     }
@@ -494,6 +532,14 @@ impl Process {
         let bases: alloc::vec::Vec<u64> = self.views.lock().iter().map(|v| v.base).collect();
         for base in bases {
             self.unmap_view(base);
+        }
+        for v in core::mem::take(&mut *self.lazy.lock()) {
+            for i in 0..v.pages {
+                let a = v.base + i as u64 * 4096;
+                if vmm::page_present_in(self.pml4_phys, a) {
+                    vmm::unmap_page_in(self.pml4_phys, a); // the memfd owns the frame
+                }
+            }
         }
         self.free_user_address_space();
     }

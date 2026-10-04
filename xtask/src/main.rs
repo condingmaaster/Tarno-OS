@@ -1214,7 +1214,7 @@ fn disk_image() -> PathBuf {
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {
                 let mut fdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
                 add_dynamic_program_from(&img, tree.join("usr/bin/foot").to_str().unwrap(), &mut fdirs, Some(&tree));
-                for d in ["usr/share/fonts", "usr/share/fonts/truetype", "usr/share/fonts/truetype/dejavu", "etc", "etc/fonts", "etc/fonts/conf.d", "usr/share/terminfo", "usr/share/terminfo/f", "usr/share/terminfo/x", "var", "var/cache", "var/cache/fontconfig", "etc/xdg", "etc/xdg/foot"] {
+                for d in ["usr/share/X11", "usr/share/X11/xkb", "usr/share/fonts", "usr/share/fonts/truetype", "usr/share/fonts/truetype/dejavu", "etc", "etc/fonts", "etc/fonts/conf.d", "usr/share/terminfo", "usr/share/terminfo/f", "usr/share/terminfo/x", "var", "var/cache", "var/cache/fontconfig", "etc/xdg", "etc/xdg/foot"] {
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
                 }
                 for (from, to) in [
@@ -1229,6 +1229,18 @@ fn disk_image() -> PathBuf {
                     let src = if host.exists() { host.to_str().unwrap().to_string() } else { alt };
                     if std::path::Path::new(&src).exists() {
                         let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {src} usr/share/terminfo/{t}"), img.to_str().unwrap()]).output();
+                    }
+                }
+                for d in ["usr/lib", "usr/lib/locale", "usr/lib/locale/C.utf8"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                for f in ["LC_ADDRESS", "LC_COLLATE", "LC_CTYPE", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_MESSAGES/SYS_LC_MESSAGES", "LC_MONETARY", "LC_NAME", "LC_NUMERIC", "LC_PAPER", "LC_TELEPHONE", "LC_TIME"] {
+                    let host = format!("/usr/lib/locale/C.utf8/{f}");
+                    if std::path::Path::new(&host).exists() {
+                        if let Some((dir, _)) = f.split_once('/') {
+                            let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir usr/lib/locale/C.utf8/{dir}"), img.to_str().unwrap()]).output();
+                        }
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {host} usr/lib/locale/C.utf8/{f}"), img.to_str().unwrap()]).output();
                     }
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} foot.sh", root.join("xtask/testdata/foot.sh").to_str().unwrap()), img.to_str().unwrap()]));

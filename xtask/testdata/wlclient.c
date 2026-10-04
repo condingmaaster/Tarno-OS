@@ -3,10 +3,12 @@
 // callbacks, pointer and keyboard listeners. Prints what it sees so the test can check the whole path.
 #define _GNU_SOURCE
 #include <stdio.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/epoll.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
 
@@ -140,7 +142,18 @@ int main(int argc, char **argv) {
     xdg_toplevel_add_listener(top, &top_l, 0);
     xdg_toplevel_set_title(top, "wlclient");
     wl_surface_commit(surf);                                /* first commit: no buffer, asks for the configure */
-    while (!closing && wl_display_dispatch(dpy) != -1) {}
+    /* the event loop the way toolkits do it: epoll on the display fd, prepare_read/read_events */
+    int ep = epoll_create1(EPOLL_CLOEXEC);
+    struct epoll_event ee = { .events = EPOLLIN, .data.fd = wl_display_get_fd(dpy) };
+    epoll_ctl(ep, EPOLL_CTL_ADD, ee.data.fd, &ee);
+    while (!closing) {
+        while (wl_display_prepare_read(dpy) != 0) wl_display_dispatch_pending(dpy);
+        if (wl_display_flush(dpy) < 0 && errno != EAGAIN) break;
+        struct epoll_event ev;
+        int n = epoll_wait(ep, &ev, 1, -1);
+        if (n > 0) { if (wl_display_read_events(dpy) < 0) break; } else wl_display_cancel_read(dpy);
+        if (wl_display_dispatch_pending(dpy) < 0) break;
+    }
     printf("wlclient: bye\n"); fflush(stdout);
     return 0;
 }

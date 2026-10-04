@@ -104,6 +104,13 @@ pub trait FileOps: Send + Sync {
     fn next_wake_ns(&self) -> Option<u64> {
         None
     }
+    /// Physical address of page `idx` of a sparse memfd, allocated on demand (None past the end / out of memory).
+    fn lazy_page(&self, _idx: usize) -> Option<u64> {
+        None
+    }
+    fn is_memfd(&self) -> bool {
+        false
+    }
     fn as_epoll(&self) -> Option<&crate::eventpoll::Epoll> {
         None
     }

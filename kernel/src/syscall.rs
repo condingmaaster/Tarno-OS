@@ -91,6 +91,7 @@ const SYS_UTIMENSAT: u64 = 280;
 const THOS_BASE: u64 = 0x5448_0000; // 'T' 'H'
 const SYS_THOS_ELEVATE: u64 = THOS_BASE;
 const SYS_POLL: u64 = 7;
+const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
 const SYS_EPOLL_WAIT: u64 = 232;
 const SYS_EPOLL_CTL: u64 = 233;
@@ -401,13 +402,20 @@ fn sys_mmap(addr: u64, len: u64, prot: u64, flags: u64, fd: u64, off: u64) -> i6
     }
     let Some(proc) = sched::current_proc() else { return EINVAL };
     // A real memory limit would go here; for now refuse absurd requests of free RAM.
-    if len > crate::mm::FRAME_ALLOC.lock().free_frames() * 4096 && prot != 0 {
-        return ENOMEM;
+    let shared_file = flags & MAP_ANON == 0 && flags & 1 != 0 && cur_fd(fd).is_some_and(|f| f.is_memfd());
+    if len > crate::mm::FRAME_ALLOC.lock().free_frames() * 4096 && prot != 0 && !shared_file {
+        return ENOMEM; // (a shared memfd mapping is clamped to the pages it really has)
     }
     let file: Option<alloc::sync::Arc<dyn crate::file::FileOps>> = if flags & MAP_ANON != 0 {
         None
     } else {
         let Some(f) = cur_fd(fd) else { return EBADF };
+        if flags & 1 != 0 && f.is_memfd() {
+            if fixed {
+                return EINVAL;
+            }
+            return proc.map_lazy_view(f.clone(), off as usize, len as usize) as i64;
+        }
         if flags & 1 != 0 {
             if let Some(sec) = f.shm_section() {
                 if fixed || off as usize >= sec.size {
@@ -1783,6 +1791,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_INOTIFY_INIT1 => crate::eventpoll::sys_inotify_init(a1),
         SYS_INOTIFY_ADD_WATCH => crate::eventpoll::sys_inotify_add_watch(a1),
         SYS_INOTIFY_RM_WATCH => 0,
+        SYS_FALLOCATE => match cur_fd(a1) {
+            // memfd (wl_shm pools): make it at least offset+len long; other files: nothing to preallocate
+            Some(f) if f.is_memfd() => {
+                let end = a3.saturating_add(a4);
+                if f.stat().1 < end { f.truncate(end) } else { 0 }
+            }
+            Some(_) => 0,
+            None => EBADF,
+        },
         SYS_POLL => sock_sys::sys_poll(a1, a2, if (a3 as i32) < 0 { -1 } else { (a3 as i64) * 1_000_000 }),
         SYS_PPOLL => {
             // a3 = *timespec or NULL (forever)
