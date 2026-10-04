@@ -5378,7 +5378,7 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     let run_img = root.join(format!("target/{tag}.img"));
     std::fs::copy(img, &run_img).expect("copy image");
     let mut child = Command::new("qemu-system-x86_64")
-        .args(["-M", "pc", "-m", "512M", "-smp", "2"])
+        .args(["-M", "pc", "-m", "512M", "-smp", &std::env::var("THOS_SMP").unwrap_or_else(|_| "2".into())])
         .args(if std::env::var("THOS_BOOT_USB").is_ok() {
             // no SATA disk at all: boot from a USB stick on an EHCI controller (the Acer-with-a-stick case)
             vec![

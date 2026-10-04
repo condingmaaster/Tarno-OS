@@ -494,6 +494,17 @@ pub fn wait_input() {
 /// Turn the controller's keyboard and mouse interrupts on and route them through the I/O APIC.
 /// `false` (and everything keeps working by polling) if there is no I/O APIC to route them.
 pub fn enable_irqs() -> bool {
+    // the controller can be slow to answer on a loaded (or virtual) machine: try a few times before settling for polling
+    for _ in 0..5 {
+        if try_enable_irqs() {
+            return true;
+        }
+        crate::timer::sleep_ns(20_000_000);
+    }
+    false
+}
+
+fn try_enable_irqs() -> bool {
     // read the config byte — first drain anything the polling path left in the output buffer
     x86_64::instructions::interrupts::without_interrupts(pump_locked);
     if !cmd(0x20) || !wait_out_full() {
