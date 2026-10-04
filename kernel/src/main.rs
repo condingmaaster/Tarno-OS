@@ -89,6 +89,7 @@ mod ps2;
 mod random;
 mod rtc;
 mod ehci;
+mod hda;
 mod eventpoll;
 mod xhci;
 mod wait;
@@ -1570,6 +1571,11 @@ fn start_input_devices() {
     if EHCI.lock().as_ref().is_some_and(|e| e.has_keyboard()) {
         sched::spawn("ehci-poll", ehci_poll_thread, 0);
         kprintln!("THOS: ehci ok          USB keyboard attached (poll thread up)");
+    }
+
+    match hda::init() {
+        Ok(()) => {}
+        Err(e) => kprintln!("THOS: hda              {}", e),
     }
 
     // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).

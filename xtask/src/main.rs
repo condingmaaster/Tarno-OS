@@ -575,6 +575,35 @@ fn main() {
                 exit(1);
             }
         }
+        "audio-test" => {
+            // Intel HD Audio (QEMU's intel-hda + hda-output): a tone written to /dev/dsp reaches the (wav) audio backend
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let wav = root.join("target/audio-out.wav");
+            let _ = std::fs::remove_file(&wav);
+            let out = boot_and_run_args(
+                &img,
+                "audio",
+                "audiotest; echo audio-after-$((11))",
+                "audio-after-11",
+                120,
+                &["-audiodev", &format!("wav,id=a0,path={}", wav.display()), "-device", "intel-hda,id=hda0", "-device", "hda-output,audiodev=a0"],
+            );
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let data = std::fs::read(&wav).unwrap_or_default();
+            let samples: Vec<i16> = data.get(44..).unwrap_or(&[]).chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect();
+            let loud = samples.iter().filter(|&&v| v.unsigned_abs() > 6000).count();
+            let peak = samples.iter().map(|v| v.unsigned_abs()).max().unwrap_or(0);
+            if out.contains("audio-played") && out.contains("THOS: hda ok") && loud > 24000 {
+                println!("audio-test PASSED: a 440 Hz tone went through /dev/dsp and the HDA controller ({loud} loud samples, peak {peak})");
+            } else {
+                for l in out.lines().filter(|l| l.contains("hda") || l.contains("audio")).take(10) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("audio-test FAILED (wav {} bytes, loud samples {loud}, peak {peak})", data.len());
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1519,6 +1548,10 @@ fn disk_image() -> PathBuf {
                     }
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} foot.sh", root.join("xtask/testdata/foot.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let aud = root.join("target/audiotest");
+            if Command::new("gcc").args(["-O1", "-o", aud.to_str().unwrap(), root.join("xtask/testdata/audiotest.c").to_str().unwrap(), "-lm"]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} audiotest", aud.to_str().unwrap()), img.to_str().unwrap()]));
             }
             // Wayland: a stock `wayland-info`, our libwayland-client test program, the keymap and the script
             {
