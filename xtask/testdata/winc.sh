@@ -5,4 +5,5 @@ echo rc-$?-end
 /busybox cat /tmp/w.out
 /wtest.exe
 /w32test.exe
+/w32thr.exe
 echo winc-done

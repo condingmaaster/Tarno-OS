@@ -51,7 +51,7 @@ Dateideskriptoren schließen sofort beim Prozessende, Register werden vor dem St
 ## Offen / Risiken
 
 - Kein `lspci -nn` der echten Acer-Hardware → kein passender NIC-Treiber (Verdacht: Atheros AR8152/AR8151), keine echte Messung der Geschwindigkeit auf dem i3-370M.
-- Windows: `CreateThread`, Unicode-APIs (`W`), 32-Bit-Programme, GUI-Steuerelemente fehlen; `msvcrtx.dll` kennt noch kein `scanf`, `%e`-Format ist vereinfacht.
+- Windows: Unicode-APIs (`W`), 32-Bit-Programme, GUI-Steuerelemente fehlen (Threads: `CreateThread` + Events/Mutex/Semaphoren laufen jetzt, max. 15 Arbeitsthreads); `msvcrtx.dll` kennt noch kein `scanf`, `%e`-Format ist vereinfacht.
 - Signale sind weiter pro Prozess (nicht pro Thread); kein SIGSTOP/Job-Control (Ctrl+Z); Hardlink-/Symlink-Sonderfälle (relative Link-Ziele über `..` bei gelöschtem Zwischenverzeichnis) ungetestet.
 - Exec liest die ganze ELF-Datei in den Kernel-Heap (BusyBox 2 MiB, Python 7 MiB) — bei sehr großen Programmen (Node/Java > 50 MiB Bibliotheken) sprengt das den 64-MiB-Heap und das 64-MiB-Dateisystem.
 - ext2: Verzeichnisse > 12 Blöcke und Dateien > 64 MiB (Triple-Indirect) fehlen.

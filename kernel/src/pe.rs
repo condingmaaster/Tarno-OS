@@ -1391,7 +1391,14 @@ pub fn spawn_thread(
     let task = crate::sched::current().task().ok_or("no current task")?;
     let proc = task.space();
 
-    // user stack: fresh frames, contiguous VA at PE_THREAD_STACK_ADDR.
+    // Every worker gets its own stack (64 KiB stride) and TEB page; at most 15 workers.
+    let slot = proc.next_pe_thread_slot();
+    if slot >= 15 {
+        return Err("PE: too many threads");
+    }
+    let stack_addr = PE_THREAD_STACK_ADDR + slot * 0x1_0000;
+    let teb_addr = if slot == 0 { PE_TEB2_ADDR } else { NT_STUB_BASE + 0x0020_0000 + slot * 0x1000 };
+    // user stack: fresh frames, contiguous VA at `stack_addr`.
     let pages = (PE_THREAD_STACK_BYTES / 0x1000) as usize;
     for i in 0..pages {
         let fr = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread stack)")?;
@@ -1404,9 +1411,9 @@ pub fn spawn_thread(
                 *((top - 8) as *mut u64) = arg;
             }
         }
-        proc.map(PE_THREAD_STACK_ADDR + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
+        proc.map(stack_addr + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
     }
-    let user_rsp = PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES - 16;
+    let user_rsp = stack_addr + PE_THREAD_STACK_BYTES - 16;
 
     // worker TEB.
     let tf = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread TEB)")?;
@@ -1414,15 +1421,15 @@ pub fn spawn_thread(
         let p = phys_to_virt(tf.start_address()).as_mut_ptr::<u8>();
         core::ptr::write_bytes(p, 0, 4096);
         let put = |off: usize, v: u64| *((p.add(off)) as *mut u64) = v;
-        put(0x08, PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES); // StackBase
-        put(0x10, PE_THREAD_STACK_ADDR); // StackLimit
-        put(0x30, PE_TEB2_ADDR); // NT_TIB.Self
+        put(0x08, stack_addr + PE_THREAD_STACK_BYTES); // StackBase
+        put(0x10, stack_addr); // StackLimit
+        put(0x30, teb_addr); // NT_TIB.Self
         put(0x60, PE_PEB_ADDR); // ProcessEnvironmentBlock
     }
-    proc.map(PE_TEB2_ADDR, tf.start_address().as_u64(), true, false);
+    proc.map(teb_addr, tf.start_address().as_u64(), true, false);
 
     let ev = alloc::sync::Arc::new(crate::wait::Event::new());
-    let tid = crate::sched::spawn_user_pe("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, PE_TEB2_ADDR);
+    let tid = crate::sched::spawn_user_pe("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, teb_addr);
     crate::process::register_thread_exit(tid, ev.clone());
     Ok((tid, ev))
 }

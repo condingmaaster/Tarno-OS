@@ -44,6 +44,8 @@ pub struct Process {
     stack_low: AtomicU64,
     /// Randomised start of the heap (`brk`) for this address space.
     brk_base: AtomicU64,
+    /// How many PE worker threads this address space has started (each gets its own stack and TEB slot).
+    pe_threads: AtomicU32,
     /// `teardown` ran (the exit path frees the space early; `sched::reap` must not do it again).
     freed: AtomicBool,
 }
@@ -128,6 +130,7 @@ impl Process {
             stack_floor: AtomicU64::new(0),
             stack_low: AtomicU64::new(0),
             freed: AtomicBool::new(false),
+            pe_threads: AtomicU32::new(0),
         })
     }
 
@@ -214,6 +217,10 @@ impl Process {
     /// Map one 4 KiB user page into this address space.
     pub fn map(&self, virt: u64, phys: u64, writable: bool, exec: bool) {
         vmm::map_page_in(self.pml4_phys, virt, phys, writable, true, exec);
+    }
+
+    pub fn next_pe_thread_slot(&self) -> u64 {
+        self.pe_threads.fetch_add(1, Ordering::Relaxed) as u64
     }
 
     /// Map a zeroed page; `false` when memory is (nearly) exhausted — page-table frames still

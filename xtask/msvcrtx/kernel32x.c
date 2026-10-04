@@ -283,4 +283,40 @@ EXPORT void *WINAPI HeapReAlloc(HANDLE heap, u32 flags, void *p, u64 n) {
     return q;
 }
 
+
+/* ---- threads and synchronisation (Win32 on top of the kernel's ntdll layer) ---- */
+extern i64 WINAPI NtCreateThreadEx(HANDLE *h, u32 access, void *oa, HANDLE proc, void *start, void *arg, u32 flags, u64 zb, u64 ss, u64 ms, void *attrs);
+extern i64 WINAPI NtTerminateThread(HANDLE h, i64 status);
+extern i64 WINAPI NtSetEvent(HANDLE h, void *prev);
+extern i64 WINAPI NtResetEvent(HANDLE h, void *prev);
+extern i64 WINAPI NtCreateMutant(HANDLE *h, u32 access, void *oa, u32 initial_owner);
+extern i64 WINAPI NtReleaseMutant(HANDLE h, void *prev);
+extern i64 WINAPI NtCreateSemaphore(HANDLE *h, u32 access, void *oa, i64 initial, i64 max);
+extern i64 WINAPI NtReleaseSemaphore(HANDLE h, i64 count, long *prev);
+extern i64 WINAPI NtWaitForMultipleObjects(u32 n, HANDLE *h, u32 type, u32 alertable, i64 *timeout);
+
+static u32 g_tid_counter = 1000;
+EXPORT HANDLE WINAPI CreateThread(void *sa, u64 stack, void *start, void *arg, u32 flags, u32 *tid) {
+    (void)sa; (void)stack; (void)flags;
+    HANDLE h = 0;
+    i64 st = NtCreateThreadEx(&h, 0x1FFFFF, 0, (HANDLE)(i64)-1, start, arg, 0, 0, 0, 0, 0);
+    if (st != 0) { g_err = 8; return 0; }
+    if (tid) *tid = ++g_tid_counter;
+    return h;
+}
+EXPORT void WINAPI ExitThread(u32 code) { NtTerminateThread(0, code); for (;;) {} }
+EXPORT BOOL WINAPI GetExitCodeThread(HANDLE h, u32 *code) { (void)h; *code = 0; return 1; }
+EXPORT BOOL WINAPI SetEvent(HANDLE h) { return NtSetEvent(h, 0) == 0; }
+EXPORT BOOL WINAPI ResetEvent(HANDLE h) { return NtResetEvent(h, 0) == 0; }
+EXPORT HANDLE WINAPI CreateMutexA(void *sa, BOOL owner, const char *name) { (void)sa; (void)name; HANDLE h = 0; return NtCreateMutant(&h, 0x1F0001, 0, owner ? 1 : 0) == 0 ? h : 0; }
+EXPORT BOOL WINAPI ReleaseMutex(HANDLE h) { return NtReleaseMutant(h, 0) == 0; }
+EXPORT HANDLE WINAPI CreateSemaphoreA(void *sa, long initial, long max, const char *name) { (void)sa; (void)name; HANDLE h = 0; return NtCreateSemaphore(&h, 0x1F0003, 0, initial, max) == 0 ? h : 0; }
+EXPORT BOOL WINAPI ReleaseSemaphore(HANDLE h, long n, long *prev) { return NtReleaseSemaphore(h, n, prev) == 0; }
+EXPORT u32 WINAPI WaitForMultipleObjects(u32 n, HANDLE *h, BOOL all, u32 ms) {
+    i64 t = -(i64)ms * 10000;                      /* relative 100 ns units */
+    i64 st = NtWaitForMultipleObjects(n, h, all ? 0 : 1, 0, ms == 0xFFFFFFFFu ? 0 : &t);
+    if (st == 0x102) return 0x102;                  /* WAIT_TIMEOUT */
+    return st < 0 ? 0xFFFFFFFFu : (u32)st;
+}
+
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }
