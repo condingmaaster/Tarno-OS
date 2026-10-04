@@ -117,6 +117,7 @@ struct Pending {
     lba: u64,
     sectors: u16,
     buf_phys: u64,
+    fua: bool,
 }
 /// The parameters of every in-flight command, so recovery can re-issue the
 /// tags the drive aborted that were not the one that actually failed.
@@ -535,7 +536,7 @@ fn recover(hba: &Hba) {
             (Some(f), Some(p)) if f != t => {
                 let _s = SUBMIT.lock();
                 let bytes = p.sectors as u32 * SECTOR as u32;
-                issue(t, true, p.is_write, Some((p.buf_phys, bytes)), fis(p.is_write, true, p.lba, p.sectors, t));
+                issue(t, true, p.is_write, Some((p.buf_phys, bytes)), fis(p.is_write, true, p.lba, p.sectors, t, p.fua));
             }
             _ => {
                 TAG_ERR.fetch_or(1u32 << t, Ordering::Release);
@@ -613,7 +614,7 @@ enum Xfer<'a> {
 
 /// One data transfer of `sectors` sectors at `lba` through the tag's DMA
 /// bounce buffer.
-fn transfer(op: Xfer, lba: u64, sectors: u16) -> Result<(), &'static str> {
+fn transfer(op: Xfer, lba: u64, sectors: u16, fua: bool) -> Result<(), &'static str> {
     if HBA_BASE.load(Ordering::Relaxed) == 0 {
         return Err("AHCI not initialised");
     }
@@ -631,12 +632,12 @@ fn transfer(op: Xfer, lba: u64, sectors: u16) -> Result<(), &'static str> {
     if let Xfer::Write(src) = &op {
         unsafe { core::ptr::copy_nonoverlapping(src.as_ptr(), bvirt, src.len()) };
     }
-    PENDING.lock()[tag as usize] = Some(Pending { is_write, lba, sectors, buf_phys: bphys });
+    PENDING.lock()[tag as usize] = Some(Pending { is_write, lba, sectors, buf_phys: bphys, fua });
 
     {
         wait_ready(&Hba::cur());
         let _s = SUBMIT.lock();
-        issue(tag, ncq, is_write, Some((bphys, bytes)), fis(is_write, ncq, lba, sectors, tag));
+        issue(tag, ncq, is_write, Some((bphys, bytes)), fis(is_write, ncq, lba, sectors, tag, fua));
     }
     let r = wait(tag, ncq, IRQ_ON.load(Ordering::Relaxed));
     PENDING.lock()[tag as usize] = None;
@@ -651,7 +652,7 @@ fn transfer(op: Xfer, lba: u64, sectors: u16) -> Result<(), &'static str> {
 }
 
 /// FIS builder for `READ`/`WRITE` (`FPDMA QUEUED` when `ncq`, else `DMA EXT`).
-fn fis(is_write: bool, ncq: bool, lba: u64, sectors: u16, tag: u8) -> impl FnOnce(*mut u8) {
+fn fis(is_write: bool, ncq: bool, lba: u64, sectors: u16, tag: u8, fua: bool) -> impl FnOnce(*mut u8) {
     move |f| unsafe {
         f.add(0).write_volatile(FIS_TYPE_H2D);
         f.add(1).write_volatile(1 << 7); // C
@@ -672,7 +673,7 @@ fn fis(is_write: bool, ncq: bool, lba: u64, sectors: u16, tag: u8) -> impl FnOnc
             f.add(2).write_volatile(if is_write { CMD_WRITE_FPDMA } else { CMD_READ_FPDMA });
             f.add(3).write_volatile(sectors as u8); // features 7:0  = count low
             f.add(11).write_volatile((sectors >> 8) as u8); // features 15:8 = count high
-            f.add(7).write_volatile(if is_write { 0xC0 } else { 0x40 }); // LBA (+FUA on write)
+            f.add(7).write_volatile(if is_write && fua { 0xC0 } else { 0x40 }); // LBA (+FUA on a durable write)
             f.add(12).write_volatile(tag << 3); // sector count 7:3 = tag
         } else {
             f.add(2).write_volatile(if is_write { CMD_WRITE_DMA_EX } else { CMD_READ_DMA_EX });
@@ -687,7 +688,7 @@ fn fis(is_write: bool, ncq: bool, lba: u64, sectors: u16, tag: u8) -> impl FnOnc
 pub fn read(lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
     assert!(buf.len() % SECTOR == 0 && !buf.is_empty() && buf.len() <= BOUNCE);
     let sectors = (buf.len() / SECTOR) as u16;
-    transfer(Xfer::Read(buf), lba, sectors)
+    transfer(Xfer::Read(buf), lba, sectors, false)
 }
 
 /// Write `buf.len() / 512` sectors at `lba` (≤ 32 KiB), durably: the NCQ path
@@ -695,11 +696,20 @@ pub fn read(lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
 pub fn write(lba: u64, buf: &[u8]) -> Result<(), &'static str> {
     assert!(buf.len() % SECTOR == 0 && !buf.is_empty() && buf.len() <= BOUNCE);
     let sectors = (buf.len() / SECTOR) as u16;
-    let mut r = transfer(Xfer::Write(buf), lba, sectors);
+    let mut r = transfer(Xfer::Write(buf), lba, sectors, true);
     if r.is_ok() && DEPTH.load(Ordering::Relaxed) == 1 {
         r = flush();
     }
     r
+}
+
+/// Like [`write`] but without FUA / flush: the data may sit in the drive's cache until the caller
+/// issues [`flush`]. The filesystem uses this for its many small metadata writes and flushes once per
+/// operation (a durable write costs a drive-cache flush each — dozens per file created).
+pub fn write_relaxed(lba: u64, buf: &[u8]) -> Result<(), &'static str> {
+    assert!(buf.len() % SECTOR == 0 && !buf.is_empty() && buf.len() <= BOUNCE);
+    let sectors = (buf.len() / SECTOR) as u16;
+    transfer(Xfer::Write(buf), lba, sectors, false)
 }
 
 /// Explicit `FLUSH CACHE EXT`. Claims a tag, drains every *other* tag, and holds

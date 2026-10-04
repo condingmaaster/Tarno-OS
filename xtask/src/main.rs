@@ -161,7 +161,7 @@ fn main() {
             let out = boot_and_run(&img, "real5", "/usr/bin/bash /real5.sh", "real5-done", 250);
             let want = [
                 "sort=a a b c", "uniq=3", "head=b,a,", "tail=a", "cut=y", "sha=ba7816bf8f01cfea", "md5=90015098", "seq=1 2 3 4 5", "expr=42",
-                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi", "vim=GAMMA", "trunc=abcd", "mode=755",
+                "diff=same", "stat=8 regular file", "du=8", "b=c", "d=/a/b", "date=1970", "uname=Linux", "env=bar", "tee=hi", "vim=GAMMA", "trunc=abcd", "mode=755", "bigdir=400", "bigdir2=389",
             ];
             let mut missing: Vec<&str> = want.iter().copied().filter(|w| !out.lines().any(|l| l.trim() == *w)).collect();
             if !out.lines().any(|l| l.trim().starts_with("find=") && l.contains("./in.txt") && l.contains("./moved.txt") && l.contains("./empty")) {
@@ -242,6 +242,16 @@ fn main() {
                     eprintln!("  {l}");
                 }
                 eprintln!("winc-test FAILED");
+                exit(1);
+            }
+        }
+        "pipe2-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pipe2", "/usr/bin/bash /pipe2.sh", "pipe2-done-40", 200);
+            if out.lines().any(|l| l.trim() == "pipe2-done-40") {
+                println!("pipe2-test PASSED: 40 command substitutions with a three-stage pipeline of real programs each (they exec at the same time — this used to deadlock in the exec gate)");
+            } else {
+                eprintln!("pipe2-test FAILED");
                 exit(1);
             }
         }
@@ -978,6 +988,7 @@ fn disk_image() -> PathBuf {
             }
             run(Command::new("debugfs").args(["-w", "-R", "write /usr/share/terminfo/l/linux usr/share/terminfo/l/linux", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-vim.sh", root.join("xtask/testdata/desk-vim.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pipe2.sh", root.join("xtask/testdata/pipe2.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -4300,7 +4311,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -4758,7 +4769,28 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     }
     std::thread::sleep(std::time::Duration::from_millis(800));
     type_line(&sock, cmd);
-    let _ = wait_for(&log, needle, secs);
+    let found = wait_for(&log, needle, secs);
+    if !found {
+        // a hang: leave the CPUs' registers (three samples, a second apart) next to the log; rip -> `nm` on the kernel
+        use std::io::{Read, Write};
+        let mut all = String::new();
+        for _ in 0..3 {
+            if let Ok(mut st) = std::os::unix::net::UnixStream::connect(&sock) {
+                let _ = writeln!(st, "info registers -a");
+                let _ = st.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+                let mut chunk = [0u8; 4096];
+                while let Ok(n) = st.read(&mut chunk) {
+                    if n == 0 {
+                        break;
+                    }
+                    all.push_str(&String::from_utf8_lossy(&chunk[..n]));
+                }
+            }
+            all.push_str("\n=====\n");
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        }
+        let _ = std::fs::write(root.join(format!("target/{tag}-regs.txt")), all);
+    }
     let out = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = child.kill();
     let _ = child.wait();

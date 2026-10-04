@@ -35,4 +35,13 @@ echo trunc=$(/usr/bin/cat tr.txt 2>/dev/null || /busybox cat tr.txt)
 /usr/bin/touch x.sh
 chmod 755 x.sh
 echo mode=$(/usr/bin/stat -c %a x.sh)
+mkdir bigdir
+cd bigdir
+i=0
+P=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+while [ $i -lt 400 ]; do : > $P-$i; i=$((i+1)); done
+echo bigdir=$(/usr/bin/ls | /usr/bin/wc -l)
+rm $P-7*
+echo bigdir2=$(/usr/bin/ls | /usr/bin/wc -l)
+cd ..
 echo real5-done

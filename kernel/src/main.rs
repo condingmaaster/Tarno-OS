@@ -1715,6 +1715,9 @@ pub(crate) enum ExitCode {
 }
 
 pub(crate) fn exit_qemu(code: ExitCode) {
+    if matches!(code, ExitCode::Success) {
+        ext2::sync_all(); // the host checks the image afterwards
+    }
     unsafe {
         core::arch::asm!(
             "out dx, eax",
