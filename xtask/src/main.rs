@@ -461,6 +461,21 @@ fn main() {
                 exit(1);
             }
         }
+        "java-test" => {
+            std::env::set_var("THOS_FS_MIB", "512");
+            std::env::set_var("THOS_JAVA", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "java", "/busybox sh /java.sh", "java-script-done", 600);
+            if out.contains("openjdk version") {
+                println!("java-test PASSED: OpenJDK started and printed its version");
+            } else {
+                for l in out.lines().filter(|l| !l.contains("THOS: net") ).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
+                    eprintln!("  {l}");
+                }
+                eprintln!("java-test FAILED");
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1243,6 +1258,25 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} nodetest.js", root.join("xtask/testdata/nodetest.js").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} node.sh", root.join("xtask/testdata/node.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // Java (OpenJDK 21; needs THOS_FS_MIB=512 and THOS_JAVA=1, see `java-test`)
+            if std::env::var("THOS_JAVA").is_ok() && std::path::Path::new("/usr/lib/jvm/java-21-openjdk-amd64/bin/java").exists() {
+                let mut jdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                add_dynamic_program(&img, "/usr/lib/jvm/java-21-openjdk-amd64/bin/java", &mut jdirs);
+                for sub in ["lib", "conf", "bin"] {
+                    copy_tree_into_image(&img, &format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"), &format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"));
+                }
+                for dir in ["lib", "lib/server"] {
+                    if let Ok(rd) = std::fs::read_dir(format!("/usr/lib/jvm/java-21-openjdk-amd64/{dir}")) {
+                        for e in rd.flatten() {
+                            let p = e.path();
+                            if p.extension().is_some_and(|x| x == "so") {
+                                add_dynamic_program(&img, p.to_str().unwrap(), &mut jdirs);
+                            }
+                        }
+                    }
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} java.sh", root.join("xtask/testdata/java.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {

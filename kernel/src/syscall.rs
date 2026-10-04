@@ -208,6 +208,7 @@ const SYS_TGKILL: u64 = 234;
 const SYS_CLOCK_GETTIME: u64 = 228;
 const SYS_CLOCK_GETRES: u64 = 229;
 const SYS_CAPGET: u64 = 125;
+const SYS_GETCPU: u64 = 309;
 const SYS_CAPSET: u64 = 126;
 const SYS_PPOLL: u64 = 271;
 const SYS_READLINKAT: u64 = 267;
@@ -1911,6 +1912,22 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
         SYS_CAPSET => 0,
 
+        SYS_GETCPU => {
+            let cpu = crate::smp::this_cpu();
+            if a1 != 0 {
+                if let Err(e) = usercopy::write_u32(a1, cpu) {
+                    frame.rax = e as u64;
+                    return;
+                }
+            }
+            if a2 != 0 {
+                if let Err(e) = usercopy::write_u32(a2, 0) {
+                    frame.rax = e as u64;
+                    return;
+                }
+            }
+            0
+        }
         SYS_SCHED_GETAFFINITY => {
             // report the online CPUs as a bitmask
             let len = (a2 as usize).min(8);
