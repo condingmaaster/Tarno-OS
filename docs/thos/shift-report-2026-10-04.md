@@ -6,7 +6,7 @@ Heute stand "viel Fortschritt mit kurzen, effizienten Tests" im Vordergrund. Erg
 Userspace-Compositor, Terminal-Fenster mit echter BusyBox-Shell auf einem Pseudo-Terminal, Panel, deutsche Tastatur (ä ö ü ß €), echte Win32-Programme als Fenster
 neben Linux-Clients — und es läuft **ein Dutzend unveränderter Debian-/Rust-/mingw-Programme** (Python 3.13, Perl, git, gawk, make, tar, jq, bc, vim, Rust-`std`,
 Windows-Konsolenprogramme). Zwei alte, hartnäckige Fehler sind **gefunden und behoben** (B17 = Absturz beim `exit`, B15 = AHCI-Hänger). Die komplette Test-Suite
-(47 Tests, parallel in ca. 20 min) lief zuletzt grün; die Abschlussläufe stehen unten.
+(47 Tests, parallel in ca. 14 min) ist grün: 47 von 47 (Abschlusslauf 07:39).
 
 Zum Ausprobieren: `docs/thos/desktop-howto.md` (`cargo xtask bios-run`, dann `desktop`).
 
