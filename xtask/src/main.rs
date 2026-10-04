@@ -646,7 +646,7 @@ fn main() {
             std::env::set_var("THOS_FS_MIB", "192");
             std::env::set_var("THOS_GTK", "1");
             let img = prod_interactive_image(cmd);
-            let out = boot_and_run(&img, "soak", if std::env::var("SOAK2").is_ok() { "/busybox sh /soak2.sh" } else if std::env::var("SOAK3").is_ok() { "/busybox sh /soak3.sh" } else if std::env::var("SOAK4").is_ok() { "/busybox sh /soak4.sh" } else { "/busybox sh /soak.sh" }, if std::env::var("SOAK2").is_ok() { "s2-done" } else if std::env::var("SOAK3").is_ok() || std::env::var("SOAK4").is_ok() { "soak-free-after" } else { "desk ok:" }, 600);
+            let out = boot_and_run(&img, "soak", if std::env::var("SOAK2").is_ok() { "/busybox sh /soak2.sh" } else if std::env::var("SOAK3").is_ok() { "/busybox sh /soak3.sh" } else if std::env::var("SOAK4").is_ok() { "/busybox sh /soak4.sh" } else if std::env::var("SOAK5").is_ok() { "/busybox sh /soak5.sh" } else { "/busybox sh /soak.sh" }, if std::env::var("SOAK2").is_ok() { "s2-done" } else if std::env::var("SOAK3").is_ok() || std::env::var("SOAK4").is_ok() || std::env::var("SOAK5").is_ok() { "soak-free-after" } else { "desk ok:" }, 600);
             for l in out.lines().filter(|l| l.trim().starts_with("s2-") || l.trim().starts_with("soak-")) { println!("{}", l.trim()); }
             let get = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k).and_then(|v| v.trim().parse::<i64>().ok()));
             let (before, after) = (get("soak-free-before="), get("soak-free-after="));
@@ -1624,6 +1624,7 @@ fn disk_image() -> PathBuf {
                     }
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} foot.sh", root.join("xtask/testdata/foot.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} soak5.sh", root.join("xtask/testdata/soak5.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             let aud = root.join("target/audiotest");
             if Command::new("gcc").args(["-O1", "-o", aud.to_str().unwrap(), root.join("xtask/testdata/audiotest.c").to_str().unwrap(), "-lm"]).status().map(|s| s.success()).unwrap_or(false) {
