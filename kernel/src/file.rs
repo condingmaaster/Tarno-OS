@@ -70,6 +70,10 @@ pub trait FileOps: Send + Sync {
     fn dir_path(&self) -> Option<String> {
         None
     }
+    /// The path of an ext2 file (for `fchmod`/`fchown`).
+    fn fs_path(&self) -> Option<String> {
+        None
+    }
     /// `ftruncate`: only `memfd` files support it.
     fn truncate(&self, _len: u64) -> i64 {
         -22
@@ -660,6 +664,18 @@ impl FileOps for Ext2Stream {
 impl FileOps for Ext2File {
     fn ino(&self) -> u64 {
         self.ino.load(Ordering::Relaxed)
+    }
+    fn fs_path(&self) -> Option<String> {
+        Some(self.path.clone())
+    }
+    fn truncate(&self, len: u64) -> i64 {
+        let mut data = self.buf.lock();
+        data.resize(len as usize, 0);
+        self.dirty.store(true, Ordering::Release);
+        self.dirty_lo.store(0, Ordering::Relaxed);
+        self.dirty_hi.store(data.len(), Ordering::Relaxed);
+        self.unflushed.store(usize::MAX / 2, Ordering::Relaxed);
+        self.flush_locked(&data)
     }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let data = self.buf.lock();

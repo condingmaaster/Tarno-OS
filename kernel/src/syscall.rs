@@ -116,6 +116,9 @@ const SYS_MUNMAP: u64 = 11;
 const SYS_CREAT: u64 = 85;
 const SYS_RENAME: u64 = 82;
 const SYS_LINK: u64 = 86;
+const SYS_TRUNCATE: u64 = 76;
+const SYS_FCHMOD: u64 = 91;
+const SYS_FCHOWN: u64 = 93;
 const SYS_SYMLINKAT: u64 = 266;
 const SYS_SYMLINK: u64 = 88;
 const SYS_LINKAT: u64 = 265;
@@ -776,11 +779,57 @@ fn sys_mkdir(dirfd: u64, path_ptr: u64) -> i64 {
 /// `chmod(path, mode)` — only the owner or root (uid 0) may change a file's
 /// permission bits, checked here (`ext2::chmod_path` itself does no check —
 /// see its doc comment).
+/// `fchmod` / `fchown` on an open ext2 file: the same checks as the path versions.
+fn sys_fchmod(fd: u64, mode: u64) -> i64 {
+    match cur_fd(fd) {
+        Some(f) => match f.fs_path() {
+            Some(p) => chmod_path_checked(&p, mode),
+            None => 0, // devices, pipes, sockets: nothing to change
+        },
+        None => EBADF,
+    }
+}
+
+fn sys_fchown(fd: u64, uid: u64, gid: u64) -> i64 {
+    match cur_fd(fd) {
+        Some(f) => match f.fs_path() {
+            Some(p) => chown_path_checked(&p, uid, gid),
+            None => 0,
+        },
+        None => EBADF,
+    }
+}
+
+/// `truncate(path, len)`.
+fn sys_truncate(path_ptr: u64, len: u64) -> i64 {
+    let path = match user_path(path_ptr) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let fd = open_resolved(&path, 1); // O_WRONLY
+    if fd < 0 {
+        return fd;
+    }
+    let r = match cur_fd(fd as u64) {
+        Some(f) => f.truncate(len),
+        None => EBADF,
+    };
+    if let Some(t) = sched::current().task() {
+        t.fd_close(fd as i32);
+    }
+    r
+}
+
 fn sys_chmod(path_ptr: u64, mode: u64) -> i64 {
     let path = match user_path(path_ptr) {
         Ok(p) => p,
         Err(e) => return e,
     };
+    chmod_path_checked(&path, mode)
+}
+
+fn chmod_path_checked(path: &str, mode: u64) -> i64 {
+    let path = alloc::string::String::from(path);
     let Some(task) = sched::current().task() else { return EBADF };
     let Some(fs) = ext2::open().ok() else { return EIO };
     let Some(ino) = fs.path_lookup(&path) else { return ENOENT };
@@ -800,6 +849,11 @@ fn sys_chown(path_ptr: u64, uid: u64, gid: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
+    chown_path_checked(&path, uid, gid)
+}
+
+fn chown_path_checked(path: &str, uid: u64, gid: u64) -> i64 {
+    let path = alloc::string::String::from(path);
     let Some(task) = sched::current().task() else { return EBADF };
     if task.uid != 0 {
         return EPERM;
@@ -1005,11 +1059,12 @@ fn fstat_into(f: &dyn crate::file::FileOps, buf: u64) -> i64 {
     }
     let (a, m, c) = f.times();
     fill_stat_times(buf, a, m, c);
-    // owner of files on the root filesystem (st_uid @28, st_gid @32)
+    // owner and permission bits of files on the root filesystem (st_mode @24, st_uid @28, st_gid @32)
     if f.ino() != 0 {
         if let Some(fs) = ext2::open().ok() {
             let n = fs.read_inode(f.ino() as u32);
             unsafe {
+                *((buf + 24) as *mut u32) = n.mode as u32;
                 *((buf + 28) as *mut u32) = n.uid as u32;
                 *((buf + 32) as *mut u32) = n.gid as u32;
             }
@@ -1404,6 +1459,9 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_GETGROUPS => 0, // no supplementary groups
         SYS_OPENAT => sys_open(a1, a2, a3),
 
+        SYS_TRUNCATE => sys_truncate(a1, a2),
+        SYS_FCHMOD => sys_fchmod(a1, a2),
+        SYS_FCHOWN => sys_fchown(a1, a2, a3),
         SYS_LINK => sys_link((-100i64) as u64, a1, (-100i64) as u64, a2),
         SYS_LINKAT => sys_link(a1, a2, a3, a4),
         SYS_SYMLINK => sys_symlink(a1, (-100i64) as u64, a2),

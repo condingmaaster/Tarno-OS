@@ -29,4 +29,10 @@ echo tee=$(echo hi | /usr/bin/tee t.out)
 printf 'alpha\nbeta\n' > v.txt
 /usr/bin/vim.tiny -u NONE -es -c '%s/alpha/GAMMA/' -c 'wq' v.txt
 echo vim=$(/usr/bin/head -n 1 v.txt)
+printf 'abcdefghij' > tr.txt
+/usr/bin/truncate -s 4 tr.txt 2>/dev/null || /busybox truncate -s 4 tr.txt
+echo trunc=$(/usr/bin/cat tr.txt 2>/dev/null || /busybox cat tr.txt)
+/usr/bin/touch x.sh
+chmod 755 x.sh
+echo mode=$(/usr/bin/stat -c %a x.sh)
 echo real5-done
