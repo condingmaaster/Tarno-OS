@@ -177,6 +177,26 @@ fn main() {
                 exit(1);
             }
         }
+        "rust-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "rust",
+                "rstest; echo rust-after-$((11))",
+                "rust-after-11",
+                150,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            if out.lines().any(|l| l.contains("rs ok:")) {
+                println!("rust-test PASSED: a Rust std program runs (threads, channels, HashMap, files, rename, loopback TCP, process spawn)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("rs") || l.contains("panick") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("rust-test FAILED");
+                exit(1);
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -848,6 +868,11 @@ fn disk_image() -> PathBuf {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }
+            }
+            let rst = root.join("target/rstest");
+            if Command::new("rustc").args(["-O", "-o", rst.to_str().unwrap(), root.join("xtask/testdata/rstest.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rstest", rst.to_str().unwrap()), img.to_str().unwrap()]));
+                add_dynamic_program(&img, "/lib/x86_64-linux-gnu/libgcc_s.so.1", &mut dirs);
             }
             let lot = root.join("target/lotest");
             if Command::new("gcc").args(["-O1", "-o", lot.to_str().unwrap(), root.join("xtask/testdata/lotest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -4105,7 +4130,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
