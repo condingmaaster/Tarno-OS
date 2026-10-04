@@ -261,7 +261,12 @@ impl SockFile {
                     if sock.is_active() {
                         return EISCONN;
                     }
-                    if sock.connect(iface.context(), (IpAddress::Ipv4(Ipv4Address::new(ip[0], ip[1], ip[2], ip[3])), port), local).is_err() {
+                    // a loopback destination needs the loopback source address (smoltcp would pick the first one)
+                    let local_ep = smoltcp::wire::IpListenEndpoint {
+                        addr: (ip[0] == 127).then(|| IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1))),
+                        port: local,
+                    };
+                    if sock.connect(iface.context(), (IpAddress::Ipv4(Ipv4Address::new(ip[0], ip[1], ip[2], ip[3])), port), local_ep).is_err() {
                         return EINVAL;
                     }
                 }
