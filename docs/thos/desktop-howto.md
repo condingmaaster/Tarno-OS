@@ -21,6 +21,21 @@ Keys in the desktop (the compositor owns the keyboard while it runs): **Alt+Ente
 The panel's "Terminal" button starts another terminal. The text console comes back when the compositor exits (`thoswin quit` from a
 terminal, or when it crashes — the framebuffer is released when its last file descriptor closes).
 
+## Programs that run (all unmodified, from the host distribution)
+
+| program | test | notes |
+|---|---|---|
+| `foot` terminal | `foot-test` | needs fontconfig + a TTF; `LC_ALL=C.UTF-8`; `xkb` directory must exist |
+| GTK 3 apps | `gtk-test`, `soak-test` | menus (popups), client-side decoration, clipboard |
+| NetSurf browser | `netsurf-test` | local pages and `https://` (CA bundle in `/etc/ssl/certs`) |
+| Node.js, OpenJDK 21 | `node-test`, `java-test` | need a 384 / 512 MiB root filesystem (`THOS_FS_MIB`) |
+| `gcc` + binutils | `gcc-test` | compiles C inside THOS, including the compositor itself |
+| `curl` | `curl-test` | HTTPS through the real internet (QEMU user networking) |
+| audio | `audio-test` | `/dev/dsp`, 48 kHz S16 stereo through Intel HD Audio |
+
+The panel (`thospanel`) reads optional launcher buttons from `/panel.conf` (one `Label|command` per line) and shows the local time (CET/CEST).
+A scroll wheel works when the PS/2 mouse speaks the IntelliMouse protocol (`/dev/input/wheel`).
+
 ## Wayland
 
 The compositor also speaks the **real Wayland protocol** on `/run/wayland-0` (set `XDG_RUNTIME_DIR=/run` for a client). Implemented:
