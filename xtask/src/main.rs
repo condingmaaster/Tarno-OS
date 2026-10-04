@@ -539,6 +539,26 @@ fn main() {
                 exit(1);
             }
         }
+        "curl-test" => {
+            use std::net::ToSocketAddrs;
+            if "example.com:443".to_socket_addrs().is_err() {
+                eprintln!("curl-test SKIPPED: the host cannot resolve example.com (offline?)");
+                exit(0);
+            }
+            std::env::set_var("THOS_FS_MIB", "192");
+            std::env::set_var("THOS_CURL", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "curl", "/busybox sh /curl.sh", "curl-script-done", 240, &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"]);
+            if out.contains("Example Domain") && out.contains("curl-http-code-200") {
+                println!("curl-test PASSED: curl fetched https://example.com (TLS, CA bundle) and http://example.com from the internet");
+            } else {
+                for l in out.lines().filter(|l| l.contains("curl") || l.contains("Example") || l.contains("unhandled") || l.contains("rror")).take(20) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("curl-test FAILED");
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1438,6 +1458,16 @@ fn disk_image() -> PathBuf {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} src-{f}", root.join(format!("xtask/testdata/{f}")).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gcc.sh", root.join("xtask/testdata/gcc.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // curl with TLS (needs THOS_FS_MIB=192 and THOS_CURL=1, see `curl-test`)
+            if std::env::var("THOS_CURL").is_ok() && std::path::Path::new("/usr/bin/curl").exists() {
+                let mut kdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                add_dynamic_program(&img, "/usr/bin/curl", &mut kdirs);
+                for d in ["etc", "etc/ssl", "etc/ssl/certs"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                run(Command::new("debugfs").args(["-w", "-R", "write /etc/ssl/certs/ca-certificates.crt etc/ssl/certs/ca-certificates.crt", img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} curl.sh", root.join("xtask/testdata/curl.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {
