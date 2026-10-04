@@ -60,6 +60,7 @@ impl Pty {
         cc[3] = 21; // VKILL
         cc[4] = 4; // VEOF
         cc[6] = 1; // VMIN
+        cc[10] = 26; // VSUSP (Ctrl+Z)
         Arc::new(Pty {
             id,
             st: Mutex::new(St {
@@ -106,7 +107,7 @@ fn ldisc_input(p: &Pty, mut c: u8) {
     }
     let echo = s.lflag & ECHO != 0;
     if s.lflag & ISIG != 0 {
-        let sig = if c == s.cc[0] { 2 } else if c == s.cc[1] { 3 } else { 0 };
+        let sig = if c == s.cc[0] { 2 } else if c == s.cc[1] { 3 } else if c == s.cc[10] && c != 0 { 20 } else { 0 };
         if sig != 0 {
             s.line.clear();
             s.to_slave.clear();

@@ -939,6 +939,10 @@ pub struct Task {
     live_threads: AtomicU32,
     /// Every thread of the task (weak), so exit_group / signals can wake them all.
     threads: Mutex<Vec<alloc::sync::Weak<crate::sched::Thread>>>,
+    /// Job control: the stop signal that stopped the process (0 = running), and whether `wait4(WUNTRACED)`
+    /// has already reported this stop.
+    stop_sig: AtomicU32,
+    stop_reported: AtomicBool,
     /// Controlling terminal when it is a pseudo-terminal (`/dev/tty` opens it).
     ctty: Mutex<Option<Arc<crate::pty::Pty>>>,
 }
@@ -987,6 +991,8 @@ impl Task {
             live_threads: AtomicU32::new(0),
             threads: Mutex::new(Vec::new()),
             ctty: Mutex::new(None),
+            stop_sig: AtomicU32::new(0),
+            stop_reported: AtomicBool::new(false),
         });
         TASKS.lock().insert(t.pid, t.clone());
         t
@@ -1012,6 +1018,24 @@ impl Task {
     pub fn set_pgid(&self, v: u64) {
         self.pgid.store(v, Ordering::Relaxed);
     }
+    pub fn stop_sig(&self) -> u32 {
+        self.stop_sig.load(Ordering::Acquire)
+    }
+    pub fn set_stopped(&self, sig: u32) {
+        self.stop_reported.store(false, Ordering::Release);
+        self.stop_sig.store(sig, Ordering::Release);
+        CHILD_EXIT.wake_all(); // a parent in wait4(WUNTRACED) wants to know
+    }
+    pub fn clear_stopped(&self) {
+        self.stop_sig.store(0, Ordering::Release);
+    }
+    pub fn stop_unreported(&self) -> bool {
+        self.stop_sig() != 0 && !self.stop_reported.load(Ordering::Acquire)
+    }
+    pub fn mark_stop_reported(&self) {
+        self.stop_reported.store(true, Ordering::Release);
+    }
+
     pub fn ctty(&self) -> Option<Arc<crate::pty::Pty>> {
         self.ctty.lock().clone()
     }
@@ -1563,13 +1587,13 @@ pub fn all_live_tasks() -> Vec<Arc<Task>> {
 
 /// Predicate for `wait4` to sleep on: this task has a matching live child and
 /// none of its matching children has exited yet.
-fn should_block_in_wait4(me: u64, pid: i64) -> bool {
+fn should_block_in_wait4(me: u64, pid: i64, untraced: bool) -> bool {
     let tasks = TASKS.lock();
     let mut has_child = false;
     for t in tasks.values() {
         if t.ppid == me && (pid == -1 || t.pid == pid as u64) {
             has_child = true;
-            if t.exited.load(Ordering::Acquire) {
+            if t.exited.load(Ordering::Acquire) || (untraced && t.stop_unreported()) {
                 return false;
             }
         }
@@ -1911,6 +1935,23 @@ pub fn wait4(pid: i64, status_ptr: u64, options: u64) -> i64 {
                 }
                 return cpid as i64;
             }
+            // WUNTRACED: a child stopped by a job-control signal is reported once (status 0x7f | sig << 8)
+            if options & 2 != 0 {
+                let stopped = tasks
+                    .values()
+                    .find(|t| t.ppid == me && !t.exited.load(Ordering::Acquire) && t.stop_unreported() && (pid == -1 || t.pid == pid as u64))
+                    .map(|t| (t.pid, t.stop_sig()));
+                if let Some((cpid, sig)) = stopped {
+                    if let Some(t) = tasks.get(&cpid) {
+                        t.mark_stop_reported();
+                    }
+                    drop(tasks);
+                    if status_ptr != 0 {
+                        let _ = crate::usercopy::write_u32(status_ptr, 0x7f | (sig << 8));
+                    }
+                    return cpid as i64;
+                }
+            }
             let has_children = tasks
                 .values()
                 .any(|t| t.ppid == me && (pid == -1 || t.pid == pid as u64));
@@ -1924,7 +1965,7 @@ pub fn wait4(pid: i64, status_ptr: u64, options: u64) -> i64 {
         if crate::signal::interrupted() {
             return -4; // EINTR
         }
-        CHILD_EXIT.wait_if_intr(|| should_block_in_wait4(me, pid));
+        CHILD_EXIT.wait_if_intr(|| should_block_in_wait4(me, pid, options & 2 != 0));
     }
 }
 

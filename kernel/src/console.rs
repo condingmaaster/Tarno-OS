@@ -220,6 +220,7 @@ const KC_DELETE: u8 = 0x4C;
 // Non-character keys the shortcuts use (HID usage IDs).
 const KC_A: u8 = 0x04;
 const KC_C: u8 = 0x06;
+const KC_Z: u8 = 0x1C; // HID 'Y' position = 'z' on a German keyboard
 const KC_BACKSLASH: u8 = 0x31;
 const KC_D: u8 = 0x07;
 const KC_L: u8 = 0x0F;
@@ -367,6 +368,12 @@ fn shortcut(k: u8, ctrl: bool, shift: bool) -> bool {
             };
             serial::write_bytes(name);
             crate::signal::send_pgrp(crate::signal::FG_PGRP.load(Ordering::Relaxed), sig);
+            INPUT_WQ.wake_all();
+        }
+        // Ctrl+Z: stop the foreground job (SIGTSTP); the shell gets the terminal back via wait4(WUNTRACED).
+        (true, false, KC_Z) => {
+            serial::write_bytes(b"^Z\r\n");
+            crate::signal::send_pgrp(crate::signal::FG_PGRP.load(Ordering::Relaxed), crate::signal::SIGTSTP);
             INPUT_WQ.wake_all();
         }
         (true, _, _) => {} // any other Ctrl chord: swallow
