@@ -19,6 +19,8 @@ const REG_VERSION: u32 = 0x30;
 const REG_TPR: u32 = 0x80;
 const REG_EOI: u32 = 0xB0;
 const REG_SVR: u32 = 0xF0;
+const REG_ICR_LOW: u32 = 0x300;
+const REG_ICR_HIGH: u32 = 0x310;
 const REG_LVT_TIMER: u32 = 0x320;
 const REG_LVT_LINT0: u32 = 0x350;
 const REG_LVT_LINT1: u32 = 0x360;
@@ -39,9 +41,12 @@ pub const AHCI_VECTOR: u8 = 0x21;
 /// PS/2 keyboard (ISA IRQ 1) and mouse (IRQ 12) via the I/O APIC.
 pub const KBD_VECTOR: u8 = 0x22;
 pub const MOUSE_VECTOR: u8 = 0x23;
+/// Reschedule IPI: wakes a halted CPU when a thread became runnable.
+pub const KICK_VECTOR: u8 = 0x24;
 
-/// ~100 Hz.
-const TIMER_HZ: u32 = 100;
+/// 1 kHz: sleeps and timeouts resolve to a millisecond. Preemption still happens every 10th tick
+/// (`idt::thos_irq_timer_body`), so the time slice stays 10 ms.
+const TIMER_HZ: u32 = 1000;
 
 static LAPIC_BASE: AtomicU64 = AtomicU64::new(0);
 static TICKS: AtomicU64 = AtomicU64::new(0);
@@ -65,6 +70,19 @@ fn write(reg: u32, val: u32) {
 
 pub fn eoi() {
     write(REG_EOI, 0);
+}
+
+/// Send a fixed-delivery IPI with `vector` to the CPU with local APIC id `lapic_id`.
+pub fn send_ipi(lapic_id: u32, vector: u8) {
+    // wait for a previous IPI to be accepted (delivery status, bit 12)
+    for _ in 0..100_000 {
+        if read(REG_ICR_LOW) & (1 << 12) == 0 {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    write(REG_ICR_HIGH, lapic_id << 24);
+    write(REG_ICR_LOW, vector as u32 | (1 << 14)); // fixed, physical destination, level assert
 }
 
 pub fn on_timer_tick() {

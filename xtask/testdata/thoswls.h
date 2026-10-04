@@ -198,7 +198,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         s->has_dmg = 0;
         printf("desk: wayland window %d mapped %dx%d\n", w->id, b->w, b->h); fflush(stdout);
     } else if (w->w != b->w || w->h != b->h) {
-        old = frame_of(w);
+        old = outer_of(w);
         free(w->px);
         w->px = calloc((size_t)b->w * b->h, 4);
         w->w = b->w; w->h = b->h;
@@ -212,16 +212,20 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         if (x1 <= x0 || y1 <= y0) { x0 = 0; y0 = 0; x1 = b->w; y1 = b->h; }
     }
     int fast = rs == 16 && gs == 8 && bs == 0;
+    w->alpha = b->fmt == 0;                           /* ARGB8888 (premultiplied); XRGB8888 is opaque */
     for (int y = y0; y < y1; y++) {
         const uint32_t *src = (const uint32_t *)((const uint8_t *)b->pool->base + b->off + (size_t)y * b->stride) + x0;
         uint32_t *dst = w->px + (size_t)y * w->w + x0;
-        if (fast) for (int x = x0; x < x1; x++) *dst++ = *src++ & 0x00FFFFFFu;
+        if (w->alpha) {
+            if (fast) for (int x = x0; x < x1; x++) *dst++ = *src++;
+            else for (int x = x0; x < x1; x++, src++) *dst++ = swizzle(*src) | (*src & 0xFF000000u);
+        } else if (fast) for (int x = x0; x < x1; x++) *dst++ = *src++ & 0x00FFFFFFu;
         else for (int x = x0; x < x1; x++) *dst++ = swizzle(*src++);
     }
     s->has_dmg = 0;
     buf_release(c, s->pend_buf);
-    if (fresh) compose(frame_of(w));                  /* titlebar and border too */
-    else if (old.x1 > old.x0) compose(uni(old, frame_of(w)));
+    if (fresh) { w->fade = 200; compose(outer_of(w)); }   /* titlebar, border and shadow too */
+    else if (old.x1 > old.x0) compose(uni(old, outer_of(w)));
     else compose(isect(content_of(w), rect_xywh(w->x + x0, w->y + y0, x1 - x0, y1 - y0)));
 }
 

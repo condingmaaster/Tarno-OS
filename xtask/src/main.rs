@@ -495,6 +495,47 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_win32_test(&img);
         }
+        "foot-test" => {
+            // `foot`, an unmodified Wayland terminal from the distribution, runs on the compositor's Wayland server
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/foot-serial.log");
+            let sock = root.join("target/foot-mon.sock");
+            let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/foot-{i}.ppm"))).collect();
+            for f in [&log, &sock, &shots[0], &shots[1]] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "desk: wayland window 1 mapped", 240) {
+                    return;
+                }
+                std::thread::sleep(ms(4000));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                std::thread::sleep(ms(1500));
+                type_line(&tsock, "echo footok > /tmp/footok");
+                std::thread::sleep(ms(3000));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "foot", "/busybox sh /foot.sh", "desk ok:", 300);
+            let lit = |i: usize| -> usize {
+                let Some((_, _, d)) = read_ppm(&shots[i]) else { return 0 };
+                d.chunks(3).filter(|p| p.len() == 3 && p[0] > 170 && p[1] > 170 && p[2] > 170).count()
+            };
+            let (a, b) = (lit(0), lit(1));
+            let mapped = out.lines().find(|l| l.contains("wayland window 1 mapped")).map(str::trim);
+            let wrote = out.lines().any(|l| l.trim() == "foot-file=footok");
+            if mapped.is_some() && a > 150 && b > a && wrote {
+                println!("foot-test PASSED: {} — text rendered ({a} bright pixels, {b} after typing) and the shell ran the typed command", mapped.unwrap());
+            } else {
+                for l in out.lines().filter(|l| l.contains("foot") || l.contains("desk") || l.contains("wayland") || l.contains("fault") || l.contains("unhandled") || l.contains("killed")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("foot-test FAILED (mapped {}, bright pixels {a}/{b}, command ran {wrote})", mapped.is_some());
+                exit(1);
+            }
+        }
         "wayland-test" => {
             // an unmodified libwayland client (and the stock wayland-info) against the compositor's Wayland server
             let img = prod_interactive_image(cmd);
@@ -553,7 +594,7 @@ fn main() {
             let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24);
             // wayland-info: compositor, shm, seat, output, xdg_wm_base, data_device_manager, subcompositor
             let info_ok = out.lines().any(|l| l.trim() == "wi-interfaces=7");
-            let drew = near(px(110, 90), (200, 40, 40)) && near(px(300, 200), (32, 48, 128)) && near(px(200, 68), (40, 120, 220));
+            let drew = near(px(110, 90), (200, 40, 40)) && near(px(300, 200), (32, 48, 128)) && near(px(200, 68), (58, 62, 80));
             let checks = [
                 ("wayland-info lists 7 globals", info_ok),
                 ("client connected and mapped a window", has("desk: wayland window 1 mapped 320x200")),
@@ -959,14 +1000,14 @@ fn disk_image() -> PathBuf {
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
-        img.to_str().unwrap(), "65536",
+        img.to_str().unwrap(), "131072",
     ]));
-    // Grow the backing file past the 16 MiB filesystem: scratch space for the
-    // AHCI write test (LBA 140000) plus room for the FAT32 volume at LBA 141000.
+    // Grow the backing file past the 128 MiB filesystem: scratch space for the
+    // AHCI write test (LBA 300000) plus room for the FAT32 volume at LBA 301000.
     std::fs::OpenOptions::new()
         .write(true)
         .open(&img)
-        .and_then(|f| f.set_len(128 * 1024 * 1024))
+        .and_then(|f| f.set_len(256 * 1024 * 1024))
         .expect("extend disk.img");
     for (name, elf) in elfs {
         run(Command::new("debugfs").args([
@@ -1168,6 +1209,29 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false);
             if evt_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} evtest", evt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
+            if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {
+                let mut fdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                add_dynamic_program_from(&img, tree.join("usr/bin/foot").to_str().unwrap(), &mut fdirs, Some(&tree));
+                for d in ["usr/share/fonts", "usr/share/fonts/truetype", "usr/share/fonts/truetype/dejavu", "etc", "etc/fonts", "etc/fonts/conf.d", "usr/share/terminfo", "usr/share/terminfo/f", "usr/share/terminfo/x", "var", "var/cache", "var/cache/fontconfig", "etc/xdg", "etc/xdg/foot"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                for (from, to) in [
+                    ("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", "usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"),
+                    (root.join("xtask/testdata/fonts.conf").to_str().unwrap(), "etc/fonts/fonts.conf"),
+                ] {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {from} {to}"), img.to_str().unwrap()]));
+                }
+                for t in ["f/foot", "f/foot-direct"] {
+                    let host = tree.join(format!("usr/share/terminfo/{t}"));
+                    let alt = format!("/usr/share/terminfo/{t}");
+                    let src = if host.exists() { host.to_str().unwrap().to_string() } else { alt };
+                    if std::path::Path::new(&src).exists() {
+                        let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {src} usr/share/terminfo/{t}"), img.to_str().unwrap()]).output();
+                    }
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} foot.sh", root.join("xtask/testdata/foot.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // Wayland: a stock `wayland-info`, our libwayland-client test program, the keymap and the script
             {
@@ -1455,8 +1519,8 @@ fn disk_image() -> PathBuf {
 
     // A self-contained GPT disk image — one EFI System Partition holding a
     // FAT32 volume with `/EFI/THOS/HELLO.TXT` — spliced into a hole past the
-    // ext2 image (LBA 141000; the fs is the first 32 MiB, the AHCI scratch write
-    // is a single sector at LBA 140000). The kernel walks GPT → ESP → FAT32.
+    // ext2 image (LBA 301000; the fs is the first 128 MiB, the AHCI scratch write
+    // is a single sector at LBA 300000). The kernel walks GPT → ESP → FAT32.
     // Needs `sfdisk` (util-linux), `mkfs.vfat` (dosfstools), `mmd`/`mcopy`
     // (mtools).
     let gpt = root.join("target/esp-gpt.img");
@@ -1509,11 +1573,11 @@ fn disk_image() -> PathBuf {
         "bs=512", &format!("seek={part_start}"), "conv=notrunc", "status=none",
     ]));
 
-    // Splice the whole GPT image into the main disk at LBA 141000.
+    // Splice the whole GPT image into the main disk at LBA 301000.
     run(Command::new("dd").args([
         &format!("if={}", gpt.to_str().unwrap()),
         &format!("of={}", img.to_str().unwrap()),
-        "bs=512", "seek=141000", "conv=notrunc", "status=none",
+        "bs=512", "seek=301000", "conv=notrunc", "status=none",
     ]));
 
     img
@@ -5182,9 +5246,48 @@ fn copy_tree_into_image(img: &Path, host_dir: &str, image_dir: &str) {
 
 /// Copy a dynamically linked host program and every library `ldd` lists for it into the image
 /// at the same paths (so `ld.so`'s default search finds them). Returns the libraries copied.
+
+/// The Debian/Devuan `foot` Wayland terminal unpacked under `target/foot-root` (downloaded once with `apt-get download`,
+/// which needs no root). `None` when it cannot be had; the foot test is then left out of the image.
+fn foot_tree() -> Option<PathBuf> {
+    let root = workspace_root();
+    let tree = root.join("target/foot-root");
+    if tree.join("usr/bin/foot").exists() {
+        return Some(tree);
+    }
+    let debs = root.join("target/foot-debs");
+    let _ = std::fs::create_dir_all(&debs);
+    let ok = Command::new("apt-get")
+        .current_dir(&debs)
+        .args(["download", "foot", "foot-terminfo", "libfcft4t64", "libpixman-1-0", "libutf8proc3"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        return None;
+    }
+    let _ = std::fs::create_dir_all(&tree);
+    for e in std::fs::read_dir(&debs).ok()?.flatten() {
+        if e.path().extension().is_some_and(|x| x == "deb") {
+            let _ = Command::new("dpkg").args(["-x", e.path().to_str()?, tree.to_str()?]).status();
+        }
+    }
+    tree.join("usr/bin/foot").exists().then_some(tree)
+}
+
 fn add_dynamic_program(img: &Path, host_path: &str, dirs_done: &mut std::collections::BTreeSet<String>) -> usize {
-    let out = Command::new("env")
-        .args(["-u", "LD_PRELOAD", "ldd", host_path])
+    add_dynamic_program_from(img, host_path, dirs_done, None)
+}
+
+/// [`add_dynamic_program`] for a program unpacked from a .deb outside the host's own library path: `tree` = the
+/// extraction root (`usr/bin/foo` inside it becomes `/usr/bin/foo` in the image, its libraries likewise).
+fn add_dynamic_program_from(img: &Path, host_path: &str, dirs_done: &mut std::collections::BTreeSet<String>, tree: Option<&Path>) -> usize {
+    let mut ldd = Command::new("env");
+    ldd.args(["-u", "LD_PRELOAD"]);
+    if let Some(t) = tree {
+        ldd.arg(format!("LD_LIBRARY_PATH={}", t.join("usr/lib/x86_64-linux-gnu").display()));
+    }
+    let out = ldd.args(["ldd", host_path])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
         .unwrap_or_default();
@@ -5211,7 +5314,10 @@ fn add_dynamic_program(img: &Path, host_path: &str, dirs_done: &mut std::collect
     for f in &files {
         let real = std::fs::canonicalize(f).unwrap_or_else(|_| f.into());
         // the image path keeps the *name the program asks for* (the symlink), the bytes come from the real file
-        let dest = if f.starts_with("/lib64/") { f.clone() } else { f.clone() };
+        let dest = match tree.and_then(|t| f.strip_prefix(t.to_str().unwrap_or("\0"))) {
+            Some(rest) => rest.to_string(),
+            None => f.clone(),
+        };
         if let Some(dir) = std::path::Path::new(&dest).parent() {
             mk(dir.to_str().unwrap(), dirs_done);
         }
@@ -5694,7 +5800,7 @@ fn boot_kernel_headless(tag: &str, iso: &Path, disk: &Path, smp: u32) -> String 
 }
 
 /// Must match `SCRATCH_LBA` / the pattern in `kernel/src/main.rs`.
-const AHCI_SCRATCH_LBA: u64 = 140_000;
+const AHCI_SCRATCH_LBA: u64 = 300_000;
 
 fn ahci_test(iso: &Path) {
     use std::io::Read;
@@ -5969,7 +6075,7 @@ fn smp_test(iso: &Path) {
     }
 }
 
-/// Boot with QEMU `blkdebug` poisoning one read of LBA 41000, so the kernel's
+/// Boot with QEMU `blkdebug` poisoning one read of LBA 291000, so the kernel's
 /// NCQ error-recovery path runs: the read must fail cleanly (no hang / panic),
 /// the port must recover, and the retry must succeed.
 fn ncq_error_test(iso: &Path) {
@@ -5981,7 +6087,7 @@ fn ncq_error_test(iso: &Path) {
     let cfg = root.join("target/ncq-fault.conf");
     std::fs::write(
         &cfg,
-        "[inject-error]\nevent = \"read_aio\"\nerrno = \"5\"\nonce = \"on\"\nsector = \"41000\"\n",
+        "[inject-error]\nevent = \"read_aio\"\nerrno = \"5\"\nonce = \"on\"\nsector = \"291000\"\n",
     )
     .unwrap();
     let log = root.join("target/ncq-serial.log");
@@ -6224,13 +6330,15 @@ fn desk_test(img: &Path) {
     let near = |a: Option<(u8, u8, u8)>, b: (u8, u8, u8)| {
         a.is_some_and(|a| (a.0 as i32 - b.0 as i32).abs() < 24 && (a.1 as i32 - b.1 as i32).abs() < 24 && (a.2 as i32 - b.2 as i32).abs() < 24)
     };
-    let (red, green, bg) = ((220, 40, 40), (40, 200, 60), (30, 50, 90));
+    let (red, green) = ((220, 40, 40), (40, 200, 60));
+    // the wallpaper is a smooth dark-blue gradient with a soft glow: anything dark and bluish counts as background
+    let bgish = |p: Option<(u8, u8, u8)>| p.is_some_and(|p| p.0 < 80 && p.1 < 110 && p.2 > 50 && p.2 < 170 && p.2 > p.0);
     // A = red at (100,80) 300x200; B = green at (180,140) 300x200 on top of it
-    let c1 = near(px(0, 120, 100), red) && near(px(0, 300, 200), green) && near(px(0, 460, 320), green) && near(px(0, 700, 600), bg);
+    let c1 = near(px(0, 120, 100), red) && near(px(0, 300, 200), green) && near(px(0, 460, 320), green) && bgish(px(0, 700, 600));
     // after clicking A's titlebar A is on top
     let c2 = near(px(1, 300, 200), red) && near(px(1, 460, 320), green);
     // dragged +300,+250: A's old top-left is background, its new body is red, B is uncovered again
-    let c3 = near(px(2, 120, 100), bg) && near(px(2, 550, 430), red) && near(px(2, 200, 160), green);
+    let c3 = bgish(px(2, 120, 100)) && near(px(2, 550, 430), red) && near(px(2, 200, 160), green);
     let quit = out.lines().any(|l| l.contains("desk ok:"));
     if c1 && c2 && c3 && quit {
         println!("desk-test PASSED: compositor — two client windows overlap in z-order, a click raises, the titlebar drags, the client quit cleanly");
@@ -6290,7 +6398,7 @@ fn desk_kbd_test(img: &Path) {
     let white = |r: u8, g: u8, b: u8| r > 200 && g > 200 && b > 200;
     let typed = count(108, 88, 148, 104, &white); // where "hello" is
     let beyond = count(160, 88, 300, 104, &white); // nothing typed here
-    let title = count(104, 60, 200, 78, &white); // "typewriter" in the titlebar
+    let title = count(150, 52, 420, 78, &white); // "typewriter", centred in the titlebar
     if typed > 30 && beyond == 0 && title > 30 && out.contains("text done") {
         println!("desk-kbd-test PASSED: typed text reached the focused client through the compositor ({typed} text pixels, title drawn: {title})");
     } else {

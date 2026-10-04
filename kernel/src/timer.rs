@@ -20,7 +20,7 @@ use spin::Mutex;
 use crate::sched::{self, Thread};
 
 /// Matches `apic`'s periodic-timer rate.
-pub const TICK_HZ: u64 = 100;
+pub const TICK_HZ: u64 = 1000;
 const NS_PER_TICK: u64 = 1_000_000_000 / TICK_HZ;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);

@@ -637,6 +637,21 @@ pub fn unblock(t: Arc<Thread>) {
     if !s.ready.iter().any(|x| Arc::ptr_eq(x, &t)) {
         s.ready.push_back(t);
     }
+    // A halted CPU would only notice the new work at its next timer tick: poke one.
+    let kick = idle_cpu_to_kick(&s);
+    drop(s);
+    if let Some(c) = kick {
+        crate::apic::send_ipi(smp::lapic_id_of(c), crate::apic::KICK_VECTOR);
+    }
+}
+
+/// An online CPU other than this one that is running its idle thread.
+fn idle_cpu_to_kick(s: &Inner) -> Option<usize> {
+    if !STARTED.load(Ordering::Acquire) {
+        return None;
+    }
+    let me = smp::this_cpu() as usize;
+    (0..smp::online().min(MAX_CPUS)).find(|&c| c != me && s.cpus[c].current.as_ref().is_some_and(|t| t.is_idle))
 }
 
 /// Terminate the current thread. Never returns.

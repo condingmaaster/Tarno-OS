@@ -527,6 +527,25 @@ fn recover(hba: &Hba) {
         _ => None,
     };
 
+    if failed.is_none() {
+        // A failed READ LOG EXT leaves the task file in error state; that stale ERR bit would make the
+        // next, healthy command look failed too. A harmless data-less command overwrites it.
+        wait_ready(hba);
+        {
+            let _s = SUBMIT.lock();
+            issue(0, false, false, None, |f| unsafe {
+                f.add(0).write_volatile(FIS_TYPE_H2D);
+                f.add(1).write_volatile(1 << 7);
+                f.add(2).write_volatile(CMD_FLUSH_CACHE_EX);
+                f.add(7).write_volatile(1 << 6);
+            });
+        }
+        let _ = poll_tag0();
+        hba.pw(P_SERR, 0xFFFF_FFFF);
+        hba.pw(P_IS, 0xFFFF_FFFF);
+        PORT_ERR.store(false, Ordering::Release);
+    }
+
     let pend = PENDING.lock();
     for t in 0..MAX_TAGS {
         if aborted & (1u32 << t) == 0 {

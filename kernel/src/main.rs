@@ -1288,10 +1288,10 @@ fn storage_milestone() {
     kprintln!("THOS: ahci cap ok      {} sectors; out-of-range read rejected", cap);
 
     // GPT + FAT: a self-contained GPT image (protective MBR, one ESP holding a
-    // FAT32 volume) is spliced in at LBA 141000, past the ext2 image (see xtask
+    // FAT32 volume) is spliced in at LBA 301000, past the ext2 image (see xtask
     // `disk_image`). Find the ESP by type GUID, mount it, read a known file —
     // the full "read the ESP" path: GPT → partition → BPB → FAT chain → 8.3.
-    match gpt::find_esp(141_000) {
+    match gpt::find_esp(301_000) {
         Some(esp_lba) => {
             kprintln!("THOS: gpt ok           ESP at LBA {}", esp_lba);
             match fat::Fat::open(esp_lba).and_then(|v| {
@@ -1304,7 +1304,7 @@ fn storage_milestone() {
                 Err(e) => kprintln!("THOS: fat FAIL         {}", e),
             }
         }
-        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 141000"),
+        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 301000"),
     }
 
     let fs = ext2::open().expect("mount ext2");
@@ -1460,14 +1460,14 @@ fn storage_milestone() {
     }
 
     // AHCI write: round-trip a known pattern through a scratch sector past the
-    // ext2 image (LBA 140000 = ~68 MiB; the fs is the first 64 MiB). The host
+    // ext2 image (LBA 300000 = ~146 MiB; the fs is the first 128 MiB). The host
     // side of `cargo xtask ahci-test` re-checks this landed in the disk file.
     // Fixed-LBA scratch writes are test-image-only: on a real MBR disk those
     // sectors lie inside the user's root partition.
     if ext2::on_partition() {
         kprintln!("THOS: ahci scratch skip real disk — destructive LBA tests not run");
     } else {
-        const SCRATCH_LBA: u64 = 140_000;
+        const SCRATCH_LBA: u64 = 300_000;
         let mut wbuf = [0u8; ahci::SECTOR];
         for (i, b) in wbuf.iter_mut().enumerate() {
             *b = (i as u8) ^ 0xA5;
@@ -1533,7 +1533,7 @@ fn storage_milestone() {
         // `cargo xtask ncq-error-test` runs QEMU with blkdebug poisoning one
         // read of this LBA. The read must fail *cleanly* (no hang, no panic),
         // recovery must run, and a retry must succeed on the restarted port.
-        const BAD_LBA: u64 = 41_000;
+        const BAD_LBA: u64 = 291_000;
         let mut b = [0u8; ahci::SECTOR];
         let r = ahci::read(BAD_LBA, &mut b);
         assert!(r.is_err(), "poisoned read did not surface an error: {r:?}");
@@ -1627,7 +1627,7 @@ static NCQ_DONE: AtomicU64 = AtomicU64::new(0);
 static NCQ_BAD: AtomicU64 = AtomicU64::new(0);
 
 extern "C" fn ncq_io_worker(i: usize) -> ! {
-    let lba = 40_000 + i as u64; // a distinct scratch sector per worker, past the fs
+    let lba = 290_000 + i as u64; // a distinct scratch sector per worker, past the fs
     let mut w = [0u8; ahci::SECTOR];
     for (j, b) in w.iter_mut().enumerate() {
         *b = (j as u8).wrapping_add((i as u8).wrapping_mul(17));

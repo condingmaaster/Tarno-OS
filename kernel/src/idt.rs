@@ -90,6 +90,7 @@ core::arch::global_asm!(
 IRQ_ENTRY thos_irq_timer, thos_irq_timer_body
 IRQ_ENTRY thos_irq_ahci,  thos_irq_ahci_body
 IRQ_ENTRY thos_irq_input, thos_irq_input_body
+IRQ_ENTRY thos_irq_kick,  thos_irq_kick_body
 "#
 );
 
@@ -97,6 +98,7 @@ extern "C" {
     fn thos_irq_timer();
     fn thos_irq_ahci();
     fn thos_irq_input();
+    fn thos_irq_kick();
 }
 
 /// Body of the APIC timer IRQ — see the removed `apic_timer` for the previous
@@ -107,13 +109,29 @@ extern "C" fn thos_irq_timer_body(frame: *const u64) {
     apic::on_timer_tick();
     crate::random::add_event(apic::ticks());
     apic::eoi();
+    crate::timer::tick(); // advance the monotonic clock + wake timed sleepers (CPU 0 only; 1 kHz)
+    // Everything else runs at the old 100 Hz: the time slice stays 10 ms.
+    static SLICE: [core::sync::atomic::AtomicU32; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicU32::new(0) }; crate::gdt::MAX_CPUS];
+    if !crate::sched::is_started() {
+        return; // per-CPU state (gs) is not live yet
+    }
+    let cpu = crate::smp::this_cpu() as usize;
+    if SLICE[cpu].fetch_add(1, core::sync::atomic::Ordering::Relaxed) % 10 != 9 {
+        return;
+    }
     crate::ahci::poll_wake(); // safety net for a dropped AHCI completion IRQ
-    crate::timer::tick(); // advance the monotonic clock + wake timed sleepers
     // Interrupted ring 3 (saved CS.RPL == 3, 16th slot after the 15 pushed GPRs)?
     // Then a fatal signal ends the process even if it never makes a syscall.
     if unsafe { *frame.add(16) } & 3 == 3 {
         crate::signal::irq_check_fatal();
     }
+    crate::sched::on_tick();
+}
+
+/// A thread became runnable while this CPU was idle: run the scheduler now.
+#[no_mangle]
+extern "C" fn thos_irq_kick_body(_frame: *const u64) {
+    apic::eoi();
     crate::sched::on_tick();
 }
 
@@ -163,6 +181,7 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         idt[apic::AHCI_VECTOR].set_handler_addr(a(thos_irq_ahci));
         idt[apic::KBD_VECTOR].set_handler_addr(a(thos_irq_input));
         idt[apic::MOUSE_VECTOR].set_handler_addr(a(thos_irq_input));
+        idt[apic::KICK_VECTOR].set_handler_addr(a(thos_irq_kick));
     }
     idt[apic::SPURIOUS_VECTOR].set_handler_fn(apic_spurious);
 

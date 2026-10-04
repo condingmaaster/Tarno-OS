@@ -95,6 +95,12 @@ pub fn this_cpu_ptr() -> u64 {
     }
 }
 
+/// Local APIC id of CPU `cpu` (for IPIs).
+pub fn lapic_id_of(cpu: usize) -> u32 {
+    assert!(cpu < MAX_CPUS);
+    unsafe { (*core::ptr::addr_of!(PER_CPU[cpu])).lapic_id }
+}
+
 pub fn online() -> usize {
     CPUS_ONLINE.load(Ordering::Relaxed)
 }
