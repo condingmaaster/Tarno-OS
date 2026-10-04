@@ -210,6 +210,7 @@ const SYS_CLOCK_GETTIME: u64 = 228;
 const SYS_CLOCK_GETRES: u64 = 229;
 const SYS_CAPGET: u64 = 125;
 const SYS_GETCPU: u64 = 309;
+const SYS_MREMAP: u64 = 25;
 const SYS_GETRUSAGE: u64 = 98;
 const SYS_GETRESUID: u64 = 118;
 const SYS_GETRESGID: u64 = 120;
@@ -1623,6 +1624,33 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             Some(p) if a1 & 0xFFF == 0 && a2 > 0 && a1.saturating_add(a2) < usercopy::USER_TOP => {
                 p.munmap(a1, a2);
                 0
+            }
+            _ => EINVAL,
+        },
+        SYS_MREMAP => match sched::current_proc() {
+            // mremap(old, old_len, new_len, flags[MAYMOVE=1, FIXED=2], new_addr): shrink in place; grow by moving
+            Some(p) if a1 & 0xFFF == 0 && a2 > 0 && a3 > 0 && a1.saturating_add(a2) < usercopy::USER_TOP && a1.saturating_add(a3) < usercopy::USER_TOP => {
+                let (old_len, new_len) = ((a2 + 0xFFF) & !0xFFF, (a3 + 0xFFF) & !0xFFF);
+                if new_len == old_len {
+                    a1 as i64
+                } else if new_len < old_len {
+                    p.munmap(a1 + new_len, old_len - new_len);
+                    a1 as i64
+                } else if a4 & 1 == 0 {
+                    -12
+                } else {
+                    let new = sys_mmap(0, new_len, 3, 0x22, u64::MAX, 0); // anonymous, private, rw
+                    if new < 0 {
+                        new
+                    } else if usercopy::user_ok(a1, old_len as usize, false) && usercopy::user_ok(new as u64, old_len as usize, true) {
+                        unsafe { core::ptr::copy_nonoverlapping(a1 as *const u8, new as u64 as *mut u8, old_len as usize) };
+                        p.munmap(a1, old_len);
+                        new
+                    } else {
+                        p.munmap(new as u64, new_len);
+                        EFAULT
+                    }
+                }
             }
             _ => EINVAL,
         },

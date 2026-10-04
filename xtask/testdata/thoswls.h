@@ -219,6 +219,19 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
             w->x -= s->gx; w->y -= s->gy;
         }
         memcpy(w->title, s->title, sizeof w->title);
+        /* big windows (a browser) must not hang off the screen */
+        { int top = w->deco ? TITLE : 0, ow = w->w + (w->deco ? 2 * BORDER : 0), oh = w->h + (w->deco ? TITLE + BORDER : 0);
+          if (!s->is_popup) {
+              if (w->csd) {                                  /* keep the client's own frame (window geometry) on the screen */
+                  if (w->x + w->gx + w->gw > W) w->x = W - w->gw - w->gx;
+                  if (w->x + w->gx < 0) w->x = -w->gx;
+                  if (w->y + w->gy + w->gh > H) w->y = H - w->gh - w->gy;
+                  if (w->y + w->gy < 0) w->y = -w->gy;
+              }
+              else {
+                  if (w->x + ow > W) w->x = W - ow > BORDER ? W - ow + BORDER : BORDER;
+                  if (w->y + oh > H) w->y = H - oh > top ? H - oh + top : top;
+              } } }
         s->winid = w->id;
         s->has_dmg = 0;
         printf("desk: wayland window %d mapped %dx%d\n", w->id, b->w, b->h); fflush(stdout);

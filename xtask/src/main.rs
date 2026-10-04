@@ -604,6 +604,43 @@ fn main() {
                 exit(1);
             }
         }
+        "netsurf-test" => {
+            // NetSurf, a real web browser (GTK 3, Wayland), renders a local page
+            std::env::set_var("THOS_FS_MIB", "256");
+            std::env::set_var("THOS_NETSURF", "1");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/netsurf-serial.log");
+            let sock = root.join("target/netsurf-mon.sock");
+            let shot = root.join("target/netsurf.ppm");
+            for f in [&log, &sock, &shot] {
+                let _ = std::fs::remove_file(f);
+            }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "wayland window 1 mapped", 300) {
+                    return;
+                }
+                std::thread::sleep(ms(15000));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "netsurf", "/busybox sh /netsurf.sh", "desk ok:", 400);
+            let (red, blue) = read_ppm(&shot).map_or((0, 0), |(_, _, d)| {
+                let px = d.chunks(3).filter(|p| p.len() == 3);
+                (px.clone().filter(|p| p[0] > 150 && p[1] < 60 && p[2] < 60).count(), px.filter(|p| p[2] > 150 && p[0] < 60 && p[1] < 60).count())
+            });
+            let mapped = out.lines().find(|l| l.contains("wayland window") && l.contains("mapped")).map(str::trim);
+            if mapped.is_some() && red > 150 && blue > 100 {
+                println!("netsurf-test PASSED: {} — the browser laid out the page (heading {red} red pixels, second line {blue} blue pixels)", mapped.unwrap());
+            } else {
+                for l in out.lines().filter(|l| l.contains("etsurf") || l.contains("desk") || l.contains("unhandled") || l.contains("killed") || l.contains("trap") || l.contains("rror")).take(30) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("netsurf-test FAILED (mapped {}, red {red}, blue {blue})", mapped.is_some());
+                exit(1);
+            }
+        }
         "node-test" => {
             // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
             std::env::set_var("THOS_FS_MIB", "384");
@@ -1421,11 +1458,20 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} java.sh", root.join("xtask/testdata/java.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // GTK 3 hello (unmodified toolkit; needs THOS_FS_MIB=192 and THOS_GTK=1, see `gtk-test`)
-            if std::env::var("THOS_GTK").is_ok() && std::path::Path::new("/usr/share/glib-2.0/schemas/gschemas.compiled").exists() {
+            if (std::env::var("THOS_GTK").is_ok() || std::env::var("THOS_NETSURF").is_ok()) && std::path::Path::new("/usr/share/glib-2.0/schemas/gschemas.compiled").exists() {
                 let mut gdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
                 let hello = root.join("target/gtkhello");
                 let ok = Command::new("sh").arg("-c").arg(format!("gcc -O1 -o {} {} $(pkg-config --cflags --libs gtk+-3.0)", hello.display(), root.join("xtask/testdata/gtkhello.c").display())).status().map(|s| s.success()).unwrap_or(false);
                 if ok {
+                    if std::env::var("THOS_NETSURF").is_ok() {
+                        if let Some(tree) = netsurf_tree() {
+                            add_dynamic_program_from(&img, tree.join("usr/bin/netsurf-gtk").to_str().unwrap(), &mut gdirs, Some(&tree));
+                            copy_tree_into_image(&img, tree.join("usr/share/netsurf").to_str().unwrap(), "/usr/share/netsurf");
+                            for f in ["page.html", "netsurf.sh"] {
+                                let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join(format!("xtask/testdata/{f}")).to_str().unwrap()), img.to_str().unwrap()]).output();
+                            }
+                        }
+                    }
                     add_dynamic_program(&img, hello.to_str().unwrap(), &mut gdirs);
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gtkhello", hello.to_str().unwrap()), img.to_str().unwrap()]));
                     for d in ["usr/share", "usr/share/glib-2.0", "usr/share/glib-2.0/schemas", "usr/share/fonts", "usr/share/fonts/truetype", "usr/share/fonts/truetype/dejavu", "etc", "etc/fonts", "usr/share/X11", "usr/share/X11/xkb", "usr/share/icons", "usr/share/icons/hicolor"] {
@@ -5604,6 +5650,28 @@ fn foot_tree() -> Option<PathBuf> {
         }
     }
     tree.join("usr/bin/foot").exists().then_some(tree)
+}
+
+/// NetSurf (GTK 3 browser) unpacked under `target/netsurf-root` (`apt-get download`, no root needed).
+fn netsurf_tree() -> Option<PathBuf> {
+    let root = workspace_root();
+    let tree = root.join("target/netsurf-root");
+    if tree.join("usr/bin/netsurf-gtk").exists() {
+        return Some(tree);
+    }
+    let debs = root.join("target/netsurf-debs");
+    let _ = std::fs::create_dir_all(&debs);
+    let ok = Command::new("apt-get").current_dir(&debs).args(["download", "netsurf-gtk", "netsurf-common"]).status().map(|s| s.success()).unwrap_or(false);
+    if !ok {
+        return None;
+    }
+    let _ = std::fs::create_dir_all(&tree);
+    for e in std::fs::read_dir(&debs).ok()?.flatten() {
+        if e.path().extension().is_some_and(|x| x == "deb") {
+            let _ = Command::new("dpkg").args(["-x", e.path().to_str()?, tree.to_str()?]).status();
+        }
+    }
+    tree.join("usr/bin/netsurf-gtk").exists().then_some(tree)
 }
 
 fn add_dynamic_program(img: &Path, host_path: &str, dirs_done: &mut std::collections::BTreeSet<String>) -> usize {
