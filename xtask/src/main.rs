@@ -268,6 +268,27 @@ fn main() {
                 exit(1);
             }
         }
+        "ehci-test" => {
+            // No PS/2 controller at all: login and typing can only work through the USB (EHCI) keyboard — directly on a root port. (The Acer's layout — behind a high-speed hub —
+            // cannot be tested here: QEMU's usb-hub is full speed only, so the hub path is untested until real hardware.)
+            let img = prod_interactive_image(cmd);
+            for (name, extra) in [
+                ("direct", vec!["-cpu", "Westmere", "-machine", "i8042=off", "-device", "usb-ehci,id=ehci", "-device", "usb-kbd,bus=ehci.0"]),
+            ] {
+                let out = boot_and_run_args(&img, "ehci", "echo ehci-after-$((11))", "ehci-after-11", 120, &extra);
+                let log = String::from_utf8_lossy(&std::fs::read(workspace_root().join("target/ehci-serial.log")).unwrap_or_default()).to_string();
+                let up = log.contains("THOS: ehci ok");
+                if up && out.lines().any(|l| l.trim() == "ehci-after-11") {
+                    println!("ehci-test PASSED ({name}): login and typing worked through the EHCI USB keyboard with the PS/2 controller switched off");
+                } else {
+                    for l in log.lines().filter(|l| l.contains("ehci") || l.contains("ps2") || l.contains("EHCI")) {
+                        eprintln!("  {l}");
+                    }
+                    eprintln!("ehci-test FAILED ({name}; ehci up: {up})");
+                    exit(1);
+                }
+            }
+        }
         "mem-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "mem", "memtest; echo mem-after-$((11))", "mem-after-11", 180);
@@ -4328,7 +4349,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

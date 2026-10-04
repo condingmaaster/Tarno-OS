@@ -21,3 +21,9 @@ Folgen für die Planung:
 - USB-Tastatur/-Maus/-Stick am Acer laufen über **EHCI** (zwei Controller mit je einem Root-Hub und internem Rate-Matching-Hub). Ohne EHCI keine externe USB-Hardware.
 - Grafik: Evergreen-Chip (Radeon HD 5000er), Beschleunigung wäre ein eigenes Projekt; bis dahin Software-Rendering auf dem Framebuffer.
 - WLAN (Broadcom, Firmware nötig) ist die letzte Stufe; Ethernet zuerst.
+
+## EHCI-Treiber (kernel/src/ehci.rs, 2026-10-04)
+BIOS-Übergabe, Reset, Port-Reset, Steuerübertragungen über den asynchronen Zeitplan, Enumeration, HID-Boot-Tastatur per GET_REPORT-Abfrage.
+`ehci-test` (QEMU, PS/2-Controller abgeschaltet): Anmeldung und Tippen laufen allein über die USB-Tastatur — **bestanden**.
+Der Weg über einen **Hub** (so hängt am Acer alles: interner Rate-Matching-Hub 8087:0020) ist implementiert, aber **ungetestet**, weil
+QEMUs `usb-hub` nur Fullspeed kann und nicht an einen EHCI-Port passt. Erster echter Test: am Acer.

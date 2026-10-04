@@ -86,6 +86,7 @@ mod mbr;
 mod ps2;
 mod random;
 mod rtc;
+mod ehci;
 mod xhci;
 mod wait;
 
@@ -1557,6 +1558,14 @@ fn start_input_devices() {
         }
         Err(e) => kprintln!("THOS: xhci             {}", e),
     }
+    match ehci::init() {
+        Ok(e) => {
+            *EHCI.lock() = Some(e);
+            sched::spawn("ehci-poll", ehci_poll_thread, 0);
+            kprintln!("THOS: ehci ok          USB keyboard attached (poll thread up)");
+        }
+        Err(e) => kprintln!("THOS: ehci             {}", e),
+    }
 
     // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).
     match net::init() {
@@ -1630,6 +1639,18 @@ extern "C" fn ncq_io_worker(i: usize) -> ! {
     }
     NCQ_DONE.fetch_add(1, Ordering::Relaxed);
     sched::exit()
+}
+
+static EHCI: spin::Mutex<Option<ehci::Ehci>> = spin::Mutex::new(None);
+
+extern "C" fn ehci_poll_thread(_: usize) -> ! {
+    loop {
+        let rep = EHCI.lock().as_mut().and_then(|e| e.poll_keyboard());
+        if let Some(r) = rep {
+            console::feed_report(&r);
+        }
+        timer::sleep_ns(12_000_000);
+    }
 }
 
 static XHCI: spin::Mutex<Option<xhci::Xhci>> = spin::Mutex::new(None);
