@@ -34,6 +34,11 @@ pub fn user_exits() -> u64 {
 /// Count a user thread that ended without `exit` (e.g. killed by a fault).
 pub fn note_user_exit() {
     USER_EXITS.fetch_add(1, Ordering::Release);
+    if let Some(t) = sched::current().task() {
+        if t.only_thread_left() {
+            t.close_all_fds(); // a killed process releases its files at once
+        }
+    }
 }
 
 // Linux x86-64 syscall numbers.

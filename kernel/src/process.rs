@@ -78,6 +78,7 @@ pub fn free_address_space_at_exit() {
         Cr3::write(PhysFrame::from_start_address(PhysAddr::new(kcr3)).unwrap(), Cr3Flags::empty());
     }
     space.teardown();
+    task.close_all_fds();
 }
 
 /// A frame for user data, keeping a small reserve for page tables and the kernel itself.
@@ -1053,6 +1054,17 @@ impl Task {
 
     /// One of this task's threads is leaving (called by the thread itself). `true` if it was
     /// the last live one, i.e. the whole process is ending.
+    /// Close every descriptor now (the process is over): pipe ends signal EOF, sockets close, the
+    /// framebuffer / keyboard are handed back — without waiting for a parent to `wait4` the zombie.
+    pub fn close_all_fds(&self) {
+        let fds = core::mem::take(&mut *self.fds.lock());
+        drop(fds);
+    }
+
+    pub fn only_thread_left(&self) -> bool {
+        self.live_threads.load(Ordering::Acquire) <= 1
+    }
+
     pub fn thread_leaving(&self) -> bool {
         self.live_threads.fetch_sub(1, Ordering::AcqRel) == 1
     }
