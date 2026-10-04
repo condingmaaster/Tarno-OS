@@ -206,6 +206,9 @@ const SYS_SCHED_GETAFFINITY: u64 = 204;
 const SYS_TKILL: u64 = 200;
 const SYS_TGKILL: u64 = 234;
 const SYS_CLOCK_GETTIME: u64 = 228;
+const SYS_CLOCK_GETRES: u64 = 229;
+const SYS_CAPGET: u64 = 125;
+const SYS_CAPSET: u64 = 126;
 const SYS_PPOLL: u64 = 271;
 const SYS_READLINKAT: u64 = 267;
 
@@ -1877,6 +1880,36 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 Err(e) => e,
             },
         },
+
+        SYS_CLOCK_GETRES => {
+            // 1 ms: the resolution sleeps and timers really have
+            if a2 == 0 {
+                0
+            } else {
+                match usercopy::slice_mut(a2, 16) {
+                    Ok(b) => {
+                        b[..8].copy_from_slice(&0u64.to_le_bytes());
+                        b[8..].copy_from_slice(&1_000_000u64.to_le_bytes());
+                        0
+                    }
+                    Err(e) => e,
+                }
+            }
+        }
+        // capabilities: report none/everything-dropped (the data array is two 12-byte structs)
+        SYS_CAPGET => {
+            if a2 != 0 {
+                match usercopy::slice_mut(a2, 24) {
+                    Ok(b) => b.fill(0),
+                    Err(e) => {
+                        frame.rax = e as u64;
+                        return;
+                    }
+                }
+            }
+            0
+        }
+        SYS_CAPSET => 0,
 
         SYS_SCHED_GETAFFINITY => {
             // report the online CPUs as a bitmask

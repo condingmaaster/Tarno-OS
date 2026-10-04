@@ -461,6 +461,22 @@ fn main() {
                 exit(1);
             }
         }
+        "node-test" => {
+            // Node.js (V8, libuv: epoll, threads, mmap'd 100 MB library) from the host, on a 384 MiB root filesystem
+            std::env::set_var("THOS_FS_MIB", "384");
+            std::env::set_var("THOS_NODE", "1");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "node", "/busybox sh /node.sh", "node-script-done", 400);
+            if out.lines().any(|l| l.trim().starts_with("node-says-42")) {
+                println!("node-test PASSED: Node.js ran a script (V8 + libuv on THOS)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("node") || l.contains("unhandled") || l.contains("fault") || l.contains("killed") || l.contains("trap")).take(30) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("node-test FAILED");
+                exit(1);
+            }
+        }
         "ipc-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "ipc", "ipctest; echo ipc-after-$((11))", "ipc-after-11", 90);
@@ -960,6 +976,11 @@ const QEMU_SUCCESS: i32 = 33;
 /// An ext2 (1 KiB block) disk image containing the compiled test programs
 /// `/init` and `/child`, attached over AHCI. Rebuilt when a source or this
 /// xtask changes. Needs `as`, `ld`, `mke2fs`, `debugfs` on PATH.
+/// Root filesystem size in MiB (`THOS_FS_MIB`, default 128; bigger images skip the ESP/scratch area).
+fn fs_mib() -> u64 {
+    std::env::var("THOS_FS_MIB").ok().and_then(|v| v.parse().ok()).unwrap_or(128)
+}
+
 fn disk_image() -> PathBuf {
     let root = workspace_root();
     let img = root.join("target/disk.img");
@@ -1000,14 +1021,14 @@ fn disk_image() -> PathBuf {
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-b", "1024", "-I", "128",
         "-O", "^resize_inode,^dir_index,^ext_attr",
-        img.to_str().unwrap(), "131072",
+        img.to_str().unwrap(), &(fs_mib() * 1024).to_string(),
     ]));
     // Grow the backing file past the 128 MiB filesystem: scratch space for the
     // AHCI write test (LBA 300000) plus room for the FAT32 volume at LBA 301000.
     std::fs::OpenOptions::new()
         .write(true)
         .open(&img)
-        .and_then(|f| f.set_len(256 * 1024 * 1024))
+        .and_then(|f| f.set_len(if fs_mib() > 128 { (fs_mib() + 8) * 1024 * 1024 } else { 256 * 1024 * 1024 }))
         .expect("extend disk.img");
     for (name, elf) in elfs {
         run(Command::new("debugfs").args([
@@ -1209,6 +1230,19 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false);
             if evt_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} evtest", evt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // Node.js (big: needs THOS_FS_MIB=384 and THOS_NODE=1, see `node-test`)
+            if std::env::var("THOS_NODE").is_ok() && std::path::Path::new("/usr/bin/node").exists() {
+                let mut ndirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                add_dynamic_program(&img, "/usr/bin/node", &mut ndirs);
+                for d in ["usr/share/nodejs"] {
+                    let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+                }
+                for m in ["cjs-module-lexer", "acorn", "acorn-walk", "undici", "minimatch"] {
+                    copy_tree_into_image(&img, &format!("/usr/share/nodejs/{m}"), &format!("/usr/share/nodejs/{m}"));
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} nodetest.js", root.join("xtask/testdata/nodetest.js").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} node.sh", root.join("xtask/testdata/node.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
             if let (Some(tree), true) = (foot_tree(), std::path::Path::new("/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf").exists()) {
@@ -1585,12 +1619,12 @@ fn disk_image() -> PathBuf {
         "bs=512", &format!("seek={part_start}"), "conv=notrunc", "status=none",
     ]));
 
-    // Splice the whole GPT image into the main disk at LBA 301000.
-    run(Command::new("dd").args([
+    // Splice the whole GPT image into the main disk at LBA 301000 (a bigger-than-128 MiB fs would be overwritten: skip it).
+    if fs_mib() <= 128 { run(Command::new("dd").args([
         &format!("if={}", gpt.to_str().unwrap()),
         &format!("of={}", img.to_str().unwrap()),
         "bs=512", "seek=301000", "conv=notrunc", "status=none",
-    ]));
+    ])); }
 
     img
 }
