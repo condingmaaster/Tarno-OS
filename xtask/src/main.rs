@@ -528,9 +528,9 @@ fn main() {
             std::env::set_var("THOS_FS_MIB", "448");
             std::env::set_var("THOS_GCC", "1");
             let img = prod_interactive_image(cmd);
-            let out = boot_and_run(&img, "gcc", "/busybox sh /gcc.sh", "gcc-script-done", 900);
-            if out.lines().any(|l| l.trim() == "gcc-built-42-on-thos") && out.lines().any(|l| l.trim() == "gcc-rc-0") {
-                println!("gcc-test PASSED: gcc compiled, assembled and linked a C program inside THOS, and it ran");
+            let out = boot_and_run(&img, "gcc", "/busybox sh /gcc.sh", "gcc-script-done", 1500);
+            if out.lines().any(|l| l.trim() == "gcc-built-42-on-thos") && out.lines().any(|l| l.trim() == "gcc-rc-0") && out.contains("ev ok:") && out.lines().any(|l| l.trim() == "desk-rc-0") {
+                println!("gcc-test PASSED: gcc compiled, assembled and linked C programs inside THOS (hello, the epoll test, the whole compositor), and they ran");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: net")).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
                     eprintln!("  {l}");
@@ -1430,7 +1430,12 @@ fn disk_image() -> PathBuf {
                 }
                 copy_tree_into_image(&img, "/usr/include/x86_64-linux-gnu", "/usr/include/x86_64-linux-gnu");
                 copy_tree_into_image(&img, "/usr/include/asm-generic", "/usr/include/asm-generic");
+                copy_tree_into_image(&img, "/usr/include/linux", "/usr/include/linux");
+                copy_tree_into_image(&img, "/usr/lib/linux/uapi/x86/asm", "/usr/include/x86_64-linux-gnu/asm");
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gcchello.c", root.join("xtask/testdata/gcchello.c").to_str().unwrap()), img.to_str().unwrap()]));
+                for f in ["evtest.c", "thosdesk.c", "thoswls.h", "thoswl.h", "thosgfx.h"] {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} src-{f}", root.join(format!("xtask/testdata/{f}")).to_str().unwrap()), img.to_str().unwrap()]));
+                }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} gcc.sh", root.join("xtask/testdata/gcc.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
             // foot, a real Wayland terminal (needs fontconfig + a monospace font + its terminfo)
