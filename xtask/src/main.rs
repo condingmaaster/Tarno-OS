@@ -771,6 +771,9 @@ fn main() {
                 std::thread::sleep(ms(300));
                 mon(&tsock, "mouse_button 0");
                 wait_for(&tlog, "wlclient: button 272 released", 20);
+                // the scroll wheel (IntelliMouse protocol on the emulated PS/2 mouse) reaches the focused client
+                mon(&tsock, "mouse_move 0 0 1");
+                wait_for(&tlog, "wlclient: wheel", 15);
                 // resize by dragging the bottom-right corner (window content 100,80 320x200): +100,+60
                 walk(419 - 250, 279 - 180);
                 std::thread::sleep(ms(300));
@@ -811,6 +814,7 @@ fn main() {
                 ("key press and release reach the client", has("wlclient: key 30 down") && has("wlclient: key 30 up")),
                 ("pointer enter + button", has("wlclient: pointer enter") && has("wlclient: button 272 pressed") && has("wlclient: button 272 released")),
                 ("dragging the corner resizes the client, Alt+Up maximizes it", has("wlclient: resized 420x260") && has("maximized")),
+                ("the scroll wheel arrives as a discrete axis event", has("wlclient: wheel")),
                 ("clipboard: copy and paste through the compositor", has("wlclient: clipboard got thos-clip")),
                 ("Alt+F4 asks the client to close", has("wlclient: close requested")),
                 ("client exits, compositor quits cleanly", has("wlclient: bye") && has("desk ok:")),

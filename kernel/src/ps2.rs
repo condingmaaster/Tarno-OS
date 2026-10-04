@@ -117,7 +117,11 @@ static MOUSE_BTN: AtomicU8 = AtomicU8::new(0);
 static MOUSE_Q: Mutex<VecDeque<[u8; 3]>> = Mutex::new(VecDeque::new());
 static MOUSE_WQ: WaitQueue = WaitQueue::new();
 /// Packet assembly: bytes so far.
-static MOUSE_PKT: Mutex<([u8; 3], usize)> = Mutex::new(([0; 3], 0));
+static MOUSE_PKT: Mutex<([u8; 4], usize)> = Mutex::new(([0; 4], 0));
+/// IntelliMouse (ImPS/2) negotiated: packets have a 4th byte with the wheel movement.
+static MOUSE_WHEEL: AtomicBool = AtomicBool::new(false);
+/// Wheel clicks (signed, positive = towards the user) for `/dev/input/wheel`.
+static WHEEL_Q: Mutex<VecDeque<i8>> = Mutex::new(VecDeque::new());
 
 fn aux_write(b: u8) -> bool {
     cmd(0xD4) && wait_in_empty() && {
@@ -172,6 +176,16 @@ pub fn init_mouse() -> Result<(), &'static str> {
     if !aux_write(0xF6) || !aux_ack() {
         return Err("no PS/2 mouse (no answer to set-defaults)");
     }
+    // The IntelliMouse handshake (sample rates 200, 100, 80), then ask for the device id: 3 = a wheel is present.
+    let mut seq_ok = true;
+    for rate in [200u8, 100, 80] {
+        seq_ok &= aux_write(0xF3) && aux_ack() && aux_write(rate) && aux_ack();
+    }
+    if seq_ok && aux_write(0xF2) && aux_ack() && wait_out_full() {
+        if unsafe { inb(DATA) } == 3 {
+            MOUSE_WHEEL.store(true, Ordering::Release);
+        }
+    }
     if !aux_write(0xF4) || !aux_ack() {
         return Err("PS/2 mouse refused enable-reporting");
     }
@@ -195,12 +209,24 @@ fn mouse_byte(b: u8) {
     }
     p.0[n] = b;
     p.1 += 1;
-    if p.1 < 3 {
+    let len = if MOUSE_WHEEL.load(Ordering::Acquire) { 4 } else { 3 };
+    if p.1 < len {
         return;
     }
-    let pkt = p.0;
+    let full = p.0;
+    let pkt = [full[0], full[1], full[2]];
     p.1 = 0;
     drop(p);
+    if len == 4 {
+        let z = ((full[3] & 0x0F) as i8) << 4 >> 4; // 4-bit signed
+        if z != 0 {
+            let mut q = WHEEL_Q.lock();
+            if q.len() >= 64 {
+                q.pop_front();
+            }
+            q.push_back(z);
+        }
+    }
     if pkt[0] & 0xC0 != 0 {
         return; // x/y overflow: discard
     }
@@ -248,6 +274,27 @@ pub fn mouse_read(buf: &mut [u8]) -> i64 {
 /// thread should not go to sleep yet (the controller holds only one byte).
 pub fn mouse_mid_packet() -> bool {
     MOUSE_PKT.lock().1 > 0
+}
+
+/// `/dev/input/wheel`: one signed byte per wheel movement (positive = scroll down).
+pub fn wheel_read(buf: &mut [u8]) -> i64 {
+    if buf.is_empty() {
+        return 0;
+    }
+    loop {
+        if let Some(z) = WHEEL_Q.lock().pop_front() {
+            buf[0] = z as u8;
+            return 1;
+        }
+        if crate::signal::interrupted() {
+            return -4;
+        }
+        MOUSE_WQ.wait_if_intr(|| WHEEL_Q.lock().is_empty());
+    }
+}
+
+pub fn wheel_ready() -> bool {
+    !WHEEL_Q.lock().is_empty()
 }
 
 pub fn mouse_ready() -> bool {

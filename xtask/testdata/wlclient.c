@@ -113,7 +113,7 @@ static void p_axis(void *d, struct wl_pointer *p, uint32_t t, uint32_t a, wl_fix
 static void p_frame(void *d, struct wl_pointer *p) { (void)d; (void)p; }
 static void p_axis_source(void *d, struct wl_pointer *p, uint32_t s) { (void)d; (void)p; (void)s; }
 static void p_axis_stop(void *d, struct wl_pointer *p, uint32_t t, uint32_t a) { (void)d; (void)p; (void)t; (void)a; }
-static void p_axis_discrete(void *d, struct wl_pointer *p, uint32_t a, int32_t v) { (void)d; (void)p; (void)a; (void)v; }
+static void p_axis_discrete(void *d, struct wl_pointer *p, uint32_t a, int32_t v) { (void)d; (void)p; (void)a; printf("wlclient: wheel %d\n", v); fflush(stdout); }
 static const struct wl_pointer_listener ptr_l = { p_enter, p_leave, p_motion, p_button, p_axis, p_frame, p_axis_source, p_axis_stop, p_axis_discrete };
 
 static void k_keymap(void *d, struct wl_keyboard *k, uint32_t fmt, int fd, uint32_t size) {

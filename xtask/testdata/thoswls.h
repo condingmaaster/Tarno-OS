@@ -425,6 +425,18 @@ static void wls_dismiss_popups(struct wlsurf *except) {
     }
 }
 
+/* scroll wheel: z clicks (positive = down) for the window under the pointer */
+static void wls_wheel(int z) {
+    struct wlsurf *t = wls_pfocus;
+    if (!t || !t->c->ptr_id || t->c->ptr_ver < 5) return;
+    struct wlc *c = t->c;
+    wl_ev(c, c->ptr_id, 6, 1, 0u);                                         /* axis_source: wheel */
+    wl_ev(c, c->ptr_id, 8, 2, 0u, (uint32_t)z);                            /* axis_discrete(vertical, clicks) */
+    wl_ev(c, c->ptr_id, 4, 3, (uint32_t)now_ms(), 0u, (uint32_t)(z * 15 * 256));   /* axis(vertical, 15 px per click) */
+    wl_ev(c, c->ptr_id, 5, 0);
+    wl_flush(c);
+}
+
 static void wls_request_close(struct wlsurf *s) {
     struct wlc *c = s->c;
     if (s->close_sent) {                                  /* the client ignored the first request: hang up */

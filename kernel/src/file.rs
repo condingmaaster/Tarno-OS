@@ -140,6 +140,8 @@ pub enum DevKind {
     Random,
     /// `/dev/input/mice`: raw PS/2 mouse packets.
     Mice,
+    /// `/dev/input/wheel`: scroll wheel clicks, one signed byte each.
+    Wheel,
 }
 
 /// `/dev/winsys`: the display server's side of the Win32 window manager. `read` = 32-byte window
@@ -262,12 +264,16 @@ impl FileOps for DevFile {
                 buf.len() as i64
             }
             DevKind::Mice => crate::ps2::mouse_read(buf),
+            DevKind::Wheel => crate::ps2::wheel_read(buf),
         }
     }
     fn poll_mask(&self, want: u16) -> u16 {
         match self.0 {
             DevKind::Mice => {
                 if want & POLLIN != 0 && crate::ps2::mouse_ready() { POLLIN } else { 0 }
+            }
+            DevKind::Wheel => {
+                if want & POLLIN != 0 && crate::ps2::wheel_ready() { POLLIN } else { 0 }
             }
             _ => want & (POLLIN | POLLOUT),
         }
@@ -294,6 +300,7 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/input/wheel" => Arc::new(DevFile(DevKind::Wheel)),
         "/dev/dsp" | "/dev/audio" => crate::hda::open_dsp()?,
         "/dev/ptmx" => crate::pty::open_master(),
         p if p.starts_with("/dev/pts/") => crate::pty::open_slave(p[9..].parse().ok()?)?,

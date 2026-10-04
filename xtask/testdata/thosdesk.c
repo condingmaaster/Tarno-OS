@@ -454,6 +454,7 @@ int main(int argc, char **argv) {
     signal(SIGCHLD, SIG_IGN);
     int fb = open("/dev/fb0", O_RDWR), mice = open("/dev/input/mice", O_RDONLY);
     int kbd = open("/dev/input/kbd", O_RDONLY);
+    int wheel = open("/dev/input/wheel", O_RDONLY);
     wsfd = open("/dev/winsys", O_RDWR);
     if (fb < 0 || mice < 0) { printf("desk FAIL: open fb=%d mice=%d\n", fb, mice); return 1; }
     struct var_screeninfo v; memset(&v, 0, sizeof v);
@@ -488,16 +489,21 @@ int main(int argc, char **argv) {
     int idle = 0;
     unsigned long long last_act = now_ms();
     for (; idle < 1200 && !quit;) {
-        struct pollfd p[4 + MAXWIN + 1 + WLS_MAXCL] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 }, { wsfd, POLLIN, 0 } };
+        struct pollfd p[4 + MAXWIN + 2 + WLS_MAXCL] = { { kbd, POLLIN, 0 }, { ls, POLLIN, 0 }, { mice, POLLIN, 0 }, { wsfd, POLLIN, 0 } };
         for (int i = 0; i < nwin; i++) p[4 + i] = (struct pollfd){ wins[i].hwnd ? -1 : wins[i].fd, POLLIN, 0 };
         int wbase = 4 + nwin, nwl = wls_pollfds(&p[wbase]);
-        int pr = poll(p, wbase + nwl, (wls_have_callbacks() || anim_pending()) ? 16 : 100);
+        p[wbase + nwl] = (struct pollfd){ wheel, POLLIN, 0 };
+        int pr = poll(p, wbase + nwl + 1, (wls_have_callbacks() || anim_pending()) ? 16 : 100);
         if (pr < 0) { printf("desk: poll %d\n", pr); break; }
         wls_tick();
         anim_tick();
         if (pr == 0) { if (now_ms() - last_act > 120000) idle = 1200; continue; }
         last_act = now_ms();
         if (nwl) wls_dispatch_poll(&p[wbase], nwl);
+        if (wheel >= 0 && (p[wbase + nwl].revents & POLLIN)) {
+            signed char z;
+            if (read(wheel, &z, 1) == 1) wls_wheel(z);
+        }
         if (p[0].revents == 0 && p[1].revents == 0 && p[2].revents == 0 && p[3].revents == 0) {
             int any = 0;
             for (int i = 0; i < nwin && 4 + i < wbase; i++) if (p[4 + i].revents) any = 1;
