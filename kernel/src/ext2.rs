@@ -102,7 +102,7 @@ struct SectorCache {
     tick: u64,
 }
 
-const CACHE_MAX_SECTORS: usize = 32768; // 16 MiB
+const CACHE_MAX_SECTORS: usize = 8192; // 4 MiB (the heap is shared with ELF buffers: keep the cache small)
 
 static CACHE: spin::Mutex<SectorCache> = spin::Mutex::new(SectorCache { map: BTreeMap::new(), tick: 0 });
 

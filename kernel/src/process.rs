@@ -1799,7 +1799,7 @@ pub fn clone_vm(frame: &UserFrame, flags: u64, stack: u64, tls: u64) -> i64 {
 }
 
 /// `execve`: replace the current task's image. Does not return on success.
-pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
+pub fn execve(bytes: Vec<u8>, argv: Vec<String>, envp: Vec<String>) -> ! {
     // The native-exec gate: same check `spawn_pe` runs, here for the path a
     // *running* process takes to become a different program. A malformed
     // image already can't panic the kernel past this point (`elf::load`
@@ -1807,7 +1807,7 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
     // ABI (the calling thread's image is what's being replaced) — quarantine
     // ends the calling thread cleanly instead, exit code 126 (the shell
     // convention for "found but not executable"), kernel alive either way.
-    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
+    if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(&bytes) {
         crate::kprintln!("THOS: exec gate        quarantined an ELF — {reason}");
         set_exit_status(126);
         crate::syscall::note_user_exit();
@@ -1818,7 +1818,7 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
     let task = cur.task().expect("execve: not a user task");
 
     let space = Process::new();
-    let img = elf::load(&space, bytes).expect("execve: bad ELF");
+    let img = elf::load(&space, &bytes).expect("execve: bad ELF");
     let stack_top = space.new_user_stack();
     let av: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let ev: Vec<&str> = envp.iter().map(|s| s.as_str()).collect();
@@ -1848,6 +1848,15 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
         ..Default::default()
     };
 
+    // `thos_user_resume` never returns, so nothing is dropped after it: give the heap back by hand
+    // (the whole ELF file and the argument strings — a leak of the program's size on every exec).
+    drop(av);
+    drop(ev);
+    drop(bytes);
+    drop(argv);
+    drop(envp);
+    drop(img);
+
     x86_64::registers::model_specific::FsBase::write(x86_64::VirtAddr::new(0));
     unsafe {
         Cr3::write(
@@ -1861,6 +1870,9 @@ pub fn execve(bytes: &[u8], argv: &[String], envp: &[String]) -> ! {
         if Arc::strong_count(&old_space) == 1 {
             old_space.teardown();
         }
+        drop(old_space);
+        drop(task);
+        drop(cur);
         syscall::thos_user_resume(&f)
     }
 }

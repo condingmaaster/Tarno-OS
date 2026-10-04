@@ -25,7 +25,7 @@ const FRAME_SIZE: u64 = 4096;
 /// Bootstrap heap: 32 MiB static arena. Covers the SMP stress milestone's
 /// hundreds of 16 KiB kernel stacks with room to spare; replaced by a
 /// page-backed heap once the page tables are ours (they now are — TODO).
-const HEAP_SIZE: usize = 64 * 1024 * 1024;
+const HEAP_SIZE: usize = 96 * 1024 * 1024;
 static mut HEAP_ARENA: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
 #[global_allocator]

@@ -1413,7 +1413,7 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
             Err(e) => e,
         },
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
-        Some(bytes) => process::execve(&bytes, &argv, &envp), // -> ! on success
+        Some(bytes) => process::execve(bytes, argv, envp), // -> ! on success
         None => ENOENT,
     }
 }
