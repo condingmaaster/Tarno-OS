@@ -343,6 +343,26 @@ fn main() {
                 exit(1);
             }
         }
+        "httpd-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(
+                &img,
+                "httpd",
+                "/busybox sh /httpd.sh",
+                "httpd-done",
+                90,
+                &["-cpu", "Westmere", "-netdev", "user,id=n0", "-device", "virtio-net-pci,netdev=n0"],
+            );
+            if out.lines().any(|l| l.trim() == "httpd-says-hello") {
+                println!("httpd-test PASSED: BusyBox httpd serves a page and BusyBox wget fetches it over 127.0.0.1 (a server and a client process on one machine)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("httpd") || l.contains("wget") || l.contains("fault") || l.contains("unhandled")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("httpd-test FAILED");
+                exit(1);
+            }
+        }
         "dns-test" => {
             // Needs the host to be online: QEMU's resolver (10.0.2.3) forwards to the host's.
             use std::net::ToSocketAddrs;
@@ -975,6 +995,7 @@ fn disk_image() -> PathBuf {
             if Command::new("gcc").args(["-O1", "-o", asl.to_str().unwrap(), root.join("xtask/testdata/asltest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} asltest", asl.to_str().unwrap()), img.to_str().unwrap()]));
             }
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} httpd.sh", root.join("xtask/testdata/httpd.sh").to_str().unwrap()), img.to_str().unwrap()]));
             let lot = root.join("target/lotest");
             if Command::new("gcc").args(["-O1", "-o", lot.to_str().unwrap(), root.join("xtask/testdata/lotest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} lotest", lot.to_str().unwrap()), img.to_str().unwrap()]));
@@ -4276,7 +4297,7 @@ fn suite(args: &[String]) {
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
         "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "rust-test", "oom-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
-        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "e1000-test", "dns-test",
+        "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
     const ISO: &[&str] = &[
