@@ -22,6 +22,11 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
   Fenster lassen sich an Ecke/Kante ziehen (xdg `configure`) und mit Alt+Up maximieren.
 - **Selbst-Hosting**: `gcc` (cc1, as, ld, glibc-Header) übersetzt und linkt ein C-Programm *in* THOS, das danach läuft (`gcc-test`, 448 MiB Dateisystem).
 
+- Wayland-Server komplett für Toolkits: Popups (`xdg_popup`/Positioner), Client-Dekoration, Zwischenablage (`wl_data_device`), Größe ändern, Maximieren.
+- Java läuft auch mit dem C1-JIT (`-XX:TieredStopAtLevel=1`), nicht nur interpretiert.
+- Gesamtlauf `cargo xtask suite`: **51 bestanden, 1 übersprungen (net-test braucht Host-Loopback), 0 fehlgeschlagen**. Die Sonderbilder
+  (`node-test`, `java-test`, `gtk-test`, `gcc-test`) laufen einzeln, weil sie ein größeres Dateisystem brauchen.
+
 ## Gefunden und behoben
 - AHCI: nach einem fehlgeschlagenen `READ LOG EXT` blieb das Task-File-ERR-Bit stehen und ließ den **nächsten gesunden Befehl** scheitern
   (zeigte sich erst, seit beim Beenden `sync_all()` schreibt). Fix: harmloser Befehl nach der Recovery. Relevant für echte Platten.
