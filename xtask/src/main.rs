@@ -4648,13 +4648,38 @@ fn kill(child: &mut std::process::Child, tag: &str, why: &str, log: &Path) -> ! 
     exit(1);
 }
 
+fn wait_count(log: &Path, needle: &str, n: usize, secs: u64) -> bool {
+    use std::time::{Duration, Instant};
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if std::fs::read_to_string(log).unwrap_or_default().matches(needle).count() >= n {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    false
+}
+
 /// Log in with the fixed test admin (`thos` / `pass`), running first-run setup
 /// first if the serial shows it.
 fn drive_login(sock: &Path, log: &Path, child: &mut std::process::Child, tag: &str) {
+    // Each answer is typed only after its prompt is on the console: the kernel's own (asynchronous) log lines
+    // between the prompts then cannot reorder the keystrokes.
     if wait_for(log, "THOS first-run setup", 8) {
-        std::thread::sleep(std::time::Duration::from_millis(400));
+        if !wait_count(log, "admin username:", 1, 20) {
+            kill(child, tag, "no username prompt", log);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
         type_line(sock, "thos"); // admin username
+        if !wait_count(log, "  password:", 1, 20) {
+            kill(child, tag, "no password prompt", log);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
         type_line(sock, "pass"); // password
+        if !wait_count(log, "repeat password:", 1, 20) {
+            kill(child, tag, "no repeat prompt", log);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
         type_line(sock, "pass"); // repeat
         if !wait_for(log, "THOS login:", 90) {
             kill(child, tag, "no login prompt after first-run setup", log);
@@ -4662,6 +4687,7 @@ fn drive_login(sock: &Path, log: &Path, child: &mut std::process::Child, tag: &s
     }
     std::thread::sleep(std::time::Duration::from_millis(300));
     type_line(sock, "thos");
+    std::thread::sleep(std::time::Duration::from_millis(300));
     type_line(sock, "pass");
 }
 
