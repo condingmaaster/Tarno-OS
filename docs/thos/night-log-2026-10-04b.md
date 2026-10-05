@@ -39,3 +39,9 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - Popups/Subsurfaces/Zwischenablage im Wayland-Server, `xdg-decoration`, Fenstergröße ändern.
 - Signale weiter pro Prozess (kein `tgkill` pro Thread).
 - (erledigt) Kernel-Zugriff (`usercopy`) auf noch nicht eingelagerte Lazy-memfd-Seiten holt sie jetzt ein.
+
+## Nachtrag 2026-10-05 (Nachtschicht)
+- `drive_login` (xtask) tippt Benutzername/Passwort erst nach dem jeweiligen Prompt: behebt die Flake beim ersten Login (Kernel-Logzeilen kamen zwischen die Tasten).
+- Desktop: Start-Menü im Panel (Programme mit T = an die Taskleiste, D = auf den Desktop anheften), Desktop-Icons (Doppelklick startet), Menü-Oberflächen schließen bei Klick daneben (CREATE-Flag `d & 2`), `desk-menu-test`.
+  Pins liegen in `/tmp/panel.conf` und `/tmp/desktop.conf`.
+- Offen: Fensterliste in der Taskleiste, Icons verschieben, Hover im Menü.
