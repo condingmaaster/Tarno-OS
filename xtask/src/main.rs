@@ -6991,7 +6991,7 @@ fn desk_menu_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/deskmenu-serial.log");
     let sock = root.join("target/deskmenu-mon.sock");
-    let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/deskmenu-{i}.ppm"))).collect();
+    let shots: Vec<PathBuf> = (1..=4).map(|i| root.join(format!("target/deskmenu-{i}.ppm"))).collect();
     for f in [&log, &sock] {
         let _ = std::fs::remove_file(f);
     }
@@ -7034,6 +7034,12 @@ fn desk_menu_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
         goto(38, 784);                       // Start again, then the Terminal row itself
         click(&tsock);
+        goto(238, 645);                      // "T" toggle of the Text editor row: pin to the taskbar
+        click(&tsock);
+        goto(262, 701);                      // "D" toggle of the Win32 demo row
+        click(&tsock);
+        std::thread::sleep(ms(1500));
+        mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
         goto(80, 617);
         click(&tsock);
         if wait_for(&tlog, "term ready", 40) {
