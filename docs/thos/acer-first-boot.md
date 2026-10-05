@@ -43,3 +43,8 @@ Danach: Administratorkonto anlegen, anmelden, `desktop` tippen (Compositor + Ter
   **Grenzen:** die Paketliste wird ohne Signaturprüfung geholt (keine GPG-Prüfung; auch ssl_client prüft keine Zertifikate) — also nur in vertrauenswürdigen Netzen; Programme mit sehr vielen Abhängigkeiten (GTK, Qt) sind nicht das Ziel.
 - Eigene Dateien: `thos-pkg install <Datei-oder-URL>` entpackt `.deb`, `.rpm`, `.zip`, `.tar.gz/.xz/.bz2` oder eine `.exe` nach `/opt/<Name>` und legt Einträge im Startmenü an (`thos-pkg list`, `thos-pkg remove <Name>`).
   `.msi` wird abgelehnt (noch nicht unterstützt).
+
+## Image-Varianten (mehr Platz, Browser)
+- Standard: 128 MiB Root-Dateisystem. Für `thos-pkg install` empfiehlt sich mehr Platz: `THOS_FS_MIB=2048 cargo xtask bios-image --interactive` (Image dann ~2,1 GB; der Stick muss entsprechend groß sein).
+- Mit Webbrowser (NetSurf/GTK 3, https, Download-Dialog): `THOS_NETSURF=1 THOS_FS_MIB=512 cargo xtask bios-image --interactive` — im Startmenü erscheint dann „Web browser". Speicherort für Downloads: das Home-Verzeichnis `/tmp`; danach im Dateimanager per Doppelklick installieren (`.deb`, `.zip`, `.tar.gz`, `.exe`).
+- Mehr RAM im Test: `THOS_MEM=7800M cargo xtask <test>` (der Acer hat 7,6 GiB; 7,7 GiB nutzbar werden erkannt).

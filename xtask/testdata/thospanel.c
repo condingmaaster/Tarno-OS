@@ -107,7 +107,7 @@ static void build_apps(void) {
     add_app("Files", "/thosfiles");
     add_app("Text editor", "/thostext");
     add_app("Foot terminal", "/usr/bin/foot");
-    add_app("Web browser", "/usr/bin/netsurf-gtk file:///page.html");
+    add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
     add_app("GTK demo", "/gtkhello 70");
     add_app("Win32 demo", "/thoswin");
     static struct ent extra[MAXA];
