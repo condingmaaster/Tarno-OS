@@ -768,6 +768,7 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "winrt", "/busybox sh /winrt.sh", "winrt-done", 150);
             let ok = out.contains("wsock-done") && out.contains("ws server got 17: ping-over-winsock") && out.contains("ws client got pong select=1") && out.contains("ws getaddrinfo=0 port=80")
+                && out.contains("cproc windows-child waited=1 code=7 | elf-child waited=1 code=0") && out.contains("from-elf-child") && out.contains("hello from win32 3 one") && out.contains("cproc missing program refused=1")
                 && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done") && out.contains("threads total=2000") && out.contains("channel got [0, 1, 4, 9, 16]") && out.contains("caught panic: true") && out.contains("rustthreads-done");
             if ok {
                 println!("winrt-test PASSED: Winsock over loopback and a real Rust program built for x86_64-pc-windows-gnu (std: heap, files, environment, random, stdout, threads, mutex, channels, panics caught by catch_unwind) run");
@@ -1902,6 +1903,10 @@ fn disk_image() -> PathBuf {
                 if Command::new("x86_64-w64-mingw32-gcc").args(&args).status().map(|s| s.success()).unwrap_or(false) {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/{dll}", out.to_str().unwrap()), img.to_str().unwrap()]));
                 }
+            }
+            let cp = root.join("target/cproc.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", cp.to_str().unwrap(), root.join("xtask/testdata/cproc.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} cproc.exe", cp.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let ws = root.join("target/wsock.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", ws.to_str().unwrap(), root.join("xtask/testdata/wsock.c").to_str().unwrap(), "-lws2_32"]).status().map(|s| s.success()).unwrap_or(false) {

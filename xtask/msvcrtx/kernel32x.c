@@ -834,14 +834,6 @@ EXPORT u32 WINAPI FormatMessageW(u32 flags, const void *src, u32 id, u32 lang, u
 }
 EXPORT BOOL WINAPI GetModuleHandleExW(u32 flags, const u16 *name, HANDLE *out) { (void)flags; HANDLE h = GetModuleHandleW(name); if (out) *out = h; return h != 0; }
 EXPORT u32 WINAPI GetProcessId(HANDLE h) { (void)h; return (u32)sc3(S_GETPID, 0, 0, 0); }
-EXPORT BOOL WINAPI GetExitCodeProcess(HANDLE h, u32 *c) { (void)h; if (c) *c = 259; return 1; }
-EXPORT BOOL WINAPI TerminateProcess(HANDLE h, u32 code) { if ((i64)h == -1) sc3(231, code, 0, 0); SetLastError(5); return 0; }
-EXPORT BOOL WINAPI CreateProcessW(const u16 *a, u16 *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const u16 *cwd, void *si, void *pi) {
-    (void)a; (void)cmd; (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd; (void)si; (void)pi; SetLastError(120); return 0;
-}
-EXPORT BOOL WINAPI CreateProcessA(const char *a, char *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const char *cwd, void *si, void *pi) {
-    (void)a; (void)cmd; (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd; (void)si; (void)pi; SetLastError(120); return 0;
-}
 EXPORT HANDLE WINAPI CreateToolhelp32Snapshot(u32 f, u32 pid) { (void)f; (void)pid; SetLastError(120); return INVALID_HANDLE; }
 EXPORT BOOL WINAPI Module32FirstW(HANDLE h, void *e) { (void)h; (void)e; return 0; }
 EXPORT BOOL WINAPI Module32NextW(HANDLE h, void *e) { (void)h; (void)e; return 0; }
@@ -1006,5 +998,119 @@ EXPORT u64 WINAPI LocalSize(HANDLE p) { return p ? ((mh *)p - 1)->size : 0; }
 EXPORT u64 WINAPI GlobalSize(HANDLE p) { return LocalSize(p); }
 EXPORT HANDLE WINAPI LocalReAlloc(HANDLE p, u64 n, u32 f) { return HeapReAlloc(0, (f & 0x40) ? 8 : 0, p, n); }
 EXPORT HANDLE WINAPI GlobalReAlloc(HANDLE p, u64 n, u32 f) { return HeapReAlloc(0, (f & 0x40) ? 8 : 0, p, n); }
+
+
+/* ======================================================================================================
+   Processes: CreateProcess over fork + execve (ELF and PE programs alike), process handles that WaitForSingleObject,
+   GetExitCodeProcess, TerminateProcess and CloseHandle understand.
+   ====================================================================================================== */
+#define PH_BASE 0x40000000ULL
+#define PH_MAX 64
+static struct { int pid; int done; int code; } procs[PH_MAX];
+static int is_ph(HANDLE h) { u64 v = (u64)h; return v >= PH_BASE && v < PH_BASE + PH_MAX; }
+static void ph_poll(int idx, int block_ms) {                       /* block_ms < 0: wait forever */
+    if (procs[idx].done) return;
+    i64 waited = 0;
+    for (;;) {
+        int status = 0;
+        i64 r = sc6(61 /* wait4 */, procs[idx].pid, (i64)&status, 1 /* WNOHANG */, 0, 0, 0);
+        if (r == procs[idx].pid) { procs[idx].done = 1; procs[idx].code = (status & 0x7F) ? (0xC0000000 | (status & 0x7F)) : ((status >> 8) & 0xFF); return; }
+        if (r < 0 && r != 0) { procs[idx].done = 1; procs[idx].code = 0; return; }
+        if (block_ms >= 0 && waited >= block_ms) return;
+        i64 ts[2] = { 0, 5000000 }; sc3(35, ts, 0, 0); waited += 5;
+    }
+}
+static void *kernel32_builtin(const char *name) { return find_in("kernel32.dll", name); }
+EXPORT u32 WINAPI WaitForSingleObject(HANDLE h, u32 ms) {
+    if (is_ph(h)) { int idx = (int)((u64)h - PH_BASE); ph_poll(idx, ms == 0xFFFFFFFFu ? -1 : (int)ms); return procs[idx].done ? 0 : 0x102; }
+    typedef u32 (WINAPI *f_t)(HANDLE, u32); static f_t f; if (!f) f = (f_t)kernel32_builtin("WaitForSingleObject");
+    return f ? f(h, ms) : 0xFFFFFFFFu;
+}
+EXPORT BOOL WINAPI CloseHandle(HANDLE h) {
+    if (is_ph(h) || ((u64)h >= PH_BASE + 0x10000 && (u64)h < PH_BASE + 0x10000 + PH_MAX)) return 1;
+    typedef BOOL (WINAPI *f_t)(HANDLE); static f_t f; if (!f) f = (f_t)kernel32_builtin("CloseHandle");
+    return f ? f(h) : 0;
+}
+EXPORT BOOL WINAPI GetExitCodeProcess(HANDLE h, u32 *c) {
+    if (!is_ph(h)) { if (c) *c = 259; return 1; }
+    int idx = (int)((u64)h - PH_BASE); ph_poll(idx, 0);
+    if (c) *c = procs[idx].done ? (u32)procs[idx].code : 259;
+    return 1;
+}
+EXPORT BOOL WINAPI TerminateProcess(HANDLE h, u32 code) {
+    if ((i64)h == -1) sc3(231, code & 0xFF, 0, 0);
+    if (is_ph(h)) { sc3(62, procs[(int)((u64)h - PH_BASE)].pid, 9, 0); return 1; }
+    SetLastError(5); return 0;
+}
+static int split_cmd(char *cmd, char **argv, int max) {            /* Windows command-line rules (quotes group, backslashes only before quotes) */
+    int n = 0; char *p = cmd;
+    while (*p && n < max - 1) {
+        while (*p == ' ' || *p == '\t') p++;
+        if (!*p) break;
+        char *out = p; argv[n++] = out;
+        int inq = 0;
+        while (*p && (inq || (*p != ' ' && *p != '\t'))) {
+            int bs = 0; while (*p == '\\') { bs++; p++; }
+            if (*p == '"') { for (int i = 0; i < bs / 2; i++) *out++ = '\\'; if (bs & 1) *out++ = '"'; else inq = !inq; p++; }
+            else { for (int i = 0; i < bs; i++) *out++ = '\\'; if (*p) *out++ = *p++; }
+        }
+        if (*p) p++;
+        *out = 0;
+    }
+    argv[n] = 0;
+    return n;
+}
+static int file_exists(const char *posix) { unsigned char st[144]; return sc6(S_NEWFSTATAT, -100, (i64)posix, (i64)st, 0, 0, 0) == 0; }
+static BOOL create_process(const char *app, char *cmd, void *si, int wide_si, void *pi) {
+    (void)wide_si;
+    char buf[2048]; cpy(buf, cmd ? cmd : app, sizeof buf);
+    char *argv[32]; int argc = split_cmd(buf, argv, 32);
+    const char *prog = app ? app : (argc ? argv[0] : 0);
+    if (!prog || !*prog) { SetLastError(2); return 0; }
+    char path[600]; dos_path(path, prog, sizeof path);
+    if (!file_exists(path)) {
+        size_t l = slen(path); int has_dot = 0; for (size_t i = 0; i < l; i++) if (path[i] == '.') has_dot = i + 1;
+        char alt[640]; cpy(alt, path, sizeof alt); if (l + 4 < sizeof alt) { alt[l] = '.'; alt[l + 1] = 'e'; alt[l + 2] = 'x'; alt[l + 3] = 'e'; alt[l + 4] = 0; }
+        (void)has_dot;
+        if (file_exists(alt)) cpy(path, alt, sizeof path);
+        else if (path[0] != '/' || !file_exists(path)) {                    /* a bare name: the root and the usual places */
+            const char *dirs[] = { "/", "/bin/", "/usr/bin/", "/Windows/System32/" };
+            int found = 0;
+            for (int d = 0; d < 4 && !found; d++) {
+                char t[700]; cpy(t, dirs[d], sizeof t); size_t n = slen(t); const char *base = path; if (base[0] == '/') base++;
+                cpy(t + n, base, sizeof t - n); if (file_exists(t)) { cpy(path, t, sizeof path); found = 1; break; }
+                n = slen(t); cpy(t + n, ".exe", sizeof t - n); if (file_exists(t)) { cpy(path, t, sizeof path); found = 1; }
+            }
+            if (!found) { SetLastError(2); return 0; }
+        }
+    }
+    int h_in = -1, h_out = -1, h_err = -1;
+    if (si) { unsigned char *s = si; if (*(u32 *)(s + 60) & 0x100) { h_in = (int)*(i64 *)(s + 80); h_out = (int)*(i64 *)(s + 88); h_err = (int)*(i64 *)(s + 96); } }
+    int slot = -1; for (int i = 0; i < PH_MAX; i++) if (!procs[i].pid) { slot = i; break; }
+    if (slot < 0) { SetLastError(8); return 0; }
+    i64 pid = sc3(57 /* fork */, 0, 0, 0);
+    if (pid < 0) { SetLastError(8); return 0; }
+    if (pid == 0) {
+        if (h_in >= 0 && h_in != 0) sc3(33, h_in, 0, 0);
+        if (h_out >= 0 && h_out != 1) sc3(33, h_out, 1, 0);
+        if (h_err >= 0 && h_err != 2) sc3(33, h_err, 2, 0);
+        if (!argc) { argv[0] = path; argv[1] = 0; }
+        char *envp[1] = { 0 };
+        sc3(59, path, argv, envp);
+        sc3(231, 127, 0, 0);
+    }
+    procs[slot].pid = (int)pid; procs[slot].done = 0; procs[slot].code = 0;
+    if (pi) { u64 *o = pi; o[0] = PH_BASE + (u64)slot; o[1] = PH_BASE + 0x10000 + (u64)slot; ((u32 *)o)[4] = (u32)pid; ((u32 *)o)[5] = (u32)pid; }
+    return 1;
+}
+EXPORT BOOL WINAPI CreateProcessA(const char *app, char *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const char *cwd, void *si, void *pi) {
+    (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd; return create_process(app, cmd, si, 0, pi);
+}
+EXPORT BOOL WINAPI CreateProcessW(const u16 *app, u16 *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const u16 *cwd, void *si, void *pi) {
+    (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd;
+    char a[1024], c[2048]; if (app) w2a(app, a, sizeof a); if (cmd) w2a(cmd, c, sizeof c);
+    return create_process(app ? a : 0, cmd ? c : 0, si, 1, pi);
+}
+EXPORT BOOL WINAPI GetStdHandle_dummy_unused(void) { return 0; }
 
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }
