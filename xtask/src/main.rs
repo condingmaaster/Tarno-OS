@@ -750,9 +750,23 @@ fn main() {
                 exit(1);
             }
         }
+        "https-test" => {
+            // needs the internet: BusyBox wget over TLS (ssl_client)
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "https", "/busybox sh /https.sh", "https-done", 200);
+            if out.contains("wget-rc=0") {
+                println!("https-test PASSED: wget over https works");
+            } else {
+                for l in out.lines().filter(|l| l.contains("wget") || l.contains("THOS:") || l.contains("ssl")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("https-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
-            let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "trunc=", 150);
+            let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
             let ok = out.contains("list=pkgdemo pkgtool pkgzip")
                 && out.matches("pkg-demo-ran").count() == 1
                 && out.contains("pkg-tool-ran")
@@ -761,7 +775,8 @@ fn main() {
                 && out.contains("already installed")
                 && out.contains("(.msi) are not supported")
                 && out.contains("after-remove=pkgtool pkgzip apps=2")
-                && out.contains("trunc=bb,cc,");
+                && out.contains("trunc=bb,cc,")
+                && out.contains("shebang=2 path=2");
             if ok {
                 println!("pkg-test PASSED: thos-pkg installs a .deb, a .tar.gz and a .zip into /opt, lists them in the Start-menu file, the installed programs run, a second install and an .msi are refused, remove cleans up");
             } else {
@@ -1532,6 +1547,10 @@ fn disk_image() -> PathBuf {
             if evt_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} evtest", evt.to_str().unwrap()), img.to_str().unwrap()]));
             }
+            let shim = root.join("target/openssl-shim");
+            if Command::new("gcc").args(["-O1", "-o", shim.to_str().unwrap(), root.join("xtask/testdata/openssl-shim.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} openssl-shim", shim.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             // Node.js (big: needs THOS_FS_MIB=384 and THOS_NODE=1, see `node-test`)
             if std::env::var("THOS_NODE").is_ok() && std::path::Path::new("/usr/bin/node").exists() {
                 let mut ndirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
@@ -1772,10 +1791,11 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
+
                 run(Command::new("debugfs").args(["-w", "-R", "set_inode_field opt mode 040777", img.to_str().unwrap()]));
             }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-menu.sh", root.join("xtask/testdata/desk-menu.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -1990,13 +2010,24 @@ fn disk_image() -> PathBuf {
         // network + archive tools
         "wget", "nc", "nslookup", "ping", "telnet", "gzip", "gunzip", "zcat", "unzip", "bzip2", "xz",
         "diff", "patch", "top",
+        // what thos-pkg and everyday shell use needs
+        "ssl_client", "dmesg", "xzcat", "unxz", "bzcat", "bunzip2", "dpkg-deb", "ar", "cpio", "rpm2cpio", "sha256sum", "sha1sum", "md5sum",
+        "cmp", "nproc", "seq", "printf", "install", "mktemp", "realpath", "readlink", "comm", "paste", "rev", "tac", "nl", "fold", "yes", "timeout",
+        "ip", "ifconfig", "netstat", "mount", "umount", "lsmod", "who", "w", "last",
     ];
     run(Command::new("debugfs").args(["-w", "-R", "mkdir /bin", img.to_str().unwrap()]));
+    for _ in 0..3 {
+        // debugfs `ln` does not grow a directory: give /bin room for all the links (one 1 KiB block holds ~75)
+        run(Command::new("debugfs").args(["-w", "-R", "expand_dir /bin", img.to_str().unwrap()]));
+    }
     for app in APPLETS {
         run(Command::new("debugfs").args([
             "-w", "-R", &format!("ln /busybox /bin/{app}"),
             img.to_str().unwrap(),
         ]));
+    }
+    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl")] {
+        let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
     }
     // links_count = the root `/busybox` entry + every `/bin/*` link.
     let links = 1 + APPLETS.len();

@@ -1427,6 +1427,8 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
+    // `/proc/self/exe` (BusyBox re-executes itself that way for applets such as `ssl_client`)
+    let path = if path == "/proc/self/exe" { crate::procfs::readlink(&path).unwrap_or(path) } else { path };
     let mut budget = EXEC_ARG_LIMIT;
     let argv = match user_exec_args(argv_ptr, &mut budget) {
         Ok(v) => v,
@@ -1436,7 +1438,32 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         Ok(v) => v,
         Err(e) => return e,
     };
+    exec_resolved(path, argv, envp, 0)
+}
+
+/// The part of `execve` after the user strings are copied in: `#!` scripts re-enter here with the
+/// interpreter in front (at most 4 levels deep, like Linux).
+fn exec_resolved(path: alloc::string::String, argv: alloc::vec::Vec<alloc::string::String>, envp: alloc::vec::Vec<alloc::string::String>, depth: u32) -> i64 {
     match ext2::open().ok().and_then(|fs| fs.read_path(&path)) {
+        Some(bytes) if bytes.starts_with(b"#!") && depth < 4 => {
+            let line_end = bytes.iter().position(|&b| b == b'\n').unwrap_or(bytes.len().min(256)).min(256);
+            let line = alloc::string::String::from(alloc::string::String::from_utf8_lossy(&bytes[2..line_end]));
+            let line = line.trim();
+            let (interp, arg) = match line.split_once(|c: char| c == ' ' || c == '\t') {
+                Some((i, a)) => (i, Some(a.trim())),
+                None => (line, None),
+            };
+            if interp.is_empty() {
+                return ENOEXEC;
+            }
+            let mut nargv = alloc::vec![alloc::string::String::from(interp)];
+            if let Some(a) = arg.filter(|a| !a.is_empty()) {
+                nargv.push(alloc::string::String::from(a));
+            }
+            nargv.push(path.clone());
+            nargv.extend(argv.into_iter().skip(1));
+            exec_resolved(alloc::string::String::from(interp), nargv, envp, depth + 1)
+        }
         // Not something we can run (a script, a text file, a truncated
         // binary): ENOEXEC lets the shell fall back instead of the kernel dying
         // inside `execve`'s own `expect`.

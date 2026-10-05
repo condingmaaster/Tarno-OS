@@ -15,3 +15,4 @@ echo aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa > /tmp/tr.txt
 echo bb > /tmp/tr.txt
 echo cc >> /tmp/tr.txt
 echo trunc=$(/busybox cat /tmp/tr.txt | /busybox tr '\n' ,)
+echo shebang=$(/thos-pkg list | /busybox wc -l) path=$(thos-pkg list | /busybox wc -l)
