@@ -33,7 +33,8 @@ terminal, or when it crashes — the framebuffer is released when its last file 
 | `curl` | `curl-test` | HTTPS through the real internet (QEMU user networking) |
 | audio | `audio-test` | `/dev/dsp`, 48 kHz S16 stereo through Intel HD Audio |
 
-The panel (`thospanel`) reads optional launcher buttons from `/panel.conf` (one `Label|command` per line) and shows the local time (CET/CEST).
+The panel (`thospanel`) has a green **Start** button: it opens a menu of the installed programs (Terminal, text editor, foot, browser, GTK demo, Win32 demo, plus entries from `/apps.conf`, one `Label|command` per line). Each row has two toggles: **T** pins the program to the taskbar, **D** puts an icon on the desktop (double-click it to start). A click outside the menu closes it; "Quit desktop" ends the session.
+Pins are stored in `/tmp/panel.conf` and `/tmp/desktop.conf` (same `Label|command` format; `/panel.conf` and `/desktop.conf` are the system defaults). The panel also shows the local time (CET/CEST).
 A scroll wheel works when the PS/2 mouse speaks the IntelliMouse protocol (`/dev/input/wheel`).
 
 ## Wayland

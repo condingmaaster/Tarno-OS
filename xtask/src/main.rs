@@ -705,6 +705,10 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_panel_test(&img);
         }
+        "desk-menu-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_menu_test(&img);
+        }
         "desk-win32-test" => {
             let img = prod_interactive_image(cmd);
             desk_win32_test(&img);
@@ -1658,6 +1662,7 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-menu.sh", root.join("xtask/testdata/desk-menu.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winc.sh", root.join("xtask/testdata/winc.sh").to_str().unwrap()), img.to_str().unwrap()]));
             // THOS's C runtime extension for Windows programs: a real PE DLL the loader consults before the built-in msvcrt
@@ -4966,7 +4971,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -6944,8 +6949,8 @@ fn desk_panel_test(img: &Path) {
             return;
         }
         std::thread::sleep(ms(1000));
-        // cursor starts at the centre (640,400); the button is at (56, 784)
-        let (mut rx, mut ry) = (56 - 640, 784 - 400);
+        // cursor starts at the centre (640,400); the Terminal button (after "Start") is at (118, 784)
+        let (mut rx, mut ry) = (118 - 640, 784 - 400);
         while rx != 0 || ry != 0 {
             let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
             mon(&tsock, &format!("mouse_move {sx} {sy}"));
@@ -6976,6 +6981,84 @@ fn desk_panel_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-panel-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-menu-test`: the Start button opens the menu above the panel; its "D" toggle pins Terminal to the
+/// desktop (an icon appears and survives in /desktop.conf); a click outside closes the menu; a row launches a terminal.
+fn desk_menu_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskmenu-serial.log");
+    let sock = root.join("target/deskmenu-mon.sock");
+    let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/deskmenu-{i}.ppm"))).collect();
+    for f in [&log, &sock] {
+        let _ = std::fs::remove_file(f);
+    }
+    for f in &shots {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "panel ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1000));
+        let mut cur = (640i32, 400i32);
+        let mut goto = |x: i32, y: i32| {
+            let (mut rx, mut ry) = (x - cur.0, y - cur.1);
+            while rx != 0 || ry != 0 {
+                let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+                mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                rx -= sx;
+                ry -= sy;
+            }
+            cur = (x, y);
+            std::thread::sleep(ms(200));
+        };
+        let click = |sock: &Path| {
+            mon(sock, "mouse_button 1");
+            std::thread::sleep(ms(250));
+            mon(sock, "mouse_button 0");
+            std::thread::sleep(ms(700));
+        };
+        goto(38, 784);                       // Start
+        click(&tsock);
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        goto(262, 617);                      // "D" toggle of the Terminal row: pin to the desktop
+        click(&tsock);
+        std::thread::sleep(ms(1500));        // the compositor re-reads /desktop.conf
+        goto(700, 300);                      // a click on empty desktop closes the menu
+        click(&tsock);
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+        goto(38, 784);                       // Start again, then the Terminal row itself
+        click(&tsock);
+        goto(80, 617);
+        click(&tsock);
+        if wait_for(&tlog, "term ready", 40) {
+            std::thread::sleep(ms(1500));
+            mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+        }
+    });
+    let out = boot_and_run(img, "deskmenu", "/busybox sh /desk-menu.sh", "desk ok:", 200);
+    let px = |n: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shots[n])?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let menu_open = px(0, 150, 700).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // menu body 0x262634
+    let icon = px(1, 48, 30).is_some_and(|c| (c.0 as i32 - 18).abs() + (c.1 as i32 - 25).abs() + (c.2 as i32 - 58).abs() > 60); // not wallpaper: an icon
+    let icon_shot = px(1, 48, 50);
+    let menu_closed = px(1, 150, 700).is_some_and(|c| !(c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70));
+    let term = out.contains("term ready");
+    if menu_open && icon && menu_closed && term {
+        println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");
+    } else {
+        eprintln!("  menu open {menu_open}, desktop icon {icon} ({icon_shot:?}), menu closed {menu_closed}, terminal launched {term}");
+        for l in out.lines().filter(|l| l.contains("panel") || l.contains("term") || l.contains("desk") || l.contains("fault")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-menu-test FAILED");
         exit(1);
     }
 }

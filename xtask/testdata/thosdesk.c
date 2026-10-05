@@ -18,6 +18,8 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/stat.h>
+#include <time.h>
 #include <unistd.h>
 #include "thoswl.h"
 #include "thosgfx.h"
@@ -35,7 +37,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -44,6 +46,8 @@ static uint8_t *fbmap;
 static uint32_t *bb;                     /* back buffer, W*H */
 static uint32_t rs, gs, bs;
 static int mx, my, quit;
+static int last_icon = -1;
+static unsigned long long last_icon_ms;
 static int drag, dx0, dy0;                       /* a window move in progress (titlebar, or asked for by the client) */
 static int rs_id, rs_dir, rs_x0, rs_y0, rs_w0, rs_h0;   /* an edge/corner resize in progress */
 
@@ -167,6 +171,96 @@ static uint32_t title_color(int row, int top) {
     return rgb(r0 + (r1 - r0) * row / TITLE, g0 + (g1 - g0) * row / TITLE, b0 + (b1 - b0) * row / TITLE);
 }
 
+/* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
+static unsigned long long now_ms(void);
+static void compose(struct rect r);
+#define MAXICON 16
+#define ICON_X 20
+#define ICON_Y 20
+#define ICON_STEP 96
+static struct { char label[24]; char cmd[160]; } icons[MAXICON];
+static int nicons;
+static const char *icons_path(void) { return access("/tmp/desktop.conf", F_OK) == 0 ? "/tmp/desktop.conf" : "/desktop.conf"; }
+static time_t icons_mtime;
+static unsigned long long icons_checked;
+static struct rect icon_cell(int j) { return rect_xywh(ICON_X, ICON_Y + j * ICON_STEP, 80, 86); }
+static int icon_at(int x, int y) {
+    for (int j = 0; j < nicons; j++) if (in(icon_cell(j), x, y)) return j;
+    return -1;
+}
+static void put_glyph_str(const char *t, int gx, int gy, uint32_t c, unsigned op, struct rect r);
+static void draw_icons(struct rect r) {
+    static const uint8_t pal[6][3] = { { 70, 130, 200 }, { 200, 100, 80 }, { 90, 170, 110 }, { 170, 120, 200 }, { 210, 160, 70 }, { 80, 170, 180 } };
+    for (int j = 0; j < nicons; j++) {
+        struct rect cell = icon_cell(j);
+        if (empty(isect(cell, r))) continue;
+        unsigned h = 0;
+        for (const char *p = icons[j].label; *p; p++) h = h * 31 + (unsigned char)*p;
+        const uint8_t *pc = pal[h % 6];
+        int bx = cell.x0 + 12, by = cell.y0, bs = 56;
+        for (int y = 0; y < bs; y++)
+            for (int x = 0; x < bs; x++) {
+                int px = bx + x, py = by + y;
+                if (!in(r, px, py)) continue;
+                int cx = x < 8 ? 8 - x : (bs - 1 - x < 8 ? 8 - (bs - 1 - x) : 0), cy = y < 8 ? 8 - y : (bs - 1 - y < 8 ? 8 - (bs - 1 - y) : 0);
+                if (cx * cx + cy * cy > 64) continue;
+                int k = 40 + (bs - y) * 60 / bs;           /* lighter at the top */
+                uint32_t col = rgb(pc[0] * k / 100 > 255 ? 255 : pc[0] * k / 100, pc[1] * k / 100 > 255 ? 255 : pc[1] * k / 100, pc[2] * k / 100 > 255 ? 255 : pc[2] * k / 100);
+                bb[(size_t)py * W + px] = col;
+            }
+        /* the initial, scaled 3x */
+        unsigned char ch = (unsigned char)icons[j].label[0];
+        if (ch >= 'a' && ch <= 'z') ch -= 32;
+        for (int gy = 0; gy < 16 && gfx_font; gy++)
+            for (int gx = 0; gx < 8; gx++)
+                if (gfx_font[ch * 16 + gy] & (0x80 >> gx))
+                    for (int sy = 0; sy < 3; sy++)
+                        for (int sx = 0; sx < 3; sx++) {
+                            int px = bx + 16 + gx * 3 + sx, py = by + 4 + gy * 3 + sy;
+                            if (in(r, px, py)) bb[(size_t)py * W + px] = rgb(255, 255, 255);
+                        }
+        char lab[11];
+        snprintf(lab, sizeof lab, "%s", icons[j].label);
+        int lx = cell.x0 + (80 - 8 * (int)strlen(lab)) / 2, ly = cell.y0 + 62;
+        put_glyph_str(lab, lx + 1, ly + 1, rgb(0, 0, 0), 256, r);
+        put_glyph_str(lab, lx, ly, rgb(255, 255, 255), 256, r);
+    }
+}
+static void load_icons(void) {
+    nicons = 0;
+    FILE *f = fopen(icons_path(), "r");
+    for (char line[200]; f && fgets(line, sizeof line, f) && nicons < MAXICON;) {
+        char *bar = strchr(line, '|');
+        if (!bar) continue;
+        *bar = 0;
+        bar[1 + strcspn(bar + 1, "\n")] = 0;
+        snprintf(icons[nicons].label, sizeof icons[0].label, "%s", line);
+        snprintf(icons[nicons].cmd, sizeof icons[0].cmd, "%s", bar + 1);
+        nicons++;
+    }
+    if (f) fclose(f);
+}
+/* re-read the file when the start menu has rewritten it (checked twice a second at most) */
+static void icons_poll(void) {
+    unsigned long long t = now_ms();
+    if (t - icons_checked < 500) return;
+    icons_checked = t;
+    struct stat st;
+    time_t m = stat(icons_path(), &st) == 0 ? st.st_mtime + (st.st_size << 20) : 0;
+    if (m == icons_mtime) return;
+    icons_mtime = m;
+    load_icons();
+    compose(rect_xywh(0, 0, 120, H));
+}
+static void launch_cmd(const char *cmd) {
+    if (fork() != 0) return;
+    if (!*cmd) execl("/thosterm", "thosterm", "-l", (char *)0);
+    setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("HOME", "/tmp", 1); setenv("LC_ALL", "C.UTF-8", 1);
+    setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1); setenv("GDK_BACKEND", "wayland", 1);
+    execl("/busybox", "sh", "-c", cmd, (char *)0);
+    _exit(127);
+}
+
 static void put_glyph_str(const char *t, int gx, int gy, uint32_t c, unsigned op, struct rect r) {
     for (int k = 0; t[k] && gfx_font; k++, gx += 8)
         for (int j = 0; j < 16; j++) {
@@ -256,6 +350,7 @@ static void compose(struct rect r) {
     r = clip(r);
     if (empty(r)) return;
     for (int y = r.y0; y < r.y1; y++) memcpy(&bb[(size_t)y * W + r.x0], &wall[(size_t)y * W + r.x0], (size_t)(r.x1 - r.x0) * 4);
+    draw_icons(r);
     for (int i = 0; i < nwin; i++) {
         struct win *w = &wins[i];
         int top = i == nwin - 1;
@@ -367,7 +462,7 @@ static int resize_dir(struct win *w, int px, int py) {
 }
 static int work_bottom(void) {          /* a panel along the bottom edge is not covered by maximized windows */
     int b = H;
-    for (int i = 0; i < nwin; i++) if (!wins[i].deco && !wins[i].is_wl && wins[i].y > H / 2 && wins[i].y < b) b = wins[i].y;
+    for (int i = 0; i < nwin; i++) if (!wins[i].deco && !wins[i].is_wl && !wins[i].menu && wins[i].y > H / 2 && wins[i].y < b) b = wins[i].y;
     return b;
 }
 static void toggle_maximize(struct win *w) {
@@ -429,7 +524,7 @@ static void on_new_client(int ls) {
         (void)!write(c, &h, sizeof h);
         first = read(c, &m, sizeof m);
     }
-    if (first == (ssize_t)sizeof m && m.op == WL_QUIT) { quit = 1; close(c); return; }
+    if (first == (ssize_t)sizeof m && m.op == WL_QUIT) { puts("desk: quit requested"); fflush(stdout); quit = 1; close(c); return; }
     if (first != (ssize_t)sizeof m || nwin >= MAXWIN || m.op != WL_CREATE || m.a == 0 || m.b == 0 || m.a > 2000 || m.b > 2000) { close(c); return; }
     int id = shmget(m.c, (size_t)m.a * m.b * 4, 0);
     void *p = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
@@ -438,6 +533,7 @@ static void on_new_client(int ls) {
     int k = next_id - 1;
     *w = (struct win){ c, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), (int)m.a, (int)m.b, p };
     w->deco = !(m.d & 1);
+    w->menu = (m.d & 2) != 0;      /* a start-menu surface: closed by a click anywhere outside it */
     if (!w->deco) { w->x = 0; w->y = 0; }
     struct wl_msg r = { WL_CREATED, (uint32_t)w->id, (uint32_t)W, (uint32_t)H, 0 };
     (void)!write(c, &r, sizeof r);
@@ -497,6 +593,7 @@ int main(int argc, char **argv) {
         if (pr < 0) { printf("desk: poll %d\n", pr); break; }
         wls_tick();
         anim_tick();
+        icons_poll();
         if (pr == 0) { if (now_ms() - last_act > 120000) idle = 1200; continue; }
         last_act = now_ms();
         if (nwl) wls_dispatch_poll(&p[wbase], nwl);
@@ -577,6 +674,22 @@ int main(int argc, char **argv) {
                     w->cfg_w = w->w; w->cfg_h = w->h;
                     compose(outer_of(w));
                     started_resize = 1;
+                }
+            }
+            if (btn && !prev_btn) {                     /* a click outside the start menu closes it */
+                for (int i = nwin - 1; i >= 0; i--)
+                    if (wins[i].menu && !in(frame_of(&wins[i]), mx, my)) {
+                        struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
+                        (void)!write(wins[i].fd, &c, sizeof c);
+                        remove_win(i);
+                    }
+                int over = 0;
+                for (int i = 0; i < nwin; i++) if (in(frame_of(&wins[i]), mx, my)) over = 1;
+                int ic = over ? -1 : icon_at(mx, my);
+                unsigned long long tn = now_ms();
+                if (ic >= 0) {
+                    if (ic == last_icon && tn - last_icon_ms < 500) { launch_cmd(icons[ic].cmd); last_icon = -1; }
+                    else { last_icon = ic; last_icon_ms = tn; }
                 }
             }
             if (btn && !prev_btn) {                     /* a click outside the open menus closes them */
