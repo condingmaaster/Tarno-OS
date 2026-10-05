@@ -300,6 +300,9 @@ impl UnixSock {
 }
 
 impl FileOps for UnixSock {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         self.recv_fds(buf, false).0 // descriptors sent with these bytes are dropped (closed)
     }

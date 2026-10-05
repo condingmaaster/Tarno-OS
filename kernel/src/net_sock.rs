@@ -534,6 +534,9 @@ impl Drop for SockFile {
 }
 
 impl FileOps for SockFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         self.recv_from(buf).0
     }

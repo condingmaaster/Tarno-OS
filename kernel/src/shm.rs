@@ -65,6 +65,9 @@ impl Drop for MemFd {
 }
 
 impl FileOps for MemFd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
         let size = self.size();

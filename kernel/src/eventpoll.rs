@@ -64,6 +64,9 @@ pub struct EventFd {
 }
 
 impl FileOps for EventFd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         if buf.len() < 8 {
             return EINVAL;
@@ -190,6 +193,9 @@ impl TimerFd {
 }
 
 impl FileOps for TimerFd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         if buf.len() < 8 {
             return EINVAL;
@@ -335,6 +341,9 @@ pub struct SignalFd {
 }
 
 impl FileOps for SignalFd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         if buf.len() < 128 {
             return EINVAL;
@@ -413,6 +422,9 @@ pub struct Inotify {
 }
 
 impl FileOps for Inotify {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         loop {
             if self.nonblock.load(Ordering::Relaxed) {
@@ -556,6 +568,9 @@ impl Epoll {
 }
 
 impl FileOps for Epoll {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EINVAL
     }

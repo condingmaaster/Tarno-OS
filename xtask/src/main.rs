@@ -705,6 +705,28 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_panel_test(&img);
         }
+        "pkg-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "trunc=", 150);
+            let ok = out.contains("list=pkgdemo pkgtool pkgzip")
+                && out.matches("pkg-demo-ran").count() == 1
+                && out.contains("pkg-tool-ran")
+                && out.contains("pkg-zip-ran")
+                && out.contains("Pkg Demo|LD_LIBRARY_PATH=")
+                && out.contains("already installed")
+                && out.contains("(.msi) are not supported")
+                && out.contains("after-remove=pkgtool pkgzip apps=2")
+                && out.contains("trunc=bb,cc,");
+            if ok {
+                println!("pkg-test PASSED: thos-pkg installs a .deb, a .tar.gz and a .zip into /opt, lists them in the Start-menu file, the installed programs run, a second install and an .msi are refused, remove cleans up");
+            } else {
+                for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
+                    eprintln!("  {l}");
+                }
+                eprintln!("pkg-test FAILED");
+                exit(1);
+            }
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -1662,6 +1684,37 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} font.psf", root.join("kernel/font/Lat15-Terminus16.psf").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-term.sh", root.join("xtask/testdata/desk-term.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-panel.sh", root.join("xtask/testdata/desk-panel.sh").to_str().unwrap()), img.to_str().unwrap()]));
+            // thos-pkg and its test packages: a .deb, a .tar.gz and a .zip, each holding a small static program
+            {
+                let pk = root.join("target/pkgtest");
+                let _ = std::fs::remove_dir_all(&pk);
+                std::fs::create_dir_all(pk.join("deb/DEBIAN")).unwrap();
+                std::fs::create_dir_all(pk.join("deb/usr/bin")).unwrap();
+                std::fs::create_dir_all(pk.join("deb/usr/share/applications")).unwrap();
+                std::fs::create_dir_all(pk.join("tgz/bin")).unwrap();
+                std::fs::create_dir_all(pk.join("zip")).unwrap();
+                let mk = |msg: &str, out: PathBuf| {
+                    let c = pk.join("p.c");
+                    std::fs::write(&c, format!("#include <unistd.h>\nint main(void){{write(1,\"{msg}\\n\",{});return 0;}}\n", msg.len() + 1)).unwrap();
+                    run(Command::new("gcc").args(["-static", "-O1", "-o", out.to_str().unwrap(), c.to_str().unwrap()]));
+                };
+                mk("pkg-demo-ran", pk.join("deb/usr/bin/pkgdemo"));
+                mk("pkg-tool-ran", pk.join("tgz/bin/pkgtool"));
+                mk("pkg-zip-ran", pk.join("zip/pkgzip"));
+                std::fs::write(pk.join("deb/DEBIAN/control"), "Package: pkgdemo\nVersion: 1\nArchitecture: amd64\nMaintainer: t <t@t>\nDescription: demo\n").unwrap();
+                std::fs::write(pk.join("deb/usr/share/applications/pkgdemo.desktop"), "[Desktop Entry]\nName=Pkg Demo\nExec=pkgdemo %U\nType=Application\n").unwrap();
+                run(Command::new("dpkg-deb").args(["--build", "-Zgzip", pk.join("deb").to_str().unwrap(), pk.join("pkgdemo.deb").to_str().unwrap()]));
+                run(Command::new("tar").args(["czf", pk.join("pkgtool.tar.gz").to_str().unwrap(), "-C", pk.join("tgz").to_str().unwrap(), "."]));
+                run(Command::new("zip").args(["-jq", pk.join("pkgzip.zip").to_str().unwrap(), pk.join("zip/pkgzip").to_str().unwrap()]));
+                std::fs::write(pk.join("x.msi"), b"not really").unwrap();
+                for f in ["pkgdemo.deb", "pkgtool.tar.gz", "pkgzip.zip", "x.msi"] {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", pk.join(f).to_str().unwrap()), img.to_str().unwrap()]));
+                }
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", "set_inode_field opt mode 040777", img.to_str().unwrap()]));
+            }
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-menu.sh", root.join("xtask/testdata/desk-menu.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} desk-win32.sh", root.join("xtask/testdata/desk-win32.sh").to_str().unwrap()), img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winc.sh", root.join("xtask/testdata/winc.sh").to_str().unwrap()), img.to_str().unwrap()]));
@@ -4971,7 +5024,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

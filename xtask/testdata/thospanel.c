@@ -72,6 +72,13 @@ static int find(struct ent *e, int n, const char *label) {
 static int cmd_exists(const char *cmd) {
     char prog[160];
     if (!*cmd) return access("/thosterm", X_OK) == 0;
+    while (*cmd) {                                           /* leading VAR=value words are environment */
+        const char *sp = cmd + strcspn(cmd, " ="), *w = cmd;
+        if (*sp != '=') break;
+        cmd = cmd + strcspn(cmd, " ");
+        while (*cmd == ' ') cmd++;
+        (void)w;
+    }
     snprintf(prog, sizeof prog, "%s", cmd);
     prog[strcspn(prog, " ")] = 0;
     return access(prog, X_OK) == 0;
@@ -87,6 +94,22 @@ static void toggle_pin(struct ent *list, int *n, int max, const char *path, cons
     if (i >= 0) { memmove(&list[i], &list[i + 1], (size_t)(*n - i - 1) * sizeof list[0]); (*n)--; }
     else if (*n < max) list[(*n)++] = *app;
     save_list(path, list, *n);
+}
+
+/* what the Start menu offers: the built-in programs that are installed, /apps.conf, and what thos-pkg put in /opt/apps.conf */
+static void build_apps(void) {
+    napps = 0;
+    add_app("Terminal", "");
+    add_app("Text editor", "/thostext");
+    add_app("Foot terminal", "/usr/bin/foot");
+    add_app("Web browser", "/usr/bin/netsurf-gtk file:///page.html");
+    add_app("GTK demo", "/gtkhello 70");
+    add_app("Win32 demo", "/thoswin");
+    static struct ent extra[MAXA];
+    for (int f = 0; f < 2; f++) {
+        int nx = load_list(f ? "/opt/apps.conf" : "/apps.conf", extra, MAXA);
+        for (int i = 0; i < nx; i++) add_app(extra[i].label, extra[i].cmd);
+    }
 }
 
 /* ---- drawing ---- */
@@ -165,6 +188,7 @@ static void menu_close(void) {
     closed_ms = ms_now();
 }
 static void menu_open(void) {
+    build_apps();
     mh = M_HEAD + ROWS * M_ROW + M_FOOT;
     mfd = sock_connect();
     if (mfd < 0) return;
@@ -204,16 +228,7 @@ int main(void) {
     if (px == (void *)-1 || gfx_load_font() != 0) { puts("panel FAIL: shm/font"); return 1; }
     setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 1);          /* Central Europe, no zone database needed */
 
-    /* what the Start menu offers: the built-in programs that are installed, then /apps.conf */
-    add_app("Terminal", "");
-    add_app("Text editor", "/thostext");
-    add_app("Foot terminal", "/usr/bin/foot");
-    add_app("Web browser", "/usr/bin/netsurf-gtk file:///page.html");
-    add_app("GTK demo", "/gtkhello 70");
-    add_app("Win32 demo", "/thoswin");
-    struct ent extra[MAXA];
-    int nx = load_list("/apps.conf", extra, MAXA);
-    for (int i = 0; i < nx; i++) add_app(extra[i].label, extra[i].cmd);
+    build_apps();
     /* the user's pins live in /tmp (writable for everyone); /panel.conf and /desktop.conf are the system defaults */
     nbar = load_list(access(PANEL_USER, F_OK) == 0 ? PANEL_USER : "/panel.conf", bar, MAXB);
     if (nbar == 0 && access(PANEL_USER, F_OK) != 0 && access("/panel.conf", F_OK) != 0) {     /* first start: a terminal launcher */

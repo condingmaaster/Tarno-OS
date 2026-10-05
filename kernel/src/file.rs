@@ -62,6 +62,10 @@ pub trait FileOps: Send + Sync {
     fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
         None
     }
+    /// Is this a terminal (console, tty, pty)? Regular files, pipes and sockets answer ENOTTY to the termios ioctls.
+    fn is_tty(&self) -> bool {
+        true
+    }
     /// Terminal `ioctl`s of a pseudo-terminal end; `None` = not a pty (the console's defaults apply).
     fn tty_ioctl(&self, _cmd: u64, _arg: u64) -> Option<i64> {
         None
@@ -151,6 +155,9 @@ pub enum DevKind {
 pub struct WinSys;
 
 impl FileOps for WinSys {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         if buf.len() < 32 {
             return -22;
@@ -220,6 +227,9 @@ pub struct KbdDev {
 }
 
 impl FileOps for KbdDev {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         crate::console::kbd_read(buf, self.nonblock.load(Ordering::Relaxed))
     }
@@ -252,6 +262,9 @@ impl Drop for KbdDev {
 pub struct DevFile(pub DevKind);
 
 impl FileOps for DevFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         match self.0 {
             DevKind::Null => 0, // always EOF
@@ -357,6 +370,9 @@ impl Drop for FbFile {
 }
 
 impl FileOps for FbFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let pos = self.pos.load(Ordering::Relaxed) as usize;
         let n = crate::gdi::fb_read(pos, buf);
@@ -627,6 +643,9 @@ impl Ext2Stream {
 }
 
 impl FileOps for Ext2Stream {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn ino(&self) -> u64 {
         self.ino
     }
@@ -692,6 +711,9 @@ impl FileOps for Ext2Stream {
 }
 
 impl FileOps for Ext2File {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn ino(&self) -> u64 {
         self.ino.load(Ordering::Relaxed)
     }
@@ -790,6 +812,9 @@ impl FatFile {
 }
 
 impl FileOps for FatFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let pos = self.pos.load(Ordering::Relaxed);
         if pos >= self.buf.len() {
@@ -862,6 +887,9 @@ impl DirFile {
 }
 
 impl FileOps for DirFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn dir_path(&self) -> Option<String> {
         self.path.lock().clone()
     }
@@ -948,6 +976,9 @@ impl Drop for PipeWriteEnd {
 }
 
 impl FileOps for PipeReadEnd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         loop {
             {
@@ -995,6 +1026,9 @@ impl FileOps for PipeReadEnd {
 }
 
 impl FileOps for PipeWriteEnd {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EBADF
     }

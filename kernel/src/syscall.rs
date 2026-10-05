@@ -945,6 +945,8 @@ fn sys_elevate(path_ptr: u64, argv_ptr: u64, password_ptr: u64) -> i64 {
 
 const O_CREAT: u64 = 0o100;
 const O_EXCL: u64 = 0o200;
+const O_APPEND: u64 = 0o2000;
+const O_TRUNC: u64 = 0o1000;
 
 /// Open an already-resolved absolute path, returning a new fd (or `-errno`).
 /// `flags`' `O_ACCMODE` bits (`O_RDONLY`=0, `O_WRONLY`=1, `O_RDWR`=2) decide
@@ -958,6 +960,24 @@ const O_EXCL: u64 = 0o200;
 /// path is `EEXIST`, same as Linux. `O_CREAT` against an existing path with
 /// no `O_EXCL` is a no-op (POSIX: the flag is ignored).
 pub fn open_resolved(path: &str, flags: u64) -> i64 {
+    let fd = open_resolved_inner(path, flags);
+    if fd >= 0 && flags & O_TRUNC != 0 && flags & 0x3 != 0 {
+        if let Some(f) = cur_fd(fd as u64) {
+            if f.stat().0 & 0xF000 == 0x8000 {
+                f.truncate(0);
+            }
+        }
+    }
+    if fd >= 0 && flags & O_APPEND != 0 && flags & 0x3 != 0 {
+        // O_APPEND: start at the end (single-writer appends, which is what `>>` and logs need)
+        if let Some(f) = cur_fd(fd as u64) {
+            f.seek(0, 2);
+        }
+    }
+    fd
+}
+
+fn open_resolved_inner(path: &str, flags: u64) -> i64 {
     if crate::procfs::is_proc(path) && flags & 0x3 == 0 {
         return open_proc(path);
     }
@@ -1122,6 +1142,9 @@ fn sys_ioctl(fd: u64, cmd: u64, arg: u64) -> i64 {
     let Some(file) = cur_fd(fd) else { return EBADF };
     if let Some(r) = file.tty_ioctl(cmd, arg) {
         return r;
+    }
+    if matches!(cmd, 0x5401..=0x5404 | 0x540f | 0x5413) && !file.is_tty() {
+        return ENOTTY;
     }
     // Every command below writes a fixed-size struct through `arg`.
     let need = match cmd {

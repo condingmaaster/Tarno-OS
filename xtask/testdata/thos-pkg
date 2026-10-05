@@ -1,0 +1,119 @@
+#!/busybox sh
+# thos-pkg: install programs from a file or URL into /opt/<name> and put them in the Start menu.
+#   thos-pkg install <file-or-url> [name]     .deb .rpm .zip .tar.gz/.tgz/.tar.xz/.tar.bz2 .exe
+#   thos-pkg list
+#   thos-pkg remove <name>
+# Programs are unpacked as they are: libraries they need beyond what THOS ships must be in the package itself.
+# Start-menu entries live in /opt/apps.conf ("Label|command"); the panel picks them up when it starts.
+OPT=/opt
+APPS=$OPT/apps.conf
+B=/busybox
+ELF=$($B printf '\177ELF')
+die() { echo "thos-pkg: $*" >&2; exit 1; }
+
+# label|command lines for what was unpacked into $1 (name $2)
+register() {
+    dir=$1 name=$2
+    libs="$dir/usr/lib:$dir/usr/lib/x86_64-linux-gnu:$dir/lib:$dir/lib/x86_64-linux-gnu:$dir/lib64"
+    n=0
+    # 1. proper desktop entries
+    for d in "$dir"/usr/share/applications/*.desktop; do
+        [ -f "$d" ] || continue
+        label=$($B sed -n 's/^Name=//p' "$d" | $B head -n 1)
+        exe=$($B sed -n 's/^Exec=//p' "$d" | $B head -n 1 | $B sed 's/ *%[a-zA-Z]//g')
+        prog=${exe%% *}
+        rest=${exe#"$prog"}
+        [ "$rest" = "$exe" ] && rest=
+        base=${prog##*/}
+        for cand in "$dir/usr/bin/$base" "$dir/bin/$base" "$dir/usr/games/$base" "$dir$prog"; do
+            if [ -f "$cand" ]; then
+                echo "${label:-$base}|LD_LIBRARY_PATH=$libs $cand$rest" >> $APPS
+                n=$((n+1)); break
+            fi
+        done
+    done
+    [ $n -gt 0 ] && return
+    # 2. otherwise: the executables in bin directories (at most five), then loose executables in the top directory
+    for d in "$dir/usr/bin" "$dir/bin" "$dir/usr/games" "$dir"; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*; do
+            [ -f "$f" ] || continue
+            case "$f" in *.so|*.so.*|*.txt|*.md|*.html|*.conf|*.json|*.png|*.dll) continue ;; esac
+            if [ "$($B head -c4 "$f")" = "$ELF" ]; then $B chmod +x "$f"; fi     # unzip does not keep the mode
+            if [ -x "$f" ] || [ "${f##*.}" = exe ]; then
+                echo "${f##*/}|LD_LIBRARY_PATH=$libs $f" >> $APPS
+                n=$((n+1))
+                [ $n -ge 5 ] && return
+            fi
+        done
+        [ $n -gt 0 ] && return
+    done
+    [ $n -gt 0 ] || echo "thos-pkg: no program found to put in the Start menu (files are in $dir)"
+}
+
+cmd_install() {
+    src=$1
+    [ -n "$src" ] || die "install what? (a file or an http/https URL)"
+    $B mkdir -p $OPT || die "cannot create $OPT"
+    tmp=
+    case "$src" in
+        http://*|https://*|ftp://*)
+            tmp=/tmp/thos-pkg.$$
+            echo "downloading $src"
+            $B wget -q -O $tmp "$src" || { $B rm -f $tmp; die "download failed"; }
+            file=$tmp; base=${src##*/}; base=${base%%\?*} ;;
+        *) [ -f "$src" ] || die "no such file: $src"
+           file=$src; base=${src##*/} ;;
+    esac
+    name=$2
+    if [ -z "$name" ]; then
+        name=${base%.deb}; name=${name%.rpm}; name=${name%.zip}; name=${name%.tar.gz}; name=${name%.tgz}
+        name=${name%.tar.xz}; name=${name%.txz}; name=${name%.tar.bz2}; name=${name%.exe}
+        name=${name%%_*}
+    fi
+    [ -n "$name" ] || die "cannot derive a name, give one"
+    case "$name" in */*|.*) die "bad name: $name" ;; esac
+    dir=$OPT/$name
+    [ -e "$dir" ] && die "$name is already installed (thos-pkg remove $name)"
+    $B mkdir -p "$dir"
+    case "$base" in
+        *.deb) $B dpkg-deb -x "$file" "$dir" ;;
+        *.rpm) ( cd "$dir" && $B rpm2cpio "$file" | $B cpio -idm 2>/dev/null ) ;;
+        *.zip) $B unzip -q -o "$file" -d "$dir" ;;
+        *.tar.gz|*.tgz) $B zcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar.xz|*.txz) $B xzcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar.bz2) $B bzcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar) $B tar -xf "$file" -C "$dir" ;;
+        *.exe) $B cp "$file" "$dir/$base"; $B chmod +x "$dir/$base" ;;
+        *.msi) $B rm -rf "$dir"; [ -n "$tmp" ] && $B rm -f $tmp; die "Windows Installer packages (.msi) are not supported yet" ;;
+        *) $B rm -rf "$dir"; [ -n "$tmp" ] && $B rm -f $tmp; die "unknown package type: $base" ;;
+    esac
+    status=$?
+    [ -n "$tmp" ] && $B rm -f $tmp
+    if [ $status -ne 0 ]; then $B rm -rf "$dir"; die "unpacking failed"; fi
+    register "$dir" "$name"
+    echo "installed $name in $dir"
+}
+
+cmd_list() {
+    for d in $OPT/*; do [ -d "$d" ] && echo "${d##*/}"; done
+}
+
+cmd_remove() {
+    name=$1
+    [ -n "$name" ] && [ -d "$OPT/$name" ] || die "not installed: $name"
+    $B rm -rf "$OPT/$name"
+    for f in $APPS /tmp/panel.conf /tmp/desktop.conf; do
+        [ -f "$f" ] || continue
+        $B grep -v "$OPT/$name/" "$f" > $f.new
+        $B mv $f.new $f
+    done
+    echo "removed $name"
+}
+
+case "$1" in
+    install) shift; cmd_install "$@" ;;
+    list) cmd_list ;;
+    remove) shift; cmd_remove "$@" ;;
+    *) echo "usage: thos-pkg install <file-or-url> [name] | list | remove <name>"; exit 1 ;;
+esac

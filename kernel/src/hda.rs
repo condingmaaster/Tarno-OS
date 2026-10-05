@@ -446,6 +446,9 @@ impl Drop for Dsp {
 }
 
 impl FileOps for Dsp {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         0
     }
