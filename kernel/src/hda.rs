@@ -68,11 +68,11 @@ impl Hda {
 
     /// One verb through the immediate-command interface. `v` = the low 20 bits of the command (verb + payload).
     fn verb(&self, nid: u8, v: u32) -> Option<u32> {
-        for _ in 0..1000 {
-            if self.r16(ICS) & 1 == 0 {
-                break;
+        let busy_end = crate::timer::monotonic_ns() + 20_000_000;
+        while self.r16(ICS) & 1 != 0 {
+            if crate::timer::monotonic_ns() > busy_end {
+                return None; // the previous command never finished: do not stack another one on it
             }
-            crate::timer::monotonic_ns();
         }
         self.w16(ICS, 0x2); // clear a stale "valid"
         self.w32(ICW, ((self.codec as u32) << 28) | ((nid as u32) << 20) | (v & 0xF_FFFF));
