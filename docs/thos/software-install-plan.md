@@ -157,5 +157,5 @@ fixture installed in QEMU.
 - **Linux side:** dynamic glibc programs run (bash, git, gcc, node, java, GTK/NetSurf/foot…), `#!` scripts, `vfork`, `/proc/self/exe`. Debian packages with a few small dependencies work; big GUI stacks need a larger root FS.
 - **Windows side:** 64-bit PE only. Real Rust programs built for `x86_64-pc-windows-gnu` run (std heap, files, environment, threads, channels, panics with `catch_unwind`),
   Winsock over loopback works; the runtime is a set of freestanding C DLLs (`xtask/msvcrtx/`: `msvcrtx`, `kernel32x`, `ntdllx`, `ws2_32`, `api-ms-win-core-synch…`, `bcryptprimitives`, `userenv`) in `C:\Windows\System32`,
-  with x64 SEH unwinding (`unwind.h`). Open: **32-bit PE (WOW64)** — most installers are 32-bit; **`.msi`**; `user32`/`gdi32` beyond a handful of calls (GUI programs); COM/registry front ends; `CreateProcess`.
+  with x64 SEH unwinding (`unwind.h`). Also `CreateProcess` (PE and ELF children), anonymous pipes (so Rust's `Command::output()` works) and panics that unwind. Open: **32-bit PE (WOW64)** — most installers are 32-bit; **`.msi`**; `user32`/`gdi32` beyond a handful of calls (GUI programs); COM/registry front ends.
 - **Desktop integration:** the file manager installs packages on double-click; installed programs with a `.desktop` file appear in the Start menu.

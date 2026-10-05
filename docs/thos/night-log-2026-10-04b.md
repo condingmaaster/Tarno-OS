@@ -58,3 +58,15 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
   `wbig-test` (44 Prüfungen mit einem breiten mingw-Programm).
 - `THOS_RES=WxH` für xtask-Tests bei anderer Auflösung.
 - Noch offen: 32-Bit-Windows (WOW64), `.msi`, GUI-Teile von user32/gdi32 (nur 14+6 Aufrufe), Fensterliste in der Taskleiste, Paket-Signaturen.
+
+## Nachtschicht 2026-10-06 (kurz nach Mitternacht bis ~02:00)
+- **Desktop:** Aufgabenleiste mit allen offenen Fenstern (`WINBEGIN/WIN/RAISE`), Dateimanager `thosfiles`, Software-Zentrale `thossoft` (durchsucht den Debian-Index, installiert/entfernt per Terminalfenster),
+  Neustart/Herunterfahren im Startmenü, Druck-Taste = PNG-Bildschirmfoto nach `/tmp/shot-N.png`, `thosterm -c <Befehl>`.
+- **Pakete:** `thos-pkg` kann Archivpakete entfernen; echte Programme aus dem Debian-Archiv laufen: tree, htop, jq, ripgrep, nano, w3m (`pkg-apps-test`, `pkg-repo-test`, Netz nötig, nicht in der Suite).
+  `/proc/<pid>/maps` (glibc `pthread_getattr_np`, libgc), `#!`-Skripte, `/proc/self/exe`, `vfork`, `sched_yield`.
+- **Windows:** ein echtes Rust-Programm für `x86_64-pc-windows-gnu` läuft (std: Heap, Dateien, Umgebung, Threads, Mutex, Kanäle, `catch_unwind`, `Command::status()`/`output()` mit Pipes),
+  Winsock über Loopback, `CreateProcess` (PE- und ELF-Kinder), x64-SEH-Unwinder (`unwind.h`), Heap mit Blockkopf, anonyme Pipes (`NtCreateNamedPipeFile`), Dateiabbildungen, Init-Once, Umgebungsblock.
+  Neue DLLs: `ntdllx`, `ws2_32`, `api-ms-win-core-synch-l1-2-0`, `bcryptprimitives`, `userenv` (alle freistehendes C, `xtask/msvcrtx/`). Test: `winrt-test`.
+- **Kernel-Fehler gefunden/behoben:** `NtWriteFile/NtReadFile` lasen die Länge als 64 Bit (ist `ULONG`), NT-Handles konnten Slot 0 (= NULL) bekommen, `HeapAlloc` ohne Kopf (Rust ruft `HeapSize`/`HeapReAlloc`).
+- Haiku-Fehlersuche in tg3/ehci/hda/ps2: 8 Meldungen, 7 davon falsch (Speicherbarrieren/DMA-Größen waren in Ordnung); eine echte Kleinigkeit (HDA wartete ohne Zeitgrenze) behoben.
+- Offen: 32-Bit-PE (WOW64), `.msi`, GUI-Teile von user32/gdi32, Paketsignaturen, Hover im Startmenü, Icons verschieben.
