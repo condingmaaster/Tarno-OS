@@ -1427,8 +1427,11 @@ fn sys_execve(path_ptr: u64, argv_ptr: u64, envp_ptr: u64) -> i64 {
         Ok(p) => p,
         Err(e) => return e,
     };
-    // `/proc/self/exe` (BusyBox re-executes itself that way for applets such as `ssl_client`)
-    let path = if path == "/proc/self/exe" { crate::procfs::readlink(&path).unwrap_or(path) } else { path };
+    // `/proc/self/exe`: what BusyBox's shell executes to run an applet (the real image path, not argv[0])
+    let path = match sched::current().task() {
+        Some(t) if path == "/proc/self/exe" && !t.exe().is_empty() => t.exe(),
+        _ => path,
+    };
     let mut budget = EXEC_ARG_LIMIT;
     let argv = match user_exec_args(argv_ptr, &mut budget) {
         Ok(v) => v,
@@ -1499,7 +1502,12 @@ fn exec_resolved(path: alloc::string::String, argv: alloc::vec::Vec<alloc::strin
             Err(e) => e,
         },
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
-        Some(bytes) => process::execve(bytes, argv, envp), // -> ! on success
+        Some(bytes) => {
+            if let Some(t) = sched::current().task() {
+                t.set_exe(&path);
+            }
+            process::execve(bytes, argv, envp) // -> ! on success
+        }
         None => ENOENT,
     }
 }
@@ -2124,7 +2132,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         221 | 326 => ENOSYS, // fadvise64 is only a hint; copy_file_range: callers fall back to read/write
 
-        SYS_FORK | SYS_VFORK => process::fork(frame),
+        SYS_FORK => process::fork(frame),
 
         // glibc's fork() is clone(SIGCHLD | CHILD_{SET,CLEAR}TID, stack=0).
         // A shared-VM clone (threads) isn't supported yet.

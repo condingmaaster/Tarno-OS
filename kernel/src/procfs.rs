@@ -228,6 +228,9 @@ pub fn readlink(path: &str) -> Option<String> {
         return None;
     }
     let t = by_pid(pid)?;
+    if !t.exe().is_empty() {
+        return Some(t.exe());
+    }
     let cl = t.cmdline();
     let first = cl.split(|&b| b == 0).next().unwrap_or(&[]);
     let s = String::from_utf8_lossy(first).to_string();

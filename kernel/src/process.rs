@@ -968,6 +968,8 @@ pub struct Task {
     term_sig: AtomicU32,
     /// argv of the running image, NUL-separated (for `/proc/<pid>/cmdline`).
     cmdline: Mutex<Vec<u8>>,
+    /// Path of the program image this task runs (what `/proc/self/exe` is), not argv[0].
+    exe: Mutex<alloc::string::String>,
     /// Debug: log this task's system calls (set for dynamically linked programs for now).
     pub trace: AtomicBool,
     /// `true` for a native PE image, `false` for an ELF — for a `ps` view.
@@ -1033,6 +1035,7 @@ impl Task {
             thread: Mutex::new(None),
             term_sig: AtomicU32::new(0),
             cmdline: Mutex::new(Vec::new()),
+            exe: Mutex::new(alloc::string::String::new()),
             trace: AtomicBool::new(false),
             is_pe: AtomicBool::new(false),
             active_threads: AtomicU64::new(0),
@@ -1046,6 +1049,12 @@ impl Task {
         t
     }
 
+    pub fn exe(&self) -> alloc::string::String {
+        self.exe.lock().clone()
+    }
+    pub fn set_exe(&self, p: &str) {
+        *self.exe.lock() = alloc::string::String::from(p);
+    }
     pub fn cmdline(&self) -> Vec<u8> {
         self.cmdline.lock().clone()
     }
@@ -1710,6 +1719,7 @@ pub fn spawn_init(bytes: &[u8], argv: &[&str], envp: &[&str]) -> u64 {
     let rsp = space.init_stack(stack_top, argv, envp, &img);
     let task = Task::new(0, space);
     task.set_cmdline(argv);
+    task.set_exe("/busybox");
     sched::spawn_user("init", task.clone(), img.entry, rsp);
     task.pid
 }
@@ -1805,6 +1815,7 @@ pub fn fork(frame: &UserFrame) -> i64 {
     *child.fds.lock() = parent.clone_fds();
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
+    child.set_exe(&parent.exe());
     child.set_pgid(parent.pgid());
     child.set_ctty(parent.ctty());
     child.set_sid(parent.sid());

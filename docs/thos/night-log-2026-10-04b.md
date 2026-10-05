@@ -45,3 +45,16 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - Desktop: Start-Menü im Panel (Programme mit T = an die Taskleiste, D = auf den Desktop anheften), Desktop-Icons (Doppelklick startet), Menü-Oberflächen schließen bei Klick daneben (CREATE-Flag `d & 2`), `desk-menu-test`.
   Pins liegen in `/tmp/panel.conf` und `/tmp/desktop.conf`.
 - Offen: Fensterliste in der Taskleiste, Icons verschieben, Hover im Menü.
+
+## Nachtschicht 2026-10-05 (zweite Hälfte)
+- `thos-pkg`: `.deb/.rpm/.zip/.tar.*/.exe` aus Datei oder URL; **Debian-Archiv mit Abhängigkeiten** (`update`, `search`, `install <name>`, Prüfsumme gegen den Index, `/opt/root`).
+  Getestet mit dem echten Archiv in QEMU: Index laden (68825 Pakete), `tree` installieren und ausführen (`pkg-repo-test`, braucht Internet, nicht in der Suite).
+- Kernel-Fehler, die dabei auffielen und behoben wurden: `O_APPEND` und `O_TRUNC` wurden beim `open` ignoriert (`>>` überschrieb, `>` kürzte nicht), `TCGETS` & Co. gelang auf jeder Datei (gunzip dachte, die Eingabe sei ein Terminal),
+  `vfork` fehlte, `execve("/proc/self/exe")` fehlte, `#!`-Skripte ließen sich nicht direkt starten (jetzt: Interpreter-Zeile, bis 4 Ebenen), `syslog(2)` für `dmesg`.
+- Image: `/bin` bekam beim Verlinken der BusyBox-Applets keinen Platz mehr (debugfs `ln` vergrößert das Verzeichnis nicht) — die letzten Applets (`top` u. a.) fehlten still; jetzt `expand_dir`. Neue Applets: `ssl_client`, `dmesg`, `dpkg-deb`, `ar`, `cpio`, `xzcat`, `sha256sum` …
+  `openssl`-Shim (C): BusyBox `wget` ruft `openssl s_client` auf, der Shim verbindet und übergibt an `ssl_client` — https funktioniert (`https-test`).
+- `/proc/cpuinfo` mit echten CPUID-Daten, `/proc/pci`, `/proc/dmesg` (32-KiB-Ringpuffer), `hwreport`-Skript: für den ersten Acer-Start.
+- Windows-Programme: `msvcrtx.dll`/`kernel32x.dll` stark erweitert — libm (x87), richtiges `%e/%g/%f`, Wide-Char-CRT inkl. `wprintf`, Zeit/`strftime`, Deskriptor-I/O und `_stat64`, Umgebung, Unicode-Datei-/Pfad-APIs (`CreateFileW`, `FindFirstFileW` …), TLS, Interlocked-Funktionen, Temp-Pfade, Locale-/String-Typ-Stubs.
+  `wbig-test` (44 Prüfungen mit einem breiten mingw-Programm).
+- `THOS_RES=WxH` für xtask-Tests bei anderer Auflösung.
+- Noch offen: 32-Bit-Windows (WOW64), `.msi`, GUI-Teile von user32/gdi32 (nur 14+6 Aufrufe), Fensterliste in der Taskleiste, Paket-Signaturen.
