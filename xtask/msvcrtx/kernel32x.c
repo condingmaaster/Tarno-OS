@@ -367,4 +367,379 @@ EXPORT void WINAPI LeaveCriticalSection(void *cs) {
     if (--*(volatile int *)(p + 12) == 0) { *(volatile i64 *)(p + 16) = 0; __sync_lock_release((volatile int *)(p + 8)); }
 }
 
+
+/* ======================================================================================================
+   Unicode (W) entry points, more file/path/system calls, TLS, interlocked operations. Everything
+   converts to UTF-8 and reuses the A versions above.
+   ====================================================================================================== */
+typedef unsigned short u16;
+extern HANDLE WINAPI LoadLibraryA(const char *);
+extern void WINAPI Sleep(u32);
+static void w2a(const u16 *w, char *out, size_t cap) {
+    size_t o = 0;
+    for (; *w && o + 5 < cap; w++) {
+        u32 c = *w;
+        if (c >= 0xD800 && c < 0xDC00 && w[1] >= 0xDC00 && w[1] < 0xE000) { c = 0x10000 + ((c - 0xD800) << 10) + (w[1] - 0xDC00); w++; }
+        if (c < 0x80) out[o++] = (char)c;
+        else if (c < 0x800) { out[o++] = (char)(0xC0 | (c >> 6)); out[o++] = (char)(0x80 | (c & 63)); }
+        else if (c < 0x10000) { out[o++] = (char)(0xE0 | (c >> 12)); out[o++] = (char)(0x80 | ((c >> 6) & 63)); out[o++] = (char)(0x80 | (c & 63)); }
+        else { out[o++] = (char)(0xF0 | (c >> 18)); out[o++] = (char)(0x80 | ((c >> 12) & 63)); out[o++] = (char)(0x80 | ((c >> 6) & 63)); out[o++] = (char)(0x80 | (c & 63)); }
+    }
+    out[o] = 0;
+}
+static size_t a2w(const char *s, u16 *out, size_t cap) {
+    size_t o = 0;
+    while (*s && o + 2 < cap) {
+        u32 c = (unsigned char)*s++;
+        if (c >= 0xF0 && s[0] && s[1] && s[2]) { c = ((c & 7) << 18) | ((s[0] & 63) << 12) | ((s[1] & 63) << 6) | (s[2] & 63); s += 3; }
+        else if (c >= 0xE0 && s[0] && s[1]) { c = ((c & 15) << 12) | ((s[0] & 63) << 6) | (s[1] & 63); s += 2; }
+        else if (c >= 0xC0 && s[0]) { c = ((c & 31) << 6) | (s[0] & 63); s += 1; }
+        if (c >= 0x10000) { c -= 0x10000; out[o++] = (u16)(0xD800 + (c >> 10)); out[o++] = (u16)(0xDC00 + (c & 1023)); }
+        else out[o++] = (u16)c;
+    }
+    out[o] = 0;
+    return o;
+}
+static size_t wlen(const u16 *w) { size_t n = 0; while (w[n]) n++; return n; }
+#define W2A(var, w) char var[1024]; w2a((w), var, sizeof var)
+
+EXPORT HANDLE WINAPI CreateFileW(const u16 *n, u32 acc, u32 sh, void *sa, u32 disp, u32 fl, HANDLE t) { W2A(a, n); return CreateFileA(a, acc, sh, sa, disp, fl, t); }
+EXPORT BOOL WINAPI DeleteFileW(const u16 *n) { W2A(a, n); return DeleteFileA(a); }
+EXPORT u32 WINAPI GetFileAttributesW(const u16 *n) { W2A(a, n); return GetFileAttributesA(a); }
+EXPORT BOOL WINAPI CreateDirectoryW(const u16 *n, void *sa) { W2A(a, n); return CreateDirectoryA(a, sa); }
+EXPORT BOOL WINAPI RemoveDirectoryW(const u16 *n) { W2A(a, n); return RemoveDirectoryA(a); }
+EXPORT BOOL WINAPI MoveFileW(const u16 *x, const u16 *y) { W2A(a, x); W2A(b, y); return MoveFileA(a, b); }
+EXPORT BOOL WINAPI MoveFileExW(const u16 *x, const u16 *y, u32 f) { W2A(a, x); W2A(b, y); return MoveFileExA(a, b, f); }
+EXPORT BOOL WINAPI CopyFileW(const u16 *x, const u16 *y, BOOL f) { W2A(a, x); W2A(b, y); return CopyFileA(a, b, f); }
+EXPORT BOOL WINAPI SetCurrentDirectoryW(const u16 *n) { W2A(a, n); return SetCurrentDirectoryA(a); }
+EXPORT u32 WINAPI GetCurrentDirectoryW(u32 size, u16 *buf) {
+    char a[600]; u32 n = GetCurrentDirectoryA(sizeof a, a);
+    if (!n || n >= sizeof a) return n;
+    u16 w[600]; size_t l = a2w(a, w, 600);
+    if (l + 1 > size) return (u32)l + 1;
+    for (size_t i = 0; i <= l; i++) buf[i] = w[i];
+    return (u32)l;
+}
+EXPORT u32 WINAPI GetModuleFileNameW(HANDLE m, u16 *buf, u32 size) {
+    char a[260]; GetModuleFileNameA(m, a, sizeof a);
+    u16 w[260]; size_t l = a2w(a, w, 260);
+    if (l + 1 > size) l = size ? size - 1 : 0;
+    for (size_t i = 0; i < l; i++) buf[i] = w[i];
+    if (size) buf[l] = 0;
+    return (u32)l;
+}
+EXPORT int WINAPI lstrlenW(const u16 *w) { return (int)wlen(w); }
+EXPORT u16 *WINAPI lstrcpyW(u16 *d, const u16 *s) { u16 *r = d; while ((*d++ = *s++)); return r; }
+EXPORT u16 *WINAPI lstrcatW(u16 *d, const u16 *s) { u16 *r = d; while (*d) d++; while ((*d++ = *s++)); return r; }
+EXPORT char *WINAPI lstrcatA(char *d, const char *s) { char *r = d; while (*d) d++; while ((*d++ = *s++)); return r; }
+EXPORT char *WINAPI lstrcpynA(char *d, const char *s, int n) { int i = 0; for (; i + 1 < n && s[i]; i++) d[i] = s[i]; if (n > 0) d[i] = 0; return d; }
+EXPORT u16 *WINAPI lstrcpynW(u16 *d, const u16 *s, int n) { int i = 0; for (; i + 1 < n && s[i]; i++) d[i] = s[i]; if (n > 0) d[i] = 0; return d; }
+EXPORT int WINAPI lstrcmpW(const u16 *a, const u16 *b) { while (*a && *a == *b) { a++; b++; } return (int)*a - (int)*b; }
+static int lwc(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
+EXPORT int WINAPI lstrcmpiW(const u16 *a, const u16 *b) { while (*a && lwc(*a) == lwc(*b)) { a++; b++; } return lwc(*a) - lwc(*b); }
+EXPORT void WINAPI OutputDebugStringW(const u16 *s) { (void)s; }
+EXPORT BOOL WINAPI WriteConsoleW(HANDLE h, const u16 *buf, u32 n, u32 *written, void *res) {
+    (void)res;
+    char a[1024]; u32 done = 0;
+    while (done < n) {
+        u16 chunk[200]; u32 k = n - done < 199 ? n - done : 199;
+        for (u32 i = 0; i < k; i++) chunk[i] = buf[done + i];
+        chunk[k] = 0; w2a(chunk, a, sizeof a);
+        sc3(S_WRITE, (i64)h, a, slen(a));
+        done += k;
+    }
+    if (written) *written = n;
+    return 1;
+}
+EXPORT const u16 *WINAPI GetCommandLineW(void) {
+    static u16 w[1024]; static int init;
+    if (!init) { extern const char *WINAPI GetCommandLineA(void); a2w(GetCommandLineA(), w, 1024); init = 1; }
+    return w;
+}
+EXPORT u32 WINAPI GetEnvironmentVariableW(const u16 *n, u16 *buf, u32 size) { (void)n; (void)buf; (void)size; SetLastError(203); return 0; }
+EXPORT BOOL WINAPI SetEnvironmentVariableW(const u16 *n, const u16 *v) { (void)n; (void)v; return 1; }
+EXPORT HANDLE WINAPI GetModuleHandleW(const u16 *n) { if (!n) return GetModuleHandleA(0); W2A(a, n); return GetModuleHandleA(a); }
+EXPORT HANDLE WINAPI LoadLibraryW(const u16 *n) { W2A(a, n); return LoadLibraryA(a); }
+EXPORT BOOL WINAPI FreeLibrary(HANDLE h) { (void)h; return 1; }
+EXPORT BOOL WINAPI DisableThreadLibraryCalls(HANDLE h) { (void)h; return 1; }
+
+/* FindFirstFileW / FindNextFileW: WIN32_FIND_DATAW is the A layout with the names as UTF-16 */
+static void find_w(unsigned char *a, unsigned char *w) {
+    for (int i = 0; i < 44; i++) w[i] = a[i];
+    for (int i = 44; i < 44 + 520 + 28; i++) w[i] = 0;
+    a2w((const char *)a + 44, (u16 *)(w + 44), 260);
+}
+EXPORT HANDLE WINAPI FindFirstFileW(const u16 *n, void *data) {
+    W2A(a, n); unsigned char tmp[320]; HANDLE h = FindFirstFileA(a, tmp);
+    if (h != INVALID_HANDLE) find_w(tmp, data);
+    return h;
+}
+EXPORT BOOL WINAPI FindNextFileW(HANDLE h, void *data) { unsigned char tmp[320]; if (!FindNextFileA(h, tmp)) return 0; find_w(tmp, data); return 1; }
+
+/* paths */
+EXPORT u32 WINAPI GetFullPathNameA(const char *name, u32 size, char *buf, char **part) {
+    char tmp[1024];
+    if ((name[0] && name[1] == ':') || name[0] == '\\' || name[0] == '/') cpy(tmp, name, sizeof tmp);
+    else { u32 n = GetCurrentDirectoryA(sizeof tmp, tmp); if (n && tmp[n - 1] != '\\') { tmp[n++] = '\\'; } cpy(tmp + n, name, sizeof tmp - n); }
+    for (char *p = tmp; *p; p++) if (*p == '/') *p = '\\';
+    u32 len = (u32)slen(tmp);
+    if (len + 1 > size) return len + 1;
+    cpy(buf, tmp, size);
+    if (part) { char *s = buf + len; while (s > buf && s[-1] != '\\') s--; *part = s; }
+    return len;
+}
+EXPORT u32 WINAPI GetFullPathNameW(const u16 *name, u32 size, u16 *buf, u16 **part) {
+    W2A(a, name); char tmp[1024]; char *pa = 0; u32 n = GetFullPathNameA(a, sizeof tmp, tmp, &pa);
+    u16 w[1024]; size_t l = a2w(tmp, w, 1024); (void)n;
+    if (l + 1 > size) return (u32)l + 1;
+    for (size_t i = 0; i <= l; i++) buf[i] = w[i];
+    if (part) { u16 *s = buf + l; while (s > buf && s[-1] != '\\') s--; *part = s; }
+    return (u32)l;
+}
+EXPORT u32 WINAPI GetTempPathA(u32 size, char *buf) { const char *t = "C:\\tmp\\"; if (size < 8) return 8; cpy(buf, t, size); return 7; }
+EXPORT u32 WINAPI GetTempPathW(u32 size, u16 *buf) { if (size < 8) return 8; a2w("C:\\tmp\\", buf, size); return 7; }
+EXPORT u32 WINAPI GetTempFileNameA(const char *dir, const char *prefix, u32 unique, char *out) {
+    static u32 ctr; if (!unique) unique = (u32)sc3(S_GETPID, 0, 0, 0) * 100 + (++ctr);
+    char hex[9]; for (int i = 0; i < 8; i++) hex[i] = "0123456789abcdef"[(unique >> (28 - 4 * i)) & 15]; hex[8] = 0;
+    size_t n = slen(dir); cpy(out, dir, 260); if (n && out[n - 1] != '\\') out[n++] = '\\';
+    for (int i = 0; i < 3 && prefix[i]; i++) out[n++] = prefix[i];
+    cpy(out + n, hex, 260 - n); n += 8; cpy(out + n, ".tmp", 260 - n);
+    HANDLE h = CreateFileA(out, 0x40000000, 0, 0, 1, 0, 0);
+    if (h != INVALID_HANDLE) sc3(S_CLOSE, (i64)h, 0, 0);
+    return unique;
+}
+EXPORT u32 WINAPI GetSystemDirectoryA(char *b, u32 n) { if (n < 20) return 20; cpy(b, "C:\\Windows\\System32", n); return 19; }
+EXPORT u32 WINAPI GetWindowsDirectoryA(char *b, u32 n) { if (n < 12) return 12; cpy(b, "C:\\Windows", n); return 10; }
+EXPORT u32 WINAPI GetSystemDirectoryW(u16 *b, u32 n) { if (n < 20) return 20; a2w("C:\\Windows\\System32", b, n); return 19; }
+EXPORT u32 WINAPI GetWindowsDirectoryW(u16 *b, u32 n) { if (n < 12) return 12; a2w("C:\\Windows", b, n); return 10; }
+EXPORT BOOL WINAPI GetComputerNameA(char *b, u32 *n) { if (*n < 5) { *n = 5; return 0; } cpy(b, "THOS", *n); *n = 4; return 1; }
+EXPORT BOOL WINAPI GetComputerNameW(u16 *b, u32 *n) { if (*n < 5) { *n = 5; return 0; } a2w("THOS", b, *n); *n = 4; return 1; }
+EXPORT BOOL WINAPI SetFileAttributesA(const char *p, u32 a) { (void)p; (void)a; return 1; }
+EXPORT BOOL WINAPI SetFileAttributesW(const u16 *p, u32 a) { (void)p; (void)a; return 1; }
+typedef struct { u32 attr; u64 ct, at, wt; u32 hi, lo; } __attribute__((packed)) FADATA;
+EXPORT BOOL WINAPI GetFileAttributesExA(const char *p, u32 level, FADATA *d) {
+    (void)level; unsigned char st[144];
+    if (stat_path(p, st) < 0) { SetLastError(2); return 0; }
+    u32 mode = *(u32 *)(st + 24); u64 size = *(u64 *)(st + 48);
+    d->attr = (mode & 0xF000) == 0x4000 ? 0x10 : 0x80;
+    ft((unsigned char *)&d->at, *(i64 *)(st + 72)); ft((unsigned char *)&d->wt, *(i64 *)(st + 88)); ft((unsigned char *)&d->ct, *(i64 *)(st + 104));
+    d->hi = (u32)(size >> 32); d->lo = (u32)size;
+    return 1;
+}
+EXPORT BOOL WINAPI GetFileAttributesExW(const u16 *p, u32 level, FADATA *d) { W2A(a, p); return GetFileAttributesExA(a, level, d); }
+EXPORT u32 WINAPI GetFileType(HANDLE h) { return (i64)h >= 0 && (i64)h <= 2 ? 2 : 1; }
+EXPORT BOOL WINAPI GetFileTime(HANDLE h, u64 *c, u64 *a, u64 *w) {
+    unsigned char st[144];
+    if (sc6(5 /* fstat */, (i64)h, (i64)st, 0, 0, 0, 0) < 0) return 0;
+    if (a) ft((unsigned char *)a, *(i64 *)(st + 72)); if (w) ft((unsigned char *)w, *(i64 *)(st + 88)); if (c) ft((unsigned char *)c, *(i64 *)(st + 104));
+    return 1;
+}
+EXPORT BOOL WINAPI SetFileTime(HANDLE h, const u64 *c, const u64 *a, const u64 *w) { (void)h; (void)c; (void)a; (void)w; return 1; }
+EXPORT BOOL WINAPI CompareFileTime(const u64 *a, const u64 *b) { return *a < *b ? -1 : *a > *b; }
+EXPORT BOOL WINAPI FileTimeToSystemTime(const u64 *f, SYSTEMTIME *st) {
+    u64 t = *f / 10000000ULL; i64 secs = (i64)t - 11644473600LL; i64 days = secs / 86400, rem = secs % 86400;
+    if (rem < 0) { rem += 86400; days--; }
+    int y, m, d; civil(days, &y, &m, &d);
+    st->y = (u16)y; st->mo = (u16)m; st->d = (u16)d; st->dow = (u16)(((days + 4) % 7 + 7) % 7);
+    st->h = (u16)(rem / 3600); st->mi = (u16)(rem % 3600 / 60); st->s = (u16)(rem % 60); st->ms = (u16)(*f / 10000 % 1000);
+    return 1;
+}
+static i64 days_from_civil(i64 y, unsigned m, unsigned d) {
+    y -= m <= 2; i64 era = (y >= 0 ? y : y - 399) / 400; unsigned yoe = (unsigned)(y - era * 400);
+    unsigned doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1; unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (i64)doe - 719468;
+}
+EXPORT BOOL WINAPI SystemTimeToFileTime(const SYSTEMTIME *st, u64 *f) {
+    i64 days = days_from_civil(st->y, st->mo, st->d);
+    i64 secs = days * 86400 + st->h * 3600 + st->mi * 60 + st->s;
+    *f = ((u64)(secs + 11644473600LL)) * 10000000ULL + (u64)st->ms * 10000ULL;
+    return 1;
+}
+EXPORT BOOL WINAPI FileTimeToLocalFileTime(const u64 *a, u64 *b) { *b = *a; return 1; }
+EXPORT BOOL WINAPI LocalFileTimeToFileTime(const u64 *a, u64 *b) { *b = *a; return 1; }
+EXPORT void WINAPI GetSystemTimePreciseAsFileTime(u64 *f) { GetSystemTimeAsFileTime(f); }
+typedef struct { long bias; u16 sname[32]; SYSTEMTIME sd; long sbias; u16 dname[32]; SYSTEMTIME dd; long dbias; } TZI;
+EXPORT u32 WINAPI GetTimeZoneInformation(TZI *t) { unsigned char *p = (unsigned char *)t; for (u32 i = 0; i < sizeof *t; i++) p[i] = 0; return 0; }
+
+/* system information */
+typedef struct { u32 len, load; u64 totphys, availphys, totpage, availpage, totvirt, availvirt, availext; } MEMSTATUSEX;
+EXPORT BOOL WINAPI GlobalMemoryStatusEx(MEMSTATUSEX *m) {
+    m->load = 30; m->totphys = 4ULL << 30; m->availphys = 3ULL << 30; m->totpage = 6ULL << 30; m->availpage = 5ULL << 30;
+    m->totvirt = 1ULL << 47; m->availvirt = (1ULL << 47) - (1ULL << 30); m->availext = 0; return 1;
+}
+EXPORT void WINAPI GetNativeSystemInfo(void *p) { GetSystemInfo(p); }
+EXPORT BOOL WINAPI IsProcessorFeaturePresent(u32 f) { return f == 10 || f == 6 || f == 7 || f == 13; }   /* SSE2, SSE3, MMX, ... */
+EXPORT u32 WINAPI GetLogicalDrives(void) { return 1u << 2; }
+EXPORT u32 WINAPI GetDriveTypeA(const char *r) { (void)r; return 3; }
+EXPORT BOOL WINAPI GetDiskFreeSpaceExA(const char *d, u64 *a, u64 *t, u64 *f) { (void)d; if (a) *a = 50ULL << 30; if (t) *t = 100ULL << 30; if (f) *f = 50ULL << 30; return 1; }
+EXPORT int WINAPI MulDiv(int a, int b, int c) { if (!c) return -1; return (int)(((i64)a * b + (c / 2)) / c); }
+EXPORT HANDLE WINAPI GetCurrentThread(void) { return (HANDLE)(i64)-2; }
+EXPORT BOOL WINAPI SwitchToThread(void) { sc3(24, 0, 0, 0); return 1; }
+EXPORT u32 WINAPI SleepEx(u32 ms, BOOL alertable) { (void)alertable; Sleep(ms); return 0; }
+EXPORT int WINAPI GetThreadPriority(HANDLE h) { (void)h; return 0; }
+EXPORT BOOL WINAPI SetThreadPriority(HANDLE h, int p) { (void)h; (void)p; return 1; }
+EXPORT BOOL WINAPI SetPriorityClass(HANDLE h, u32 p) { (void)h; (void)p; return 1; }
+EXPORT u32 WINAPI SetErrorMode(u32 m) { (void)m; return 0; }
+EXPORT u32 WINAPI GetOEMCP(void) { return 437; }
+EXPORT u32 WINAPI GetConsoleCP(void) { return 65001; }
+EXPORT u32 WINAPI GetConsoleOutputCP(void) { return 65001; }
+EXPORT BOOL WINAPI SetConsoleOutputCP(u32 c) { (void)c; return 1; }
+EXPORT BOOL WINAPI SetConsoleCP(u32 c) { (void)c; return 1; }
+EXPORT BOOL WINAPI SetConsoleTitleA(const char *t) { (void)t; return 1; }
+EXPORT BOOL WINAPI SetConsoleTitleW(const u16 *t) { (void)t; return 1; }
+EXPORT BOOL WINAPI SetConsoleTextAttribute(HANDLE h, u16 a) { (void)h; (void)a; return 1; }
+typedef struct { short x, y; } COORD;
+EXPORT BOOL WINAPI GetConsoleScreenBufferInfo(HANDLE h, void *info) {
+    (void)h; short *s = info; for (int i = 0; i < 11; i++) s[i] = 0;
+    s[0] = 80; s[1] = 25; s[4] = 7; s[5] = 0; s[6] = 0; s[7] = 79; s[8] = 24; s[9] = 80; s[10] = 25; return 1;
+}
+EXPORT BOOL WINAPI ReadConsoleA(HANDLE h, void *buf, u32 n, u32 *got, void *ctl) { (void)ctl; i64 r = sc3(S_READ, (i64)h, buf, n); if (got) *got = r > 0 ? (u32)r : 0; return r >= 0; }
+EXPORT u32 WINAPI GetCPInfo_dummy(void) { return 0; }
+typedef struct { u32 max; unsigned char def[2]; unsigned char lead[12]; } CPINFO;
+EXPORT BOOL WINAPI GetCPInfo(u32 cp, CPINFO *i) { (void)cp; i->max = 1; i->def[0] = '?'; i->def[1] = 0; for (int k = 0; k < 12; k++) i->lead[k] = 0; return 1; }
+EXPORT BOOL WINAPI IsValidCodePage(u32 cp) { return cp == 437 || cp == 1252 || cp == 65001 || cp == 28591; }
+EXPORT u32 WINAPI GetUserDefaultLCID(void) { return 0x0407; }
+EXPORT u32 WINAPI GetSystemDefaultLCID(void) { return 0x0407; }
+EXPORT u16 WINAPI GetUserDefaultUILanguage(void) { return 0x0407; }
+EXPORT u16 WINAPI GetSystemDefaultLangID(void) { return 0x0407; }
+EXPORT int WINAPI GetLocaleInfoA(u32 lcid, u32 type, char *buf, int n) { (void)lcid; (void)type; if (n > 0) buf[0] = 0; return 1; }
+EXPORT int WINAPI GetLocaleInfoW(u32 lcid, u32 type, u16 *buf, int n) { (void)lcid; (void)type; if (n > 0) buf[0] = 0; return 1; }
+EXPORT BOOL WINAPI GetStringTypeW(u32 type, const u16 *s, int n, u16 *out) {
+    if (n < 0) n = (int)wlen(s) + 1;
+    for (int i = 0; i < n; i++) {
+        u16 c = s[i], t = 0;
+        if (type == 1) {                /* CT_CTYPE1 */
+            if (c >= 'A' && c <= 'Z') t = 0x101; else if (c >= 'a' && c <= 'z') t = 0x102;
+            else if (c >= '0' && c <= '9') t = 0x4; else if (c == ' ' || (c >= 9 && c <= 13)) t = 0x8 | 0x40;
+            else if (c < 32 || c == 127) t = 0x20; else if (c < 127) t = 0x10; else t = 0x100;
+            if ((c >= 'A' && c <= 'F') || (c >= 'a' && c <= 'f') || (c >= '0' && c <= '9')) t |= 0x80;
+        }
+        out[i] = t;
+    }
+    return 1;
+}
+EXPORT int WINAPI LCMapStringW(u32 lcid, u32 flags, const u16 *s, int n, u16 *d, int dn) {
+    (void)lcid; if (n < 0) n = (int)wlen(s) + 1;
+    if (!dn) return n;
+    if (dn < n) return 0;
+    for (int i = 0; i < n; i++) { u16 c = s[i]; if ((flags & 0x200) && c >= 'A' && c <= 'Z') c += 32; else if ((flags & 0x100) && c >= 'a' && c <= 'z') c -= 32; d[i] = c; }
+    return n;
+}
+EXPORT int WINAPI LCMapStringA(u32 lcid, u32 flags, const char *s, int n, char *d, int dn) {
+    (void)lcid; if (n < 0) n = (int)slen(s) + 1;
+    if (!dn) return n;
+    if (dn < n) return 0;
+    for (int i = 0; i < n; i++) { char c = s[i]; if ((flags & 0x200) && c >= 'A' && c <= 'Z') c += 32; else if ((flags & 0x100) && c >= 'a' && c <= 'z') c -= 32; d[i] = c; }
+    return n;
+}
+EXPORT int WINAPI CompareStringA(u32 lcid, u32 flags, const char *a, int na, const char *b, int nb) {
+    (void)lcid; if (na < 0) na = (int)slen(a); if (nb < 0) nb = (int)slen(b);
+    int i = 0;
+    for (; i < na && i < nb; i++) { int x = (unsigned char)a[i], y = (unsigned char)b[i]; if (flags & 1) { x = lw(x); y = lw(y); } if (x != y) return x < y ? 1 : 3; }
+    return na == nb ? 2 : (na < nb ? 1 : 3);
+}
+EXPORT int WINAPI CompareStringW(u32 lcid, u32 flags, const u16 *a, int na, const u16 *b, int nb) {
+    (void)lcid; if (na < 0) na = (int)wlen(a); if (nb < 0) nb = (int)wlen(b);
+    int i = 0;
+    for (; i < na && i < nb; i++) { int x = a[i], y = b[i]; if (flags & 1) { x = lwc(x); y = lwc(y); } if (x != y) return x < y ? 1 : 3; }
+    return na == nb ? 2 : (na < nb ? 1 : 3);
+}
+EXPORT u32 WINAPI FormatMessageA(u32 flags, const void *src, u32 id, u32 lang, char *buf, u32 size, void *args) {
+    (void)flags; (void)src; (void)lang; (void)args;
+    char tmp[48]; const char *pre = "Windows error "; size_t n = 0; for (; pre[n]; n++) tmp[n] = pre[n];
+    char d[12]; int k = 0; u32 v = id; do { d[k++] = (char)('0' + v % 10); v /= 10; } while (v);
+    while (k) tmp[n++] = d[--k];
+    tmp[n] = 0;
+    if (flags & 0x100) { char **out = (char **)buf; char *p = LocalAlloc(0, n + 1) ; if (!p) return 0; cpy(p, tmp, n + 1); *out = p; return (u32)n; }
+    cpy(buf, tmp, size); return (u32)slen(buf);
+}
+typedef struct { u32 cb; char pad[100]; } STARTUPINFOA;
+EXPORT void WINAPI GetStartupInfoA(void *si) { unsigned char *p = si; for (int i = 0; i < 104; i++) p[i] = 0; *(u32 *)p = 104; }
+EXPORT void WINAPI GetStartupInfoW(void *si) { GetStartupInfoA(si); }
+EXPORT void *WINAPI EncodePointer(void *p) { return p; }
+EXPORT void *WINAPI DecodePointer(void *p) { return p; }
+EXPORT BOOL WINAPI SetHandleInformation(HANDLE h, u32 m, u32 f) { (void)h; (void)m; (void)f; return 1; }
+EXPORT BOOL WINAPI GetHandleInformation(HANDLE h, u32 *f) { (void)h; *f = 0; return 1; }
+EXPORT BOOL WINAPI DuplicateHandle(HANDLE sp, HANDLE h, HANDLE tp, HANDLE *out, u32 acc, BOOL inh, u32 opt) {
+    (void)sp; (void)tp; (void)acc; (void)inh; (void)opt;
+    i64 fd = sc3(32 /* dup */, (i64)h, 0, 0); if (fd < 0) return 0; *out = (HANDLE)fd; return 1;
+}
+EXPORT BOOL WINAPI CreatePipe(HANDLE *r, HANDLE *w, void *sa, u32 size) {
+    (void)sa; (void)size; int fds[2]; if (sc3(22 /* pipe */, fds, 0, 0) < 0) return 0; *r = (HANDLE)(i64)fds[0]; *w = (HANDLE)(i64)fds[1]; return 1;
+}
+EXPORT HANDLE WINAPI CreateEventW(void *sa, BOOL manual, BOOL init, const u16 *n) { (void)n; extern HANDLE WINAPI CreateEventA(void *, BOOL, BOOL, const char *); return CreateEventA(sa, manual, init, 0); }
+EXPORT HANDLE WINAPI CreateMutexW(void *sa, BOOL owner, const u16 *n) { (void)n; return CreateMutexA(sa, owner, 0); }
+EXPORT HANDLE WINAPI CreateSemaphoreW(void *sa, long a, long b, const u16 *n) { (void)n; return CreateSemaphoreA(sa, a, b, 0); }
+EXPORT u32 WINAPI WaitForSingleObjectEx(HANDLE h, u32 ms, BOOL alertable) { (void)alertable; extern u32 WINAPI WaitForSingleObject(HANDLE, u32); return WaitForSingleObject(h, ms); }
+EXPORT u32 WINAPI WaitForMultipleObjectsEx(u32 n, HANDLE *h, BOOL all, u32 ms, BOOL alertable) { (void)alertable; return WaitForMultipleObjects(n, h, all, ms); }
+
+/* heaps (every heap is the process heap) */
+EXPORT HANDLE WINAPI HeapCreate(u32 f, u64 a, u64 b) { (void)f; (void)a; (void)b; extern HANDLE WINAPI GetProcessHeap(void); return GetProcessHeap(); }
+EXPORT BOOL WINAPI HeapDestroy(HANDLE h) { (void)h; return 1; }
+EXPORT BOOL WINAPI HeapValidate(HANDLE h, u32 f, const void *p) { (void)h; (void)f; (void)p; return 1; }
+EXPORT u64 WINAPI HeapSize(HANDLE h, u32 f, const void *p) { (void)h; (void)f; return p ? ((mh *)p - 1)->size : (u64)-1; }
+EXPORT u64 WINAPI LocalSize(HANDLE p) { return p ? ((mh *)p - 1)->size : 0; }
+EXPORT u64 WINAPI GlobalSize(HANDLE p) { return LocalSize(p); }
+EXPORT HANDLE WINAPI LocalReAlloc(HANDLE p, u64 n, u32 f) { (void)f; return HeapReAlloc(0, 0, p, n); }
+EXPORT HANDLE WINAPI GlobalReAlloc(HANDLE p, u64 n, u32 f) { (void)f; return HeapReAlloc(0, 0, p, n); }
+EXPORT void *WINAPI GlobalLock(HANDLE p) { return p; }
+EXPORT BOOL WINAPI GlobalUnlock(HANDLE p) { (void)p; return 0; }
+EXPORT void *WINAPI LocalLock(HANDLE p) { return p; }
+EXPORT BOOL WINAPI LocalUnlock(HANDLE p) { (void)p; return 0; }
+
+/* interlocked operations */
+EXPORT long WINAPI InterlockedIncrement(volatile long *p) { return __sync_add_and_fetch(p, 1); }
+EXPORT long WINAPI InterlockedDecrement(volatile long *p) { return __sync_sub_and_fetch(p, 1); }
+EXPORT long WINAPI InterlockedExchange(volatile long *p, long v) { return __sync_lock_test_and_set(p, v); }
+EXPORT long WINAPI InterlockedExchangeAdd(volatile long *p, long v) { return __sync_fetch_and_add(p, v); }
+EXPORT long WINAPI InterlockedCompareExchange(volatile long *p, long x, long c) { return __sync_val_compare_and_swap(p, c, x); }
+EXPORT i64 WINAPI InterlockedIncrement64(volatile i64 *p) { return __sync_add_and_fetch(p, 1); }
+EXPORT i64 WINAPI InterlockedDecrement64(volatile i64 *p) { return __sync_sub_and_fetch(p, 1); }
+EXPORT i64 WINAPI InterlockedCompareExchange64(volatile i64 *p, i64 x, i64 c) { return __sync_val_compare_and_swap(p, c, x); }
+EXPORT void *WINAPI InterlockedCompareExchangePointer(void *volatile *p, void *x, void *c) { return __sync_val_compare_and_swap(p, c, x); }
+EXPORT void *WINAPI InterlockedExchangePointer(void *volatile *p, void *v) { return __sync_lock_test_and_set(p, v); }
+
+/* thread-local storage: one table keyed by (thread id, slot); good for 64 slots and a few hundred values */
+#define TLS_SLOTS 64
+#define TLS_VALS 512
+static volatile int tls_used[TLS_SLOTS], tls_lock;
+static struct { i64 tid; u32 slot; void *val; } tls_vals[TLS_VALS];
+static void tls_acquire(void) { while (__sync_lock_test_and_set(&tls_lock, 1)) sc3(24, 0, 0, 0); }
+static void tls_release(void) { __sync_lock_release(&tls_lock); }
+EXPORT u32 WINAPI TlsAlloc(void) {
+    tls_acquire();
+    for (u32 i = 0; i < TLS_SLOTS; i++) if (!tls_used[i]) { tls_used[i] = 1; tls_release(); return i; }
+    tls_release(); SetLastError(8); return 0xFFFFFFFFu;
+}
+EXPORT BOOL WINAPI TlsFree(u32 i) {
+    if (i >= TLS_SLOTS) return 0;
+    tls_acquire(); tls_used[i] = 0;
+    for (int k = 0; k < TLS_VALS; k++) if (tls_vals[k].tid && tls_vals[k].slot == i) tls_vals[k].tid = 0;
+    tls_release(); return 1;
+}
+EXPORT BOOL WINAPI TlsSetValue(u32 i, void *v) {
+    if (i >= TLS_SLOTS) return 0;
+    i64 me = thread_id(); int free_k = -1;
+    tls_acquire();
+    for (int k = 0; k < TLS_VALS; k++) {
+        if (tls_vals[k].tid == me && tls_vals[k].slot == i) { tls_vals[k].val = v; tls_release(); return 1; }
+        if (!tls_vals[k].tid && free_k < 0) free_k = k;
+    }
+    if (free_k >= 0) { tls_vals[free_k].tid = me; tls_vals[free_k].slot = i; tls_vals[free_k].val = v; }
+    tls_release();
+    return free_k >= 0;
+}
+EXPORT void *WINAPI TlsGetValue(u32 i) {
+    i64 me = thread_id(); void *r = 0;
+    tls_acquire();
+    for (int k = 0; k < TLS_VALS; k++) if (tls_vals[k].tid == me && tls_vals[k].slot == i) { r = tls_vals[k].val; break; }
+    tls_release();
+    SetLastError(0);
+    return r;
+}
+EXPORT u32 WINAPI FlsAlloc(void *cb) { (void)cb; return TlsAlloc(); }
+EXPORT BOOL WINAPI FlsFree(u32 i) { return TlsFree(i); }
+EXPORT BOOL WINAPI FlsSetValue(u32 i, void *v) { return TlsSetValue(i, v); }
+EXPORT void *WINAPI FlsGetValue(u32 i) { return TlsGetValue(i); }
+
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }

@@ -720,6 +720,21 @@ fn main() {
                 exit(1);
             }
         }
+        "wbig-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "wbig", "/wbig.exe", "wbig-done", 120);
+            let fails = out.lines().filter(|l| l.trim().starts_with("FAIL ")).count();
+            let oks = out.lines().filter(|l| l.trim().starts_with("ok   ")).count();
+            if out.contains("wbig-done fails=0") && oks >= 40 {
+                println!("wbig-test PASSED: a broad mingw program (libm, printf formats, strings, wide chars, time, stdio, descriptors, Unicode file APIs, TLS, interlocked ops) — {oks} checks");
+            } else {
+                for l in out.lines().filter(|l| l.contains("FAIL") || l.contains("wbig") || l.contains("PE") || l.contains("fault") || l.contains("import")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("wbig-test FAILED ({fails} failing checks, {oks} ok)");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "trunc=", 150);
@@ -1784,6 +1799,10 @@ fn disk_image() -> PathBuf {
             let wt = root.join("target/wtest.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wt.to_str().unwrap(), root.join("xtask/testdata/wtest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wtest.exe", wt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let wbig = root.join("target/wbig.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wbig.to_str().unwrap(), root.join("xtask/testdata/wbig.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wbig.exe", wbig.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let wc = root.join("target/whello.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join("xtask/testdata/whello.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -5057,7 +5076,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "hw-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
