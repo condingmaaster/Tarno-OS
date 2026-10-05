@@ -190,6 +190,8 @@ static void key(struct wl_msg *m) {
 
 int main(int argc, char **argv) {
     logging = argc > 1 && !strcmp(argv[1], "-l");
+    const char *run = 0;                              /* `-c command`: run it (then wait for Enter) instead of a shell */
+    for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "-c")) run = argv[i + 1];
     if (gfx_load_font() != 0) { puts("term FAIL: font"); return 1; }
     int ky = 0x5000 + getpid();
     int id = shmget(ky, PW * PH * 4, IPC_CREAT | 0600);
@@ -224,6 +226,11 @@ int main(int argc, char **argv) {
         if (s > 2) close(s);
         close(master); close(sock);
         setenv("TERM", "linux", 1);
+        if (run) {
+            char line[1024];
+            snprintf(line, sizeof line, "%s; echo; echo '[finished - press Enter to close]'; read x", run);
+            execl("/busybox", "sh", "-c", line, (char *)0);
+        }
         execl("/busybox", "sh", "-i", (char *)0);
         _exit(127);
     }

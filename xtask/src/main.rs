@@ -791,6 +791,10 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_tasklist_test(&img);
         }
+        "desk-files-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_files_test(&img);
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -1795,7 +1799,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -1856,7 +1860,7 @@ fn disk_image() -> PathBuf {
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
@@ -5126,7 +5130,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -7278,6 +7282,61 @@ fn desk_tasklist_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-tasklist-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-files-test`: the file manager lists a directory; a double-click on a .deb installs it with `thos-pkg`
+/// (in a terminal window the manager opens).
+fn desk_files_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/deskfiles-serial.log");
+    let sock = root.join("target/deskfiles-mon.sock");
+    let shot = root.join("target/deskfiles.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "files ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(1500));
+        // the window sits at (100,80); its first list row is at y = 80 + 30 .. 48
+        let (mut rx, mut ry) = (200 - 640, 80 + 40 - 400);
+        while rx != 0 || ry != 0 {
+            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+            mon(&tsock, &format!("mouse_move {sx} {sy}"));
+            rx -= sx;
+            ry -= sy;
+        }
+        std::thread::sleep(ms(300));
+        mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+        for _ in 0..2 {
+            mon(&tsock, "mouse_button 1");
+            std::thread::sleep(ms(120));
+            mon(&tsock, "mouse_button 0");
+            std::thread::sleep(ms(150));
+        }
+        std::thread::sleep(ms(4000));
+        mon(&tsock, &format!("screendump {}", tshot.with_extension("after.ppm").to_str().unwrap()));
+    });
+    let out = boot_and_run(img, "deskfiles", "/busybox sh /desk-files.sh", "desk ok:", 220);
+    // the row is highlighted (0x364868) in the screenshot taken before the click? no: after hover only, so look for the list text instead
+    let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shot)?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let header = px(400, 90).is_some_and(|c| c.0 == 0x2a && c.1 == 0x2a && c.2 == 0x3a); // the 0x2a2a3a header bar
+    if out.contains("opt-pkgdemo") && header {
+        println!("desk-files-test PASSED: the file manager lists a folder and a double-click on a .deb installed the package");
+    } else {
+        eprintln!("  header pixel {:?}", px(400, 90));
+        for l in out.lines().filter(|l| l.contains("files") || l.contains("opt-") || l.contains("desk") || l.contains("thos-pkg")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-files-test FAILED");
         exit(1);
     }
 }

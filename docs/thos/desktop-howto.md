@@ -57,3 +57,10 @@ Keyboard events come from `/dev/input/kbd`, the mouse from `/dev/input/mice`, th
 Tests: `cargo xtask desk-test | desk-kbd-test | desk-term-test | desk-panel-test | desk-win32-test | desk-keys-test | desktop-test`
 `wayland-test | foot-test` (Wayland clients), `event-test` (epoll/eventfd/timerfd/signalfd), each checks QEMU screendumps or serial output;
 `cargo xtask suite` runs everything (~18 min; add `--jobs 1` and `taskset -c 2,3` to keep other CPUs free).
+
+## Dateimanager, Aufgabenleiste, Programme installieren (2026-10-05)
+- **Dateimanager** (`thosfiles`, Startmenü „Files“): Ordner durchsuchen (Klick, Pfeiltasten, Bild auf/ab, Pos1/Ende), Doppelklick oder Enter öffnet, Rücktaste/„Up“ geht nach oben, Entf (zweimal) löscht, R lädt neu.
+  Doppelklick auf `.deb`, `.rpm`, `.zip`, `.tar.*` startet `thos-pkg install` in einem Terminalfenster, `.exe`/ausführbare Dateien laufen im Terminal, Textdateien öffnen sich in `less`.
+- **Aufgabenleiste:** die Leiste unten zeigt neben den angehefteten Programmen jedes offene Fenster als Knopf (in der Reihenfolge des Öffnens, das aktive hell); ein Klick holt das Fenster nach vorn.
+- Neue Programme: `thos-pkg update` und `thos-pkg install <Paket>` (Debian-Archiv, Abhängigkeiten werden mitinstalliert); danach erscheinen sie im Startmenü, wenn sie einen Desktop-Eintrag mitbringen.
+- Tests: `desk-tasklist-test`, `desk-files-test`, `desk-menu-test`, `pkg-test` (alle in der Suite), `pkg-repo-test` (braucht Internet).
