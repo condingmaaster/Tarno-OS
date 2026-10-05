@@ -705,6 +705,21 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_panel_test(&img);
         }
+        "hw-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "hw", "/busybox sh /hw.sh", "hw-done", 100);
+            let num = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k)).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
+            let model = out.lines().any(|l| l.trim().starts_with("hw-model=model name") && l.len() > 25);
+            if model && num("hw-pci=") >= 3 && num("hw-log=") >= 10 && num("dmesg-lines=") >= 10 {
+                println!("hw-test PASSED: /proc/cpuinfo (CPUID brand), /proc/pci and /proc/dmesg work; `hwreport` collects them into /tmp/hwreport.txt");
+            } else {
+                for l in out.lines().filter(|l| l.contains("hw-")) {
+                    eprintln!("  {l}");
+                }
+                eprintln!("hw-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "trunc=", 150);
@@ -1727,6 +1742,9 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                for f in ["hwreport", "hw.sh"] {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
+                }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", "set_inode_field opt mode 040777", img.to_str().unwrap()]));
             }
@@ -5039,7 +5057,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "hw-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

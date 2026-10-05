@@ -1,0 +1,12 @@
+#!/busybox sh
+# hwreport: collect what THOS sees of this machine into /tmp/hwreport.txt (and show it).
+{
+echo "== THOS hardware report =="
+/busybox uname -a
+echo "== cpu =="; /busybox cat /proc/cpuinfo
+echo "== memory =="; /busybox cat /proc/meminfo
+echo "== pci =="; /busybox cat /proc/pci
+echo "== kernel log =="; /busybox cat /proc/dmesg
+} > /tmp/hwreport.txt
+/busybox cat /tmp/hwreport.txt
+echo "(saved as /tmp/hwreport.txt)"

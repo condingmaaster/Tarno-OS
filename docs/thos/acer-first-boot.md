@@ -33,3 +33,9 @@ Danach: Administratorkonto anlegen, anmelden, `desktop` tippen (Compositor + Ter
 - Hängt der Start nach `random ... seeded`: Timer/APIC — bitte Foto.
 - Tastatur reagiert nicht: PS/2 am Notebook ist der Normalfall (`ps2 ok`), USB-Tastatur nur mit EHCI.
 - Ethernet ohne Link: erst Kabel einstecken, dann neu starten (der Treiber prüft den Link alle 250 ms und meldet `up`/`down`).
+
+## Daten sammeln (hwreport) und Programme installieren (thos-pkg)
+- Nach dem Anmelden `sh /hwreport` tippen: zeigt CPU (CPUID-Name und Flags), Speicher, alle PCI-Geräte (`/proc/pci`) und das gesamte Kernel-Log (`/proc/dmesg`, auch `dmesg`) und speichert alles in `/tmp/hwreport.txt`.
+  Der Stick lässt sich danach an einem anderen Rechner lesen (ext2, Volume `THOSROOT`); die Datei ist die Grundlage, um `hw-target.md` mit echten Acer-Daten zu füllen und Treiberfehler zu finden.
+- Programme: `sh /thos-pkg install <Datei-oder-URL>` entpackt `.deb`, `.rpm`, `.zip`, `.tar.gz/.xz/.bz2` oder eine `.exe` nach `/opt/<Name>` und legt Einträge im Startmenü an (`sh /thos-pkg list`, `sh /thos-pkg remove <Name>`).
+  `.msi` wird abgelehnt (noch nicht unterstützt). Fehlende Bibliotheken werden nicht nachgeladen.

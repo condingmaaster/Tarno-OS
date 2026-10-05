@@ -212,6 +212,7 @@ const SYS_CAPGET: u64 = 125;
 const SYS_GETCPU: u64 = 309;
 const SYS_MREMAP: u64 = 25;
 const SYS_GETRUSAGE: u64 = 98;
+const SYS_SYSLOG: u64 = 103;
 const SYS_GETRESUID: u64 = 118;
 const SYS_GETRESGID: u64 = 120;
 const SYS_CAPSET: u64 = 126;
@@ -1976,6 +1977,22 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 }
             }
             0
+        }
+        SYS_SYSLOG => {
+            // syslog(2): 3/4 = read the whole kernel log, 10 = its size (what BusyBox `dmesg` uses); the rest are no-ops
+            let log = crate::serial::log_snapshot();
+            match a1 {
+                3 | 4 => match usercopy::slice_mut(a2, a3 as usize) {
+                    Ok(b) => {
+                        let n = b.len().min(log.len());
+                        b[..n].copy_from_slice(&log[log.len() - n..]);
+                        n as i64
+                    }
+                    Err(e) => e,
+                },
+                10 => log.len() as i64,
+                _ => 0,
+            }
         }
         SYS_GETRUSAGE => match usercopy::slice_mut(a2, 144) {
             // struct rusage: all zero is a valid (if unimpressive) answer; user time = process cpu time is not tracked

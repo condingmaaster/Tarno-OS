@@ -86,10 +86,42 @@ fn write_str(port: &Uart, s: &str) {
     }
 }
 
+/// The last 32 KiB of kernel log text (`/proc/dmesg`, `dmesg`): the only record of a boot on a machine without a serial port.
+const LOG_SIZE: usize = 32 * 1024;
+struct LogRing {
+    buf: [u8; LOG_SIZE],
+    total: usize,
+}
+static LOG: spin::Mutex<LogRing> = spin::Mutex::new(LogRing { buf: [0; LOG_SIZE], total: 0 });
+
+fn log_append(s: &str) {
+    if let Some(mut l) = LOG.try_lock() {
+        for b in s.bytes() {
+            let i = l.total % LOG_SIZE;
+            l.buf[i] = b;
+            l.total += 1;
+        }
+    }
+}
+
+/// The retained kernel log, oldest byte first.
+pub fn log_snapshot() -> alloc::vec::Vec<u8> {
+    let l = LOG.lock();
+    if l.total <= LOG_SIZE {
+        l.buf[..l.total].to_vec()
+    } else {
+        let start = l.total % LOG_SIZE;
+        let mut v = l.buf[start..].to_vec();
+        v.extend_from_slice(&l.buf[..start]);
+        v
+    }
+}
+
 struct Writer<'a>(&'a Uart);
 
 impl core::fmt::Write for Writer<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        log_append(s);
         write_str(self.0, s);
         crate::fbcon::write(s.as_bytes());
         Ok(())
