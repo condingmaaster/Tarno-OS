@@ -59,6 +59,7 @@ const SYS_GETUID: u64 = 102;
 const SYS_GETGID: u64 = 104;
 const SYS_GETEUID: u64 = 107;
 const SYS_GETEGID: u64 = 108;
+const SYS_SCHED_YIELD: u64 = 24;
 const SYS_FORK: u64 = 57;
 const SYS_VFORK: u64 = 58;
 const SYS_EXECVE: u64 = 59;
@@ -2135,6 +2136,10 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         221 | 326 => ENOSYS, // fadvise64 is only a hint; copy_file_range: callers fall back to read/write
 
+        SYS_SCHED_YIELD => {
+            sched::yield_now();
+            0
+        }
         SYS_FORK => process::fork(frame),
 
         // glibc's fork() is clone(SIGCHLD | CHILD_{SET,CLEAR}TID, stack=0).

@@ -768,9 +768,9 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "winrt", "/busybox sh /winrt.sh", "winrt-done", 150);
             let ok = out.contains("wsock-done") && out.contains("ws server got 17: ping-over-winsock") && out.contains("ws client got pong select=1") && out.contains("ws getaddrinfo=0 port=80")
-                && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done");
+                && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done") && out.contains("threads total=2000") && out.contains("channel got [0, 1, 4, 9, 16]") && out.contains("caught panic: true") && out.contains("rustthreads-done");
             if ok {
-                println!("winrt-test PASSED: Winsock over loopback and a real Rust program built for x86_64-pc-windows-gnu (std: heap, files, environment, random, stdout) run");
+                println!("winrt-test PASSED: Winsock over loopback and a real Rust program built for x86_64-pc-windows-gnu (std: heap, files, environment, random, stdout, threads, mutex, channels, panics caught by catch_unwind) run");
             } else {
                 for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(25).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
                 eprintln!("winrt-test FAILED");
@@ -1846,7 +1846,7 @@ fn disk_image() -> PathBuf {
             }
             // more system DLLs (all freestanding C on top of system calls): ntdll extension, Winsock, Rust-runtime helpers
             for (src, dll, libs) in [
-                ("ntdllx.c", "ntdllx.dll", vec!["-lkernel32"]),
+                ("ntdllx.c", "ntdllx.dll", vec!["-lkernel32", "-lntdll"]),
                 ("ws2_32.c", "ws2_32.dll", vec!["-lkernel32"]),
                 ("bcryptprimitives.c", "bcryptprimitives.dll", vec!["-lkernel32"]),
                 ("userenv.c", "userenv.dll", vec!["-lkernel32"]),
@@ -1866,6 +1866,10 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wsock.exe", ws.to_str().unwrap()), img.to_str().unwrap()]));
             }
             // a real Rust program built for Windows (needs `rustup target add x86_64-pc-windows-gnu`)
+            let rt = root.join("target/rustthreads-win.exe");
+            if Command::new("rustup").args(["run", "stable", "rustc", "--target", "x86_64-pc-windows-gnu", "-O", "-C", "debuginfo=0", "-C", "strip=symbols", "-o", rt.to_str().unwrap(), root.join("xtask/testdata/rustthreads-win.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rustthreads-win.exe", rt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             let rh = root.join("target/rusthello-win.exe");
             if Command::new("rustup").args(["run", "stable", "rustc", "--target", "x86_64-pc-windows-gnu", "-O", "-C", "debuginfo=0", "-C", "strip=symbols", "-o", rh.to_str().unwrap(), root.join("xtask/testdata/rusthello-win.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rusthello-win.exe", rh.to_str().unwrap()), img.to_str().unwrap()]));

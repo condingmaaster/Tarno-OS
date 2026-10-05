@@ -854,17 +854,26 @@ EXPORT BOOL WINAPI SetWaitableTimer(HANDLE h, const i64 *due, long period, void 
 EXPORT BOOL WINAPI IsThreadAFiber(void) { return 0; }
 EXPORT BOOL WINAPI SetThreadStackGuarantee(u32 *s) { (void)s; return 1; }
 EXPORT void *WINAPI AddVectoredExceptionHandler(u32 first, void *h) { return RtlAddVectoredExceptionHandler(first, h); }
-EXPORT void WINAPI RaiseException(u32 code, u32 flags, u32 n, const u64 *args) { (void)code; (void)flags; (void)n; (void)args; sc3(231, 0xC0000001u & 0xFF, 0, 0); for (;;) {} }
 EXPORT BOOL WINAPI ReadConsoleW(HANDLE h, u16 *buf, u32 n, u32 *got, void *ctl) {
     (void)ctl; char tmp[512]; if (n > 120) n = 120;
     i64 r = sc3(S_READ, (i64)h, tmp, n); if (r <= 0) { if (got) *got = 0; return r == 0; }
     tmp[r] = 0; size_t w = a2w(tmp, buf, n + 1); if (got) *got = (u32)w; return 1;
 }
-EXPORT void WINAPI RtlCaptureContext(void *ctx) { unsigned char *p = ctx; for (int i = 0; i < 1232; i++) p[i] = 0; }
-EXPORT void *WINAPI RtlLookupFunctionEntry(u64 pc, u64 *base, void *hist) { (void)pc; (void)hist; if (base) *base = 0; return 0; }
-EXPORT void *WINAPI RtlVirtualUnwind(u32 t, u64 base, u64 pc, void *fn, void *ctx, void **hd, u64 *ef, void *cp) { (void)t; (void)base; (void)pc; (void)fn; (void)ctx; (void)hd; (void)ef; (void)cp; return 0; }
-EXPORT void WINAPI RtlUnwindEx(void *tf, void *ip, void *rec, void *rv, void *ctx, void *hist) { (void)tf; (void)ip; (void)rec; (void)rv; (void)ctx; (void)hist; sc3(231, 3, 0, 0); for (;;) {} }
 
+#include "unwind.h"
+/* RaiseException: build the record, offer it to the frame handlers, resume if one says so, else the process ends */
+EXPORT void WINAPI RaiseException(u32 code, u32 flags, u32 n, const u64 *args) {
+    unsigned char rec[0x98]; for (int i = 0; i < 0x98; i++) rec[i] = 0;
+    unsigned char *ctx = (unsigned char *)__builtin_alloca(CX_SIZE + 16); ctx = (unsigned char *)(((u64)ctx + 15) & ~15ULL);
+    *(u32 *)rec = code; *(u32 *)(rec + 4) = flags;
+    if (n > 15) n = 15;
+    *(u32 *)(rec + 0x18) = n; for (u32 i = 0; i < n; i++) *(u64 *)(rec + 0x20 + 8 * i) = args[i];
+    RtlCaptureContext(ctx);
+    *(u64 *)(rec + 0x10) = *(u64 *)(ctx + CX_RIP);
+    if (uw_dispatch(rec, ctx)) RtlRestoreContext(ctx, rec);
+    sc3(231, code & 0xFF ? code & 0xFF : 3, 0, 0);
+    for (;;) {}
+}
 /* the C-language SEH personality lives in the built-in msvcrt: forward to it */
 static void *find_in(const char *module, const char *want) {
     unsigned char *base = GetModuleHandleA(module);

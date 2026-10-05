@@ -1,6 +1,7 @@
 // ntdllx.dll — more of ntdll for THOS's NT personality (the loader asks it before the built-in ntdll):
 // NtCreateFile / NtOpenFile over POSIX open, and the status-code translation.
 #include "wincommon.h"
+#include "unwind.h"
 
 typedef struct { u16 len, max; u16 *buf; } UNISTR;
 typedef struct { u32 length; u32 pad0; HANDLE root; UNISTR *name; u32 attrs; u32 pad1; void *sd, *sqos; } OBJATTR;
@@ -67,4 +68,12 @@ EXPORT u32 WINAPI RtlNtStatusToDosError(long st) {
         default: return 317;
     }
 }
-__attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }
+EXPORT void WINAPI RtlRaiseException(unsigned char *rec) {
+    unsigned char *ctx = (unsigned char *)__builtin_alloca(CX_SIZE + 16); ctx = (unsigned char *)(((u64)ctx + 15) & ~15ULL);
+    RtlCaptureContext(ctx);
+    *(u64 *)(rec + 0x10) = *(u64 *)(ctx + CX_RIP);
+    if (uw_dispatch(rec, ctx)) RtlRestoreContext(ctx, rec);
+    sc3(231, *(u32 *)rec & 0xFF ? *(u32 *)rec & 0xFF : 3, 0, 0);
+    for (;;) {}
+}
+__attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)res; if (reason == 1) uw_install(); return 1; }
