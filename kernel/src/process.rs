@@ -593,6 +593,66 @@ impl Process {
         fa.dealloc(PhysFrame::containing_address(PhysAddr::new(self.pml4_phys)));
     }
 
+    /// `/proc/<pid>/maps`: the present user pages coalesced into runs of equal protection
+    /// (`start-end perms offset dev inode`), found by walking the page tables. No file names; the run
+    /// that contains `sp` (when given) is labelled `[stack]`.
+    pub fn maps_text(&self, sp: Option<u64>) -> alloc::string::String {
+        use alloc::string::String;
+        use core::fmt::Write;
+        let hhdm = hhdm_offset();
+        let tbl = |phys: u64| unsafe { &*((phys + hhdm) as *const PageTable) };
+        let mut out = String::new();
+        let mut run: Option<(u64, u64, bool, bool)> = None; // start, end, writable, exec
+        let mut flush = |out: &mut String, r: Option<(u64, u64, bool, bool)>| {
+            if let Some((s, e, w, x)) = r {
+                let name = match sp {
+                    Some(p) if p >= s && p < e => "[stack]",
+                    _ => "",
+                };
+                let _ = writeln!(out, "{:012x}-{:012x} r{}{}p 00000000 00:00 0 {}", s, e, if w { "w" } else { "-" }, if x { "x" } else { "-" }, name);
+            }
+        };
+        for i4 in 0..256usize {
+            let e4 = &tbl(self.pml4_phys)[i4];
+            if !e4.flags().contains(PageTableFlags::PRESENT) {
+                continue;
+            }
+            let pdpt = e4.addr().as_u64();
+            for i3 in 0..512usize {
+                let e3 = &tbl(pdpt)[i3];
+                if !e3.flags().contains(PageTableFlags::PRESENT) || e3.flags().contains(PageTableFlags::HUGE_PAGE) {
+                    continue;
+                }
+                let pd = e3.addr().as_u64();
+                for i2 in 0..512usize {
+                    let e2 = &tbl(pd)[i2];
+                    if !e2.flags().contains(PageTableFlags::PRESENT) || e2.flags().contains(PageTableFlags::HUGE_PAGE) {
+                        continue;
+                    }
+                    let pt = e2.addr().as_u64();
+                    for i1 in 0..512usize {
+                        let e1 = &tbl(pt)[i1];
+                        let f = e1.flags();
+                        if !f.contains(PageTableFlags::PRESENT) {
+                            continue;
+                        }
+                        let va = ((i4 as u64) << 39) | ((i3 as u64) << 30) | ((i2 as u64) << 21) | ((i1 as u64) << 12);
+                        let (w, x) = (f.contains(PageTableFlags::WRITABLE), !f.contains(PageTableFlags::NO_EXECUTE));
+                        match run {
+                            Some((s, e, rw, rx)) if e == va && rw == w && rx == x => run = Some((s, va + 4096, rw, rx)),
+                            _ => {
+                                flush(&mut out, run);
+                                run = Some((va, va + 4096, w, x));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        flush(&mut out, run);
+        out
+    }
+
     /// Allocate + map a fresh user stack; returns the (page-aligned) stack top.
     pub fn new_user_stack(&self) -> u64 {
         // Reserve address space for a stack that can grow to USER_STACK_MAX; only the top part is mapped.

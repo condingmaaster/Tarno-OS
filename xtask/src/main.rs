@@ -710,7 +710,7 @@ fn main() {
             let out = boot_and_run(&img, "hw", "/busybox sh /hw.sh", "hw-done", 100);
             let num = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k)).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
             let model = out.lines().any(|l| l.trim().starts_with("hw-model=model name") && l.len() > 25);
-            if model && num("hw-pci=") >= 3 && num("hw-log=") >= 10 && num("dmesg-lines=") >= 10 {
+            if model && num("hw-pci=") >= 3 && num("hw-log=") >= 10 && num("dmesg-lines=") >= 10 && out.contains("stack_size_ok=1") {
                 println!("hw-test PASSED: /proc/cpuinfo (CPUID brand), /proc/pci and /proc/dmesg work; `hwreport` collects them into /tmp/hwreport.txt");
             } else {
                 for l in out.lines().filter(|l| l.contains("hw-")) {
@@ -781,8 +781,8 @@ fn main() {
             // needs the internet: a few real terminal programs from the Debian archive
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkgapps", "/busybox sh /pkg-apps.sh", "pkg-apps-done", 1500);
-            if out.contains("htop 3.") && out.contains("jq-1.") && out.contains("ripgrep 14.") && out.contains("GNU nano, version") && out.contains("pkg-apps-done") {
-                println!("pkg-apps-test PASSED: htop, jq, ripgrep (Rust, PCRE2) and nano installed from the Debian archive with their libraries and run");
+            if out.contains("htop 3.") && out.contains("jq-1.") && out.contains("ripgrep 14.") && out.contains("GNU nano, version") && out.contains("Debian mirrors") && out.contains("pkg-apps-done") {
+                println!("pkg-apps-test PASSED: htop, jq, ripgrep (Rust, PCRE2), nano and the w3m text browser installed from the Debian archive with their libraries and run");
             } else {
                 for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(40).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
                 eprintln!("pkg-apps-test FAILED");
@@ -819,6 +819,10 @@ fn main() {
         "desk-files-test" => {
             let img = prod_interactive_image(cmd);
             desk_files_test(&img);
+        }
+        "desk-soft-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_soft_test(&img);
         }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
@@ -1580,6 +1584,10 @@ fn disk_image() -> PathBuf {
             if evt_ok {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} evtest", evt.to_str().unwrap()), img.to_str().unwrap()]));
             }
+            let mt = root.join("target/mapstest");
+            if Command::new("gcc").args(["-O1", "-pthread", "-o", mt.to_str().unwrap(), root.join("xtask/testdata/mapstest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} mapstest", mt.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             let shim = root.join("target/openssl-shim");
             if Command::new("gcc").args(["-O1", "-o", shim.to_str().unwrap(), root.join("xtask/testdata/openssl-shim.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} openssl-shim", shim.to_str().unwrap()), img.to_str().unwrap()]));
@@ -1824,7 +1832,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -1915,7 +1923,7 @@ fn disk_image() -> PathBuf {
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
@@ -5185,7 +5193,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -7240,7 +7248,7 @@ fn desk_menu_test(img: &Path) {
         goto(38, 784);                       // Start
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
-        goto(262, 534);                      // "D" toggle of the Terminal row: pin to the desktop (8 rows: 5 programs + quit/restart/shut down)
+        goto(262, 506);                      // "D" toggle of the Terminal row: pin to the desktop (9 rows: 6 programs + quit/restart/shut down)
         click(&tsock);
         std::thread::sleep(ms(1500));        // the compositor re-reads /desktop.conf
         goto(700, 300);                      // a click on empty desktop closes the menu
@@ -7248,13 +7256,13 @@ fn desk_menu_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
         goto(38, 784);                       // Start again, then the Terminal row itself
         click(&tsock);
-        goto(238, 590);                      // "T" toggle of the Text editor row (third): pin to the taskbar
+        goto(238, 590);                      // "T" toggle of the Text editor row (fourth): pin to the taskbar
         click(&tsock);
-        goto(262, 646);                      // "D" toggle of the Win32 demo row (fifth)
+        goto(262, 646);                      // "D" toggle of the Win32 demo row (sixth)
         click(&tsock);
         std::thread::sleep(ms(1500));
         mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
-        goto(80, 534);
+        goto(80, 506);
         click(&tsock);
         if wait_for(&tlog, "term ready", 40) {
             std::thread::sleep(ms(1500));
@@ -7392,6 +7400,45 @@ fn desk_files_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-files-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-soft-test`: the software centre loads a small package index, filters it by the prefilled query
+/// ("tree": two matches) and highlights the first row.
+fn desk_soft_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/desksoft-serial.log");
+    let sock = root.join("target/desksoft-mon.sock");
+    let shot = root.join("target/desksoft.ppm");
+    for f in [&log, &sock, &shot] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+    std::thread::spawn(move || {
+        if !wait_for(&tlog, "soft ready", 200) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(2000));
+        mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+    });
+    let _ = boot_and_run(img, "desksoft", "/busybox sh /desk-soft.sh", "desk ok:", 200);
+    // window at (100,80); rows start at content y 56: row 0 selected (0x364868), row 1 plain, row 2 empty (0x1c1c26)
+    let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+        let (w, h, d) = read_ppm(&shot)?;
+        (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+    };
+    let row0 = px(500, 80 + 56 + 9) == Some((0x36, 0x48, 0x68));
+    let row1 = px(500, 80 + 56 + 18 + 9) == Some((0x1c, 0x1c, 0x26));
+    let row2 = px(500, 80 + 56 + 36 + 9) == Some((0x1c, 0x1c, 0x26));
+    // text pixels in the two result rows: the name column has bright glyphs
+    let text = |y0: usize| (0..120).any(|dx| px(140 + dx, y0).is_some_and(|c| c.0 > 200 && c.1 > 200));
+    let has_text = (0..16).any(|dy| text(80 + 56 + dy)) && (0..16).any(|dy| text(80 + 56 + 18 + dy));
+    if row0 && row1 && row2 && has_text {
+        println!("desk-soft-test PASSED: the software centre filters the package index and lists the two matches");
+    } else {
+        eprintln!("  row0 {row0} row1 {row1} row2 {row2} text {has_text}");
+        eprintln!("desk-soft-test FAILED");
         exit(1);
     }
 }

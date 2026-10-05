@@ -64,3 +64,5 @@ Tests: `cargo xtask desk-test | desk-kbd-test | desk-term-test | desk-panel-test
 - **Aufgabenleiste:** die Leiste unten zeigt neben den angehefteten Programmen jedes offene Fenster als Knopf (in der Reihenfolge des Öffnens, das aktive hell); ein Klick holt das Fenster nach vorn.
 - Neue Programme: `thos-pkg update` und `thos-pkg install <Paket>` (Debian-Archiv, Abhängigkeiten werden mitinstalliert); danach erscheinen sie im Startmenü, wenn sie einen Desktop-Eintrag mitbringen.
 - Tests: `desk-tasklist-test`, `desk-files-test`, `desk-menu-test`, `pkg-test` (alle in der Suite), `pkg-repo-test` (braucht Internet).
+- **Software** (`thossoft`, Startmenü): durchsucht den Debian-Paketindex (`thos-pkg update` einmalig vorher; der Knopf „Enter" ohne Index startet das). Tippen = suchen, Pfeiltasten/Doppelklick/Enter = installieren (oder entfernen, wenn schon installiert; `[*]` markiert Installiertes). Test: `desk-soft-test`.
+- Text-Webbrowser: `thos-pkg install w3m` (mit Netz; im Test `pkg-apps-test` zusammen mit htop, jq, ripgrep, nano geprüft).

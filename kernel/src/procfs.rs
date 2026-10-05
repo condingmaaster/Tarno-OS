@@ -207,8 +207,9 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         ["mounts"] => file(path, "rootfs / ext2 rw 0 0\n".to_string()),
         [pid] => {
             by_pid(pid)?;
-            dir(&[("stat", DT_REG), ("status", DT_REG), ("cmdline", DT_REG), ("exe", DT_REG)])
+            dir(&[("stat", DT_REG), ("status", DT_REG), ("cmdline", DT_REG), ("exe", DT_REG), ("maps", DT_REG)])
         }
+        [pid, "maps"] => file(path, by_pid(pid)?.space().maps_text(None)),
         [pid, "stat"] => file(path, pid_stat(&*by_pid(pid)?)),
         [pid, "status"] => file(path, pid_status(&*by_pid(pid)?)),
         [pid, "cmdline"] => {

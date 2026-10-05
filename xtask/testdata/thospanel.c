@@ -105,6 +105,7 @@ static void build_apps(void) {
     napps = 0;
     add_app("Terminal", "");
     add_app("Files", "/thosfiles");
+    add_app("Software", "/thossoft");
     add_app("Text editor", "/thostext");
     add_app("Foot terminal", "/usr/bin/foot");
     add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
