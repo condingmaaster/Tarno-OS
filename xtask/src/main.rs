@@ -787,6 +787,10 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-tasklist-test" => {
+            let img = prod_interactive_image(cmd);
+            desk_tasklist_test(&img);
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -1791,7 +1795,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5122,7 +5126,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -7216,6 +7220,64 @@ fn desk_menu_test(img: &Path) {
             eprintln!("  {l}");
         }
         eprintln!("desk-menu-test FAILED");
+        exit(1);
+    }
+}
+
+/// `cargo xtask desk-tasklist-test`: two windows open; the panel lists both as buttons (the newest lit);
+/// a click on the other one's button raises that window and moves the highlight.
+fn desk_tasklist_test(img: &Path) {
+    let root = workspace_root();
+    let log = root.join("target/desktask-serial.log");
+    let sock = root.join("target/desktask-mon.sock");
+    let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/desktask-{i}.ppm"))).collect();
+    for f in shots.iter().chain([&log, &sock]) {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    std::thread::spawn(move || {
+        let ms = std::time::Duration::from_millis;
+        if !wait_for(&tlog, "win 3 ready", 200) {
+            return;
+        }
+        std::thread::sleep(ms(2500));
+        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        // the Alpha button is the first after the pinned Terminal (x ~ 176..236): click it
+        let (mut rx, mut ry) = (200 - 640, 784 - 400);
+        while rx != 0 || ry != 0 {
+            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+            mon(&tsock, &format!("mouse_move {sx} {sy}"));
+            rx -= sx;
+            ry -= sy;
+        }
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 1");
+        std::thread::sleep(ms(300));
+        mon(&tsock, "mouse_button 0");
+        std::thread::sleep(ms(1500));
+        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+    });
+    let out = boot_and_run(img, "desktask", "/busybox sh /desk-tasklist.sh", "desk ok:", 200);
+    // the first two task buttons sit at x 176..236 and 242..302; sample their left edge (below the text rows)
+    let kind = |n: usize, x: usize| -> Option<u8> {
+        let (w, h, d) = read_ppm(&shots[n])?;
+        if h < 790 || x >= w {
+            return None;
+        }
+        let c = (d[(775 * w + x) * 3] as i32, d[(775 * w + x) * 3 + 1] as i32, d[(775 * w + x) * 3 + 2] as i32);
+        let dist = |a: (i32, i32, i32), b: (i32, i32, i32)| (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs();
+        if dist(c, (0x56, 0x6a, 0x94)) < 40 || dist(c, (0x6a, 0x7f, 0xa8)) < 40 { Some(2) } else if dist(c, (0x3a, 0x3a, 0x4c)) < 24 || dist(c, (0x44, 0x44, 0x58)) < 24 { Some(1) } else { Some(0) }
+    };
+    let (a, b) = ((kind(0, 184), kind(0, 250)), (kind(1, 184), kind(1, 250)));
+    let ok = a == (Some(1), Some(2)) && b == (Some(2), Some(1));
+    if ok {
+        println!("desk-tasklist-test PASSED: the panel lists the open windows, lights the focused one, and a click on a button raises that window");
+    } else {
+        eprintln!("  before {a:?}, after {b:?} (1 = dim, 2 = lit)");
+        for l in out.lines().filter(|l| l.contains("win") || l.contains("panel") || l.contains("desk")) {
+            eprintln!("  {l}");
+        }
+        eprintln!("desk-tasklist-test FAILED");
         exit(1);
     }
 }

@@ -41,6 +41,11 @@ int main(int argc, char **argv) {
     shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg cm = { WL_COMMIT, 0, 0, (uint32_t)w, (uint32_t)h };
     (void)!write(s, &cm, sizeof cm);
+    if (argc >= 7) {                                  /* an optional title (shown in the panel's task list) */
+        struct wl_msg tm = { WL_TITLE, 0, 0, 0, 0 };
+        memcpy(&tm.a, argv[6], strlen(argv[6]) < 16 ? strlen(argv[6]) : 16);
+        (void)!write(s, &tm, sizeof tm);
+    }
     printf("win %u ready\n", m.a);
     fflush(stdout);
     while (read(s, &m, sizeof m) == (ssize_t)sizeof m)

@@ -37,7 +37,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -46,6 +46,7 @@ static uint8_t *fbmap;
 static uint32_t *bb;                     /* back buffer, W*H */
 static uint32_t rs, gs, bs;
 static int mx, my, quit;
+static int winlist_dirty;               /* the task list of the panel needs sending */
 static int last_icon = -1;
 static unsigned long long last_icon_ms;
 static int drag, dx0, dy0;                       /* a window move in progress (titlebar, or asked for by the client) */
@@ -371,6 +372,7 @@ static void raise_win(int i) {
     struct win t = wins[i];
     memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof t);
     wins[nwin - 1] = t;
+    winlist_dirty = 1;
 }
 
 static void ws_send(unsigned kind, unsigned hwnd, unsigned a, unsigned b, unsigned c) {
@@ -386,12 +388,37 @@ static void remove_win(int i) {
     memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof wins[0]);
     nwin--;
     compose(f);
+    winlist_dirty = 1;
 }
 
 static int in(struct rect r, int x, int y) {
     return x >= r.x0 && x < r.x1 && y >= r.y0 && y < r.y1; }
 
 static struct rect uni(struct rect a, struct rect b);
+/* The panel (a client created with CREATE d bit 2) learns about the open windows: BEGIN(count), then one WIN per window
+   (a = id | focused << 31, b..d = 12 title characters), in creation order. */
+static int is_listed(struct win *w) { return w->deco && !w->menu && !w->popup && !w->taskbar; }
+static void send_winlist(void) {
+    int p = -1, n = 0, top = -1, idx[MAXWIN];
+    for (int i = 0; i < nwin; i++) { if (wins[i].taskbar) p = i; if (is_listed(&wins[i])) { idx[n++] = i; top = i; } }
+    if (p < 0) return;
+    for (int a = 1; a < n; a++)                       /* creation order (ids ascend), so the buttons keep their places */
+        for (int b = a; b > 0 && wins[idx[b]].id < wins[idx[b - 1]].id; b--) { int t = idx[b]; idx[b] = idx[b - 1]; idx[b - 1] = t; }
+    struct wl_msg bm = { WL_WINBEGIN, (uint32_t)n, 0, 0, 0 };
+    (void)!write(wins[p].fd, &bm, sizeof bm);
+    for (int k = 0; k < n; k++) {
+        int i = idx[k];
+        struct wl_msg m = { WL_WIN, (uint32_t)wins[i].id | (i == top ? 0x80000000u : 0), 0, 0, 0 };
+        char t[12] = { 0 };
+        memcpy(t, wins[i].title, 12);
+        memcpy(&m.b, t, 12);
+        (void)!write(wins[p].fd, &m, sizeof m);
+    }
+}
+static void raise_win(int i);
+static struct win *win_by_id(int id);
+struct wlsurf;
+static void wls_focus_keyboard(struct wlsurf *s);
 static void on_client(int i) {
     struct wl_msg m;
     ssize_t n = read(wins[i].fd, &m, sizeof m);
@@ -399,7 +426,19 @@ static void on_client(int i) {
     if (m.op == WL_TITLE) {
         memcpy(wins[i].title, &m.a, 16);
         wins[i].title[16] = 0;
+        winlist_dirty = 1;
         compose(frame_of(&wins[i]));
+    } else if (m.op == WL_RAISE) {                      /* the panel's task list asks for a window */
+        struct win *t = win_by_id((int)m.a);
+        if (t && is_listed(t)) {
+            int ot = wins[nwin - 1].id, ti = (int)(t - wins);
+            if (ti != nwin - 1) raise_win(ti);
+            struct win *o = win_by_id(ot);
+            if (o) compose(outer_of(o));
+            compose(outer_of(&wins[nwin - 1]));
+            if (wins[nwin - 1].wl) wls_focus_keyboard(wins[nwin - 1].wl);
+            winlist_dirty = 1;
+        }
     } else if (m.op == WL_POS) {
         struct rect old = outer_of(&wins[i]);
         wins[i].x = (int)m.a; wins[i].y = (int)m.b;
@@ -533,7 +572,8 @@ static void on_new_client(int ls) {
     int k = next_id - 1;
     *w = (struct win){ c, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), (int)m.a, (int)m.b, p };
     w->deco = !(m.d & 1);
-    w->menu = (m.d & 2) != 0;      /* a start-menu surface: closed by a click anywhere outside it */
+    w->menu = (m.d & 2) != 0;
+    w->taskbar = (m.d & 4) != 0;   /* the panel: told about the open windows */      /* a start-menu surface: closed by a click anywhere outside it */
     if (!w->deco) { w->x = 0; w->y = 0; }
     struct wl_msg r = { WL_CREATED, (uint32_t)w->id, (uint32_t)W, (uint32_t)H, 0 };
     (void)!write(c, &r, sizeof r);
@@ -541,6 +581,7 @@ static void on_new_client(int ls) {
     fflush(stdout);
     if (w->deco) w->fade = 200;
     compose(outer_of(w));
+    winlist_dirty = 1;
 }
 
 int main(int argc, char **argv) {
@@ -594,6 +635,7 @@ int main(int argc, char **argv) {
         wls_tick();
         anim_tick();
         icons_poll();
+        if (winlist_dirty) { winlist_dirty = 0; send_winlist(); }
         if (pr == 0) { if (now_ms() - last_act > 120000) idle = 1200; continue; }
         last_act = now_ms();
         if (nwl) wls_dispatch_poll(&p[wbase], nwl);

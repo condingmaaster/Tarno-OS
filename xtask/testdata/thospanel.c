@@ -31,6 +31,10 @@ static int nbar, ndsk, napps;
 static int bx0[MAXB], bx1[MAXB];
 #define PANEL_USER "/tmp/panel.conf"
 #define DESK_USER "/tmp/desktop.conf"
+struct tbw { uint32_t id; int focused, x0, x1; char title[13]; };
+#define MAXT 12
+static struct tbw tbs[MAXT], tbs_new[MAXT];
+static int ntb, ntb_new, ntb_expect;
 #define START_X0 8
 #define START_X1 68
 
@@ -131,6 +135,19 @@ static void draw_bar(void) {
         rbox(px, PW, bx0[i], 4, bx1[i], PH - 4, 5, 0x00467bb8, 0x00386aa5);
         gfx_str(px, PW, PH, bx0[i] + 10, 8, bar[i].label, 0x00ffffff, 0xFFFFFFFFu);
         x = bx1[i] + 8;
+    }
+    /* the open windows: a darker button each, the focused one lit */
+    int x = nbar ? bx1[nbar - 1] + 8 : START_X1 + 8;
+    if (ntb) { for (int y = 6; y < PH - 6; y++) px[y * PW + x] = 0x00505068; x += 8; }
+    for (int i = 0; i < ntb; i++) {
+        int w = 20 + 8 * (int)strlen(tbs[i].title);
+        if (w < 60) w = 60;
+        if (x + w > PW - 90) { tbs[i].x0 = tbs[i].x1 = 0; continue; }
+        tbs[i].x0 = x; tbs[i].x1 = x + w;
+        if (tbs[i].focused) rbox(px, PW, x, 4, x + w, PH - 4, 5, 0x006a7fa8, 0x00566a94);
+        else rbox(px, PW, x, 4, x + w, PH - 4, 5, 0x00444458, 0x003a3a4c);
+        gfx_str(px, PW, PH, x + 10, 8, tbs[i].title, tbs[i].focused ? 0x00ffffff : 0x00c0c0d0, 0xFFFFFFFFu);
+        x += w + 6;
     }
 }
 
@@ -239,7 +256,7 @@ int main(void) {
     ndsk = load_list(access(DESK_USER, F_OK) == 0 ? DESK_USER : "/desktop.conf", dsk, MAXD);
 
     draw_bar();
-    m = (struct wl_msg){ WL_CREATE, PW, PH, (uint32_t)key, 1 };
+    m = (struct wl_msg){ WL_CREATE, PW, PH, (uint32_t)key, 5 };     /* undecorated + wants the task list */
     (void)!write(s, &m, sizeof m);
     if (read(s, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("panel FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
@@ -300,6 +317,21 @@ int main(void) {
         if (!(pf[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
         if (read(s, &m, sizeof m) != (ssize_t)sizeof m) break;
         if (m.op == WL_CLOSE) break;
+        if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; draw_bar(); shown = -1; cm = (struct wl_msg){ WL_COMMIT, 0, 0, PW, PH }; (void)!write(s, &cm, sizeof cm); } continue; }
+        if (m.op == WL_WIN) {
+            if (ntb_new < MAXT) {
+                tbs_new[ntb_new].id = m.a & 0x7fffffffu; tbs_new[ntb_new].focused = (m.a >> 31) & 1;
+                memcpy(tbs_new[ntb_new].title, &m.b, 12); tbs_new[ntb_new].title[12] = 0;
+                ntb_new++;
+            }
+            if (--ntb_expect <= 0) {
+                memcpy(tbs, tbs_new, sizeof tbs); ntb = ntb_new;
+                draw_bar(); shown = -1;
+                cm = (struct wl_msg){ WL_COMMIT, 0, 0, PW, PH };
+                (void)!write(s, &cm, sizeof cm);
+            }
+            continue;
+        }
         if (m.op == WL_POINTER) {
             if ((int)m.a >= START_X0 && (int)m.a < START_X1) {
                 if (mfd >= 0) menu_close();
@@ -308,6 +340,8 @@ int main(void) {
             }
             for (int i = 0; i < nbar; i++)
                 if ((int)m.a >= bx0[i] && (int)m.a < bx1[i]) { launch(bar[i].cmd); break; }
+            for (int i = 0; i < ntb; i++)
+                if (tbs[i].x1 && (int)m.a >= tbs[i].x0 && (int)m.a < tbs[i].x1) { struct wl_msg r = { WL_RAISE, tbs[i].id, 0, 0, 0 }; (void)!write(s, &r, sizeof r); break; }
         }
     }
     return 0;

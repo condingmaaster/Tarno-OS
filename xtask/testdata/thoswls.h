@@ -219,6 +219,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
             w->x -= s->gx; w->y -= s->gy;
         }
         memcpy(w->title, s->title, sizeof w->title);
+        winlist_dirty = 1;
         /* big windows (a browser) must not hang off the screen */
         { int top = w->deco ? TITLE : 0, ow = w->w + (w->deco ? 2 * BORDER : 0), oh = w->h + (w->deco ? TITLE + BORDER : 0);
           if (!s->is_popup) {
@@ -764,7 +765,7 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             if (m_str(m, t, sizeof t) < 0) break;
             memset(s->title, 0, sizeof s->title); memcpy(s->title, t, 16);
             struct win *w = s->winid ? win_by_id(s->winid) : 0;
-            if (w) { memcpy(w->title, s->title, sizeof w->title); compose(frame_of(w)); }
+            if (w) { memcpy(w->title, s->title, sizeof w->title); compose(frame_of(w)); winlist_dirty = 1; }
         } else if (op == 5) {                             /* move(seat, serial) */
             if (s->winid) desk_begin_move(s->winid);
         } else if (op == 6) {                             /* resize(seat, serial, edges) */
