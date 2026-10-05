@@ -1334,11 +1334,16 @@ impl Task {
     /// Install `obj` at the lowest free descriptor, with the given cloexec flag.
     pub fn handle_alloc(&self, obj: HandleObject, cloexec: bool) -> i32 {
         let mut fds = self.fds.lock();
+        // Handle 0 is NULL to Windows code: events, mutants, sections and keys never take slot 0 (a closed stdin would otherwise hand it out)
+        let start = if matches!(obj, HandleObject::File(_)) { 0 } else { 1 };
+        while fds.len() < start {
+            fds.push(None);
+        }
         let entry = Some(FdEntry { obj, cloexec });
-        match fds.iter().position(|f| f.is_none()) {
+        match fds.iter().skip(start).position(|f| f.is_none()) {
             Some(i) => {
-                fds[i] = entry;
-                i as i32
+                fds[i + start] = entry;
+                (i + start) as i32
             }
             None => {
                 fds.push(entry);

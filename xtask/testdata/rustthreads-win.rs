@@ -33,5 +33,13 @@ fn main() {
     }
     let r = std::panic::catch_unwind(|| { let v: Vec<i32> = Vec::new(); v[3] });
     println!("caught panic: {}", r.is_err());
+    match std::process::Command::new("C:\\whello.exe").arg("from-rust").status() {
+        Ok(st) => println!("child status code={:?}", st.code()),
+        Err(e) => println!("child spawn error {:?}", e),
+    }
+    match std::process::Command::new("C:\\whello.exe").arg("captured").output() {
+        Ok(o) => println!("child output code={:?} stdout={:?}", o.status.code(), String::from_utf8_lossy(&o.stdout).trim()),
+        Err(e) => println!("child output error {:?}", e),
+    }
     println!("rustthreads-done");
 }

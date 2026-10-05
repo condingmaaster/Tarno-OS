@@ -114,6 +114,7 @@ static int lw(int c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; }
 EXPORT int WINAPI lstrcmpiA(const char *a, const char *b) { while (*a && lw((unsigned char)*a) == lw((unsigned char)*b)) { a++; b++; } return lw((unsigned char)*a) - lw((unsigned char)*b); }
 
 /* ---- files ---- */
+static HANDLE pipe_client_open(const char *name, u32 access);
 /* CreateFileA with every disposition (the kernel's built-in one only opens existing files). */
 /* The kernel's built-in CreateFileA (CD-ROM / FAT drives, \\Device\\ names): found by walking the export
    directory of the built-in kernel32 module, since importing it by name would find this very function. */
@@ -138,6 +139,8 @@ static create_file_t real_create_file(void) {
     return 0;
 }
 EXPORT HANDLE WINAPI CreateFileA(const char *name, u32 access, u32 share, void *sa, u32 disp, u32 flags, HANDLE tmpl) {
+    { HANDLE ph = pipe_client_open(name, access); if (ph != INVALID_HANDLE) return ph; }
+    if (lstrcmpiA(name, "\\\\.\\NUL") == 0) name = "NUL";                               /* the NUL device in its device-path form */
     /* other drives and device names belong to the kernel's own implementation */
     if ((name[0] && name[1] == ':' && lw((unsigned char)name[0]) != 'c') || name[0] == '\\') {
         create_file_t rf = real_create_file();
@@ -816,7 +819,6 @@ EXPORT u32 WINAPI GetFinalPathNameByHandleW(HANDLE h, u16 *buf, u32 size, u32 fl
 EXPORT BOOL WINAPI LockFileEx(HANDLE h, u32 f, u32 r, u32 lo, u32 hi, void *ov) { (void)h; (void)f; (void)r; (void)lo; (void)hi; (void)ov; return 1; }
 EXPORT BOOL WINAPI UnlockFile(HANDLE h, u32 a, u32 b, u32 c, u32 d) { (void)h; (void)a; (void)b; (void)c; (void)d; return 1; }
 EXPORT BOOL WINAPI CancelIo(HANDLE h) { (void)h; return 1; }
-EXPORT BOOL WINAPI GetOverlappedResult(HANDLE h, void *ov, u32 *n, BOOL wait) { (void)h; (void)ov; (void)n; (void)wait; SetLastError(6); return 0; }
 EXPORT BOOL WINAPI ReadFileEx(HANDLE h, void *b, u32 n, void *ov, void *cb) { (void)h; (void)b; (void)n; (void)ov; (void)cb; SetLastError(120); return 0; }
 EXPORT BOOL WINAPI WriteFileEx(HANDLE h, const void *b, u32 n, void *ov, void *cb) { (void)h; (void)b; (void)n; (void)ov; (void)cb; SetLastError(120); return 0; }
 EXPORT BOOL WINAPI CopyFileExW(const u16 *a, const u16 *b, void *cb, void *d, BOOL *cancel, u32 flags) { (void)cb; (void)d; (void)cancel; return CopyFileW(a, b, (flags & 1) != 0); }
@@ -1112,5 +1114,54 @@ EXPORT BOOL WINAPI CreateProcessW(const u16 *app, u16 *cmd, void *pa, void *ta, 
     return create_process(app ? a : 0, cmd ? c : 0, si, 1, pi);
 }
 EXPORT BOOL WINAPI GetStdHandle_dummy_unused(void) { return 0; }
+
+
+/* ======================================================================================================
+   Named pipes, just enough for anonymous pipes of the Rust standard library (\\.\pipe\__rust_anonymous_pipe1__...):
+   CreateNamedPipeW makes a POSIX pipe and returns the server end; CreateFile on the same name hands out the other end.
+   Overlapped reads and writes complete at once (synchronously), signalling the OVERLAPPED's event.
+   ====================================================================================================== */
+static struct { char name[100]; int rfd, wfd, used; } npipes[16];
+static int is_pipe_name(const char *n) { return n[0] == '\\' && n[1] == '\\' && (n[2] == '.' || n[2] == '?') && n[3] == '\\' && n[4] == 'p' && n[5] == 'i' && n[6] == 'p' && n[7] == 'e' && n[8] == '\\'; }
+EXPORT HANDLE WINAPI CreateNamedPipeW(const u16 *wname, u32 openmode, u32 pipemode, u32 maxinst, u32 outbuf, u32 inbuf, u32 timeout, void *sa) {
+    (void)pipemode; (void)maxinst; (void)outbuf; (void)inbuf; (void)timeout; (void)sa;
+    char name[256]; w2a(wname, name, sizeof name);
+    if (!is_pipe_name(name) || (openmode & 3) == 3) { SetLastError(87); return INVALID_HANDLE; }
+    int slot = -1; for (int i = 0; i < 16; i++) if (!npipes[i].used) { slot = i; break; }
+    if (slot < 0) { SetLastError(8); return INVALID_HANDLE; }
+    int fds[2]; if (sc3(22, fds, 0, 0) < 0) { SetLastError(8); return INVALID_HANDLE; }
+    cpy(npipes[slot].name, name, sizeof npipes[slot].name); npipes[slot].rfd = fds[0]; npipes[slot].wfd = fds[1]; npipes[slot].used = 1;
+    return (HANDLE)(i64)((openmode & 3) == 1 ? fds[0] : fds[1]);         /* PIPE_ACCESS_INBOUND: the server reads */
+}
+static HANDLE pipe_client_open(const char *name, u32 access) {
+    if (!is_pipe_name(name)) return INVALID_HANDLE;
+    for (int i = 0; i < 16; i++) if (npipes[i].used && lstrcmpiA(npipes[i].name, name) == 0) {
+        int fd = (access & 0x40000000u) ? npipes[i].wfd : npipes[i].rfd;
+        npipes[i].used = 0; return (HANDLE)(i64)fd;
+    }
+    SetLastError(2); return INVALID_HANDLE;
+}
+EXPORT BOOL WINAPI SetNamedPipeHandleState(HANDLE h, u32 *mode, u32 *cc, u32 *to) { (void)h; (void)mode; (void)cc; (void)to; return 1; }
+EXPORT BOOL WINAPI PeekNamedPipe(HANDLE h, void *buf, u32 n, u32 *got, u32 *avail, u32 *left) {
+    int cnt = 0; if (sc3(16, (i64)h, 0x541B, &cnt) < 0) { SetLastError(6); return 0; }
+    if (got) *got = 0; if (avail) *avail = (u32)cnt; if (left) *left = 0; (void)buf; (void)n; return 1;
+}
+EXPORT BOOL WINAPI GetOverlappedResult(HANDLE h, u64 *ov, u32 *n, BOOL wait) { (void)h; (void)wait; if (n) *n = (u32)ov[1]; return 1; }
+
+EXPORT BOOL WINAPI ReadFile(HANDLE h, void *buf, u32 n, u32 *got, u64 *ov) {
+    i64 r = sc3(S_READ, (i64)h, buf, n);
+    if (r < 0) { SetLastError(r == -9 ? 6 : 5); return 0; }
+    if (r == 0 && n > 0) { unsigned char st[144]; if (sc3(5, (i64)h, st, 0) == 0 && (*(u32 *)(st + 24) & 0xF000) == 0x1000) { if (got) *got = 0; SetLastError(109); return 0; } }
+    if (got) *got = (u32)r;
+    if (ov) { ov[0] = 0; ov[1] = (u64)r; { HANDLE ev = (HANDLE)ov[3]; if (ev) SetEvent(ev); } }
+    return 1;
+}
+EXPORT BOOL WINAPI WriteFile(HANDLE h, const void *buf, u32 n, u32 *put, u64 *ov) {
+    i64 r = sc3(S_WRITE, (i64)h, buf, n);
+    if (r < 0) { SetLastError(r == -32 ? 232 : r == -9 ? 6 : 5); return 0; }
+    if (put) *put = (u32)r;
+    if (ov) { ov[0] = 0; ov[1] = (u64)r; { HANDLE ev = (HANDLE)ov[3]; if (ev) SetEvent(ev); } }
+    return 1;
+}
 
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }

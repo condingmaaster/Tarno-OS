@@ -769,7 +769,7 @@ fn main() {
             let out = boot_and_run(&img, "winrt", "/busybox sh /winrt.sh", "winrt-done", 150);
             let ok = out.contains("wsock-done") && out.contains("ws server got 17: ping-over-winsock") && out.contains("ws client got pong select=1") && out.contains("ws getaddrinfo=0 port=80")
                 && out.contains("cproc windows-child waited=1 code=7 | elf-child waited=1 code=0") && out.contains("from-elf-child") && out.contains("hello from win32 3 one") && out.contains("cproc missing program refused=1")
-                && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done") && out.contains("threads total=2000") && out.contains("channel got [0, 1, 4, 9, 16]") && out.contains("caught panic: true") && out.contains("rustthreads-done");
+                && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done") && out.contains("threads total=2000") && out.contains("channel got [0, 1, 4, 9, 16]") && out.contains("child status code=Some(7)") && out.contains("child output code=Some(7) stdout=\"hello from win32 2 captured\"") && out.contains("caught panic: true") && out.contains("rustthreads-done");
             if ok {
                 println!("winrt-test PASSED: Winsock over loopback and a real Rust program built for x86_64-pc-windows-gnu (std: heap, files, environment, random, stdout, threads, mutex, channels, panics caught by catch_unwind) run");
             } else {
