@@ -165,7 +165,7 @@ static unsigned long long ms_now(void) {
     clock_gettime(CLOCK_MONOTONIC, &t);
     return (unsigned long long)t.tv_sec * 1000 + (unsigned long long)t.tv_nsec / 1000000;
 }
-#define ROWS (napps + 1)            /* the programs, then "Quit desktop" */
+#define ROWS (napps + 3)            /* the programs, then "Quit desktop", "Restart", "Shut down" */
 static void draw_toggle(int x, int y, int on, char letter) {
     for (int j = 0; j < 18; j++)
         for (int i = 0; i < 20; i++) {
@@ -182,10 +182,10 @@ static void draw_menu(void) {
     gfx_str(mpx, M_W, mh, 12, 7, "THOS", 0x00ffffff, 0xFFFFFFFFu);
     for (int r = 0; r < ROWS; r++) {
         int y = M_HEAD + r * M_ROW;
-        if (r == napps) {
-            for (int i = 1; i < M_W - 1; i++) mpx[y * M_W + i] = 0x00606078;
-            gfx_str(mpx, M_W, mh, 12, y + 6, "Quit desktop", 0x00ff9090, 0xFFFFFFFFu);
-            break;
+        if (r >= napps) {
+            if (r == napps) for (int i = 1; i < M_W - 1; i++) mpx[y * M_W + i] = 0x00606078;
+            gfx_str(mpx, M_W, mh, 12, y + 6, r == napps ? "Quit desktop" : r == napps + 1 ? "Restart" : "Shut down", 0x00ff9090, 0xFFFFFFFFu);
+            continue;
         }
         gfx_str(mpx, M_W, mh, 12, y + 6, apps[r].label, 0x00eeeeee, 0xFFFFFFFFu);
         draw_toggle(M_W - 52, y + 5, find(bar, nbar, apps[r].label) >= 0, 'T');
@@ -291,11 +291,17 @@ int main(void) {
             if (m.op != WL_POINTER || m.c != 1) continue;
             int x = (int)m.a, y = (int)m.b, r = (y - M_HEAD) / M_ROW;
             if (y < M_HEAD || r >= ROWS) continue;
-            if (r == napps) {                                 /* Quit desktop */
+            if (r >= napps) {
                 menu_close();
-                int q = sock_connect();
-                struct wl_msg qm = { WL_QUIT, 0, 0, 0, 0 };
-                if (q >= 0) (void)!write(q, &qm, sizeof qm);
+                if (r == napps) {                             /* Quit desktop */
+                    int q = sock_connect();
+                    struct wl_msg qm = { WL_QUIT, 0, 0, 0, 0 };
+                    if (q >= 0) (void)!write(q, &qm, sizeof qm);
+                } else if (fork() == 0) {                     /* Restart / Shut down: the power tools in /bin */
+                    sync();
+                    execl(r == napps + 1 ? "/bin/reboot" : "/bin/poweroff", r == napps + 1 ? "reboot" : "poweroff", (char *)0);
+                    _exit(127);
+                }
                 continue;
             }
             if (x >= M_W - 54) {                              /* a pin toggle */
