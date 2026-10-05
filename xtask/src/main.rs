@@ -777,6 +777,18 @@ fn main() {
                 exit(1);
             }
         }
+        "pkg-apps-test" => {
+            // needs the internet: a few real terminal programs from the Debian archive
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pkgapps", "/busybox sh /pkg-apps.sh", "pkg-apps-done", 1500);
+            if out.contains("htop 3.") && out.contains("jq-1.") && out.contains("ripgrep 14.") && out.contains("GNU nano, version") && out.contains("pkg-apps-done") {
+                println!("pkg-apps-test PASSED: htop, jq, ripgrep (Rust, PCRE2) and nano installed from the Debian archive with their libraries and run");
+            } else {
+                for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(40).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
+                eprintln!("pkg-apps-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
@@ -1812,7 +1824,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));

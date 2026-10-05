@@ -180,7 +180,7 @@ cmd_install_repo() {
         install_one "$cur" || return 1
         todo="$todo $deps"
     done
-    echo "installed $FIRST (programs are in /opt/root/usr/bin, /opt/root/bin; they are on PATH after the next login)"
+    echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
 }
 
 cmd_installed() { for f in $DB/*.list; do [ -f "$f" ] && { n=${f##*/}; echo "${n%.list}"; }; done; }

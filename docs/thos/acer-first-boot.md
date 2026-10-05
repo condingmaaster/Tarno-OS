@@ -39,7 +39,7 @@ Danach: Administratorkonto anlegen, anmelden, `desktop` tippen (Compositor + Ter
   Der Stick lässt sich danach an einem anderen Rechner lesen (ext2, Volume `THOSROOT`); die Datei ist die Grundlage, um `hw-target.md` mit echten Acer-Daten zu füllen und Treiberfehler zu finden.
 - **Programme aus dem Debian-Archiv** (Netz nötig): `thos-pkg update` (lädt und indiziert die Paketliste, ca. 10 MB, dauert ein paar Minuten),
   danach `thos-pkg search <Wort>` und `thos-pkg install <Paketname>`; Abhängigkeiten werden mitinstalliert, Prüfsummen gegen den Index geprüft, alles landet in `/opt/root`
-  (`/opt/root/usr/bin` steht im PATH, Bibliotheken über `LD_LIBRARY_PATH`). Beispiel: `thos-pkg install tree` (im Test `pkg-repo-test` mit dem echten Archiv geprüft).
+  (`/opt/root/usr/bin` steht im PATH, Bibliotheken über `LD_LIBRARY_PATH`). Beispiele, die mit dem echten Archiv laufen (`pkg-repo-test`, `pkg-apps-test`): `tree`, `htop`, `jq`, `ripgrep`, `nano`.
   **Grenzen:** die Paketliste wird ohne Signaturprüfung geholt (keine GPG-Prüfung; auch ssl_client prüft keine Zertifikate) — also nur in vertrauenswürdigen Netzen; Programme mit sehr vielen Abhängigkeiten (GTK, Qt) sind nicht das Ziel.
 - Eigene Dateien: `thos-pkg install <Datei-oder-URL>` entpackt `.deb`, `.rpm`, `.zip`, `.tar.gz/.xz/.bz2` oder eine `.exe` nach `/opt/<Name>` und legt Einträge im Startmenü an (`thos-pkg list`, `thos-pkg remove <Name>`).
   `.msi` wird abgelehnt (noch nicht unterstützt).
