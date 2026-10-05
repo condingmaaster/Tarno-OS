@@ -1218,6 +1218,21 @@ const QEMU_SUCCESS: i32 = 33;
 /// `/init` and `/child`, attached over AHCI. Rebuilt when a source or this
 /// xtask changes. Needs `as`, `ld`, `mke2fs`, `debugfs` on PATH.
 /// Root filesystem size in MiB (`THOS_FS_MIB`, default 128; bigger images skip the ESP/scratch area).
+/// `boot/limine.conf`, plus `resolution: WxH` when `THOS_RES` is set (to try the desktop at the Acer's 1366x768).
+fn limine_conf(root: &Path) -> PathBuf {
+    let src = root.join("boot/limine.conf");
+    let Ok(res) = std::env::var("THOS_RES") else { return src };
+    let text = std::fs::read_to_string(&src).expect("read limine.conf").replace("    protocol: limine\n", &format!("    protocol: limine\n    resolution: {res}\n"));
+    let out = root.join("target/limine-res.conf");
+    std::fs::write(&out, text).expect("write limine conf");
+    // mcopy keeps the file name, so give it the right one
+    let dir = root.join("target/limine-res");
+    std::fs::create_dir_all(&dir).expect("mkdir");
+    let named = dir.join("limine.conf");
+    std::fs::copy(&out, &named).expect("copy");
+    named
+}
+
 fn fs_mib() -> u64 {
     std::env::var("THOS_FS_MIB").ok().and_then(|v| v.parse().ok()).unwrap_or(128)
 }
@@ -5122,7 +5137,7 @@ fn bios_image() -> PathBuf {
     for (src, dst) in [
         (limine.join("limine-bios.sys"), "::boot/"),
         (kernel_elf(), "::boot/"),
-        (root.join("boot/limine.conf"), "::boot/limine/"),
+        (limine_conf(&root), "::boot/limine/"),
     ] {
         run(Command::new("mcopy").args(["-i", b, src.to_str().unwrap(), dst]));
     }
