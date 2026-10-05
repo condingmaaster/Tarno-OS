@@ -3,6 +3,10 @@
 #   thos-pkg install <file-or-url> [name]     .deb .rpm .zip .tar.gz/.tgz/.tar.xz/.tar.bz2 .exe
 #   thos-pkg list
 #   thos-pkg remove <name>
+#   thos-pkg update                           fetch the Debian package index (needs the network)
+#   thos-pkg search <word>                    look a package up in the index
+#   thos-pkg install <name>                   a package from the Debian archive, with the libraries it needs
+#   thos-pkg installed                        what came from the archive (they share /opt/root)
 # Programs are unpacked as they are: libraries they need beyond what THOS ships must be in the package itself.
 # Start-menu entries live in /opt/apps.conf ("Label|command"); the panel picks them up when it starts.
 OPT=/opt
@@ -53,7 +57,11 @@ register() {
 
 cmd_install() {
     src=$1
-    [ -n "$src" ] || die "install what? (a file or an http/https URL)"
+    [ -n "$src" ] || die "install what? (a file, an http/https URL or a Debian package name)"
+    case "$src" in
+        */*|*.deb|*.rpm|*.zip|*.tar.*|*.tgz|*.exe|*.msi|*.txz) ;;
+        *) FIRST=$src; cmd_install_repo "$src"; return $? ;;
+    esac
     $B mkdir -p $OPT || die "cannot create $OPT"
     tmp=
     case "$src" in
@@ -95,6 +103,88 @@ cmd_install() {
     echo "installed $name in $dir"
 }
 
+# ---- the Debian archive ----
+MIRROR=http://deb.debian.org/debian
+INDEX_URL=http://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz
+IDX=$OPT/.index
+DB=$OPT/.db
+ROOT=$OPT/root
+# packages THOS already provides (the C library and friends) or that are only installer plumbing
+SKIP=" libc6 libc-bin libgcc-s1 gcc-14-base libstdc++6 debconf dpkg perl-base base-files base-passwd install-info libcrypt1 libgomp1 "
+
+cmd_update() {
+    $B mkdir -p $OPT $DB
+    echo "downloading the package index (about 10 MB)"
+    $B wget -q -O /tmp/Packages.xz "$INDEX_URL" || die "cannot download the index (network?)"
+    echo "building the local index (a minute or two)"
+    $B xzcat /tmp/Packages.xz | $B awk '
+        function flush(   d, n, i, p, o, first) {
+            if (name != "") {
+                d = dep; n = split(d, parts, ","); o = ""
+                for (i = 1; i <= n; i++) {
+                    p = parts[i]; sub(/\|.*/, "", p); sub(/\(.*/, "", p); sub(/:.*/, "", p); gsub(/[ \t]/, "", p)
+                    if (p != "") o = o " " p
+                }
+                print name "|" ver "|" file "|" sha "|" o "|" size "|" desc
+            }
+            name = ""; dep = ""; ver = ""; file = ""; sha = ""; size = ""; desc = ""
+        }
+        /^Package: /{ flush(); name = substr($0, 10) }
+        /^Version: /{ ver = substr($0, 10) }
+        /^Depends: /{ dep = substr($0, 10) }
+        /^Pre-Depends: /{ dep = (dep == "" ? "" : dep ", ") substr($0, 14) }
+        /^Filename: /{ file = substr($0, 11) }
+        /^SHA256: /{ sha = substr($0, 9) }
+        /^Size: /{ size = substr($0, 7) }
+        /^Description: /{ desc = substr($0, 14) }
+        END { flush() }' > $IDX.new || { $B rm -f $IDX.new /tmp/Packages.xz; die "indexing failed"; }
+    $B mv $IDX.new $IDX; $B rm -f /tmp/Packages.xz
+    echo "index ready: $($B wc -l < $IDX) packages"
+}
+
+cmd_search() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    $B grep -i -- "$1" $IDX | $B awk -F'|' '{ print $1 " " $2 " - " $7 }' | $B head -n 40
+}
+
+# the line of the index for a package
+idx_line() { $B grep -m1 "^$1|" $IDX; }
+
+install_one() {
+    name=$1
+    line=$(idx_line "$name")
+    [ -n "$line" ] || { echo "thos-pkg: $name is not in the archive index"; return 1; }
+    file=$(echo "$line" | $B cut -d'|' -f3); sha=$(echo "$line" | $B cut -d'|' -f4); size=$(echo "$line" | $B cut -d'|' -f6)
+    echo "  $name ($((size / 1024)) kB)"
+    $B wget -q -O /tmp/pkg-$$.deb "$MIRROR/$file" || { $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: download of $name failed"; return 1; }
+    got=$($B sha256sum /tmp/pkg-$$.deb | $B cut -d' ' -f1)
+    if [ "$got" != "$sha" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $name does not match the index"; return 1; fi
+    $B mkdir -p $ROOT $DB
+    $B dpkg-deb -c /tmp/pkg-$$.deb | $B awk '{ print $NF }' | $B sed 's|^\./||' > $DB/$name.list
+    $B dpkg-deb -x /tmp/pkg-$$.deb $ROOT
+    $B rm -f /tmp/pkg-$$.deb
+}
+
+cmd_install_repo() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    todo=$1; seen=" "
+    while [ -n "$todo" ]; do
+        set -- $todo; cur=$1; shift; todo="$*"
+        case "$seen" in *" $cur "*) continue ;; esac
+        seen="$seen$cur "
+        case "$SKIP" in *" $cur "*) continue ;; esac
+        [ -f $DB/$cur.list ] && continue
+        line=$(idx_line "$cur")
+        if [ -z "$line" ]; then echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
+        deps=$(echo "$line" | $B cut -d'|' -f5)
+        install_one "$cur" || return 1
+        todo="$todo $deps"
+    done
+    echo "installed $FIRST (programs are in /opt/root/usr/bin, /opt/root/bin; they are on PATH after the next login)"
+}
+
+cmd_installed() { for f in $DB/*.list; do [ -f "$f" ] && { n=${f##*/}; echo "${n%.list}"; }; done; }
+
 cmd_list() {
     for d in $OPT/*; do [ -d "$d" ] && echo "${d##*/}"; done
 }
@@ -114,6 +204,9 @@ cmd_remove() {
 case "$1" in
     install) shift; cmd_install "$@" ;;
     list) cmd_list ;;
+    update) cmd_update ;;
+    search) shift; cmd_search "$1" ;;
+    installed) cmd_installed ;;
     remove) shift; cmd_remove "$@" ;;
     *) echo "usage: thos-pkg install <file-or-url> [name] | list | remove <name>"; exit 1 ;;
 esac

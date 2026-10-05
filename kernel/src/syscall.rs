@@ -60,6 +60,7 @@ const SYS_GETGID: u64 = 104;
 const SYS_GETEUID: u64 = 107;
 const SYS_GETEGID: u64 = 108;
 const SYS_FORK: u64 = 57;
+const SYS_VFORK: u64 = 58;
 const SYS_EXECVE: u64 = 59;
 const SYS_EXIT: u64 = 60;
 const SYS_WAIT4: u64 = 61;
@@ -2096,7 +2097,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         },
         221 | 326 => ENOSYS, // fadvise64 is only a hint; copy_file_range: callers fall back to read/write
 
-        SYS_FORK => process::fork(frame),
+        SYS_FORK | SYS_VFORK => process::fork(frame),
 
         // glibc's fork() is clone(SIGCHLD | CHILD_{SET,CLEAR}TID, stack=0).
         // A shared-VM clone (threads) isn't supported yet.

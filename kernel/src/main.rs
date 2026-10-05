@@ -224,7 +224,15 @@ extern "C" fn kmain() -> ! {
             let pid = process::spawn_init(
                 &sh,
                 &["sh"],
-                &["PATH=/bin:/", "HOME=/", "PWD=/", "TERM=dumb", "PS1=thos$ "],
+                &[
+                    "PATH=/bin:/:/opt/root/usr/bin:/opt/root/bin",
+                    "LD_LIBRARY_PATH=/opt/root/usr/lib/x86_64-linux-gnu:/opt/root/lib/x86_64-linux-gnu:/opt/root/usr/lib",
+                    "TERMINFO_DIRS=/usr/share/terminfo:/opt/root/lib/terminfo:/opt/root/usr/share/terminfo",
+                    "HOME=/",
+                    "PWD=/",
+                    "TERM=dumb",
+                    "PS1=thos$ ",
+                ],
             );
 
             signal::FG_PGRP.store(pid, core::sync::atomic::Ordering::Relaxed);

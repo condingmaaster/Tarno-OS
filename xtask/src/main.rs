@@ -735,6 +735,21 @@ fn main() {
                 exit(1);
             }
         }
+        "pkg-repo-test" => {
+            // needs the internet (QEMU user networking): not part of the suite
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pkgrepo", "/busybox sh /pkg-repo.sh", "pkg-repo-done", 900);
+            let lines = out.lines().find_map(|l| l.trim().strip_prefix("index-lines=")).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
+            if lines > 40000 && out.contains("installed=tree") && out.lines().any(|l| l.contains("directories")) {
+                println!("pkg-repo-test PASSED: thos-pkg fetched the Debian index ({lines} packages), installed `tree` from the archive (checksum checked) and it ran");
+            } else {
+                for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
+                    eprintln!("  {l}");
+                }
+                eprintln!("pkg-repo-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "trunc=", 150);
@@ -1757,7 +1772,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
