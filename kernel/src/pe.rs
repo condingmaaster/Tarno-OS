@@ -466,6 +466,7 @@ impl<'a> Loader<'a> {
                     let ext_name = match self.mods[midx].name.as_str() {
                         "msvcrt.dll" => Some("msvcrtx.dll"),
                         "kernel32.dll" => Some("kernel32x.dll"),
+                        "ntdll.dll" => Some("ntdllx.dll"),
                         _ => None,
                     };
                     let ext = ext_name.and_then(|n| self.ext_export(n, func));

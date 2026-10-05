@@ -92,8 +92,6 @@ EXPORT void WINAPI GetSystemInfo(void *p) {
     *(u32 *)(b + 36) = 8664;
     *(u32 *)(b + 44) = 65536;           /* allocation granularity */
 }
-EXPORT u32 WINAPI GetEnvironmentVariableA(const char *n, char *buf, u32 size) { (void)n; (void)buf; (void)size; SetLastError(203); return 0; }
-EXPORT BOOL WINAPI SetEnvironmentVariableA(const char *n, const char *v) { (void)n; (void)v; return 1; }
 EXPORT u32 WINAPI GetCurrentDirectoryA(u32 size, char *buf) {
     char p[512];
     i64 n = sc3(S_GETCWD, p, sizeof p, 0);
@@ -282,31 +280,12 @@ EXPORT BOOL WINAPI WriteConsoleA(HANDLE h, const void *buf, u32 n, u32 *written,
 EXPORT void WINAPI OutputDebugStringA(const char *s) { (void)s; }
 EXPORT u32 WINAPI GetACP(void) { return 1252; }
 
-/* ---- memory ---- */
-typedef struct { u64 size; u64 magic; } mh;
-static void *mem_alloc(u64 n, int zero) {
-    u64 total = (n + sizeof(mh) + 4095) & ~4095ULL;
-    char *p = (char *)sc6(S_MMAP, 0, (i64)total, 3, 0x22, -1, 0);
-    if ((i64)p < 0 && (i64)p > -4096) { SetLastError(8); return 0; }
-    (void)zero;                                 /* anonymous memory is zero-filled */
-    mh *h = (mh *)p; h->size = total - sizeof(mh); h->magic = 0x4C4F43;
-    return h + 1;
-}
-EXPORT HANDLE WINAPI LocalAlloc(u32 flags, u64 n) { return mem_alloc(n, flags & 0x40); }
-EXPORT HANDLE WINAPI LocalFree(HANDLE p) { if (p) { mh *h = (mh *)p - 1; sc3(S_MUNMAP, h, h->size + sizeof(mh), 0); } return 0; }
-EXPORT HANDLE WINAPI GlobalAlloc(u32 flags, u64 n) { return mem_alloc(n, flags & 0x40); }
-EXPORT HANDLE WINAPI GlobalFree(HANDLE p) { return LocalFree(p); }
-EXPORT void *WINAPI HeapReAlloc(HANDLE heap, u32 flags, void *p, u64 n) {
-    (void)heap; (void)flags;
-    if (!p) return mem_alloc(n, 1);
-    mh *h = (mh *)p - 1;
-    if (n <= h->size) return p;
-    char *q = mem_alloc(n, 1);
-    if (!q) return 0;
-    char *s = p; for (u64 i = 0; i < h->size; i++) q[i] = s[i];
-    LocalFree(p);
-    return q;
-}
+/* ---- memory: see the heap allocator further down ---- */
+typedef struct { u64 size; u64 cls; } mh;
+static void *mem_alloc(u64 n, int zero);
+EXPORT HANDLE WINAPI LocalAlloc(u32 flags, u64 n);
+EXPORT HANDLE WINAPI LocalFree(HANDLE p);
+EXPORT void *WINAPI HeapReAlloc(HANDLE heap, u32 flags, void *p, u64 n);
 
 
 /* ---- threads and synchronisation (Win32 on top of the kernel's ntdll layer) ---- */
@@ -456,8 +435,6 @@ EXPORT const u16 *WINAPI GetCommandLineW(void) {
     if (!init) { extern const char *WINAPI GetCommandLineA(void); a2w(GetCommandLineA(), w, 1024); init = 1; }
     return w;
 }
-EXPORT u32 WINAPI GetEnvironmentVariableW(const u16 *n, u16 *buf, u32 size) { (void)n; (void)buf; (void)size; SetLastError(203); return 0; }
-EXPORT BOOL WINAPI SetEnvironmentVariableW(const u16 *n, const u16 *v) { (void)n; (void)v; return 1; }
 EXPORT HANDLE WINAPI GetModuleHandleW(const u16 *n) { if (!n) return GetModuleHandleA(0); W2A(a, n); return GetModuleHandleA(a); }
 EXPORT HANDLE WINAPI LoadLibraryW(const u16 *n) { W2A(a, n); return LoadLibraryA(a); }
 EXPORT BOOL WINAPI FreeLibrary(HANDLE h) { (void)h; return 1; }
@@ -677,11 +654,6 @@ EXPORT u32 WINAPI WaitForMultipleObjectsEx(u32 n, HANDLE *h, BOOL all, u32 ms, B
 EXPORT HANDLE WINAPI HeapCreate(u32 f, u64 a, u64 b) { (void)f; (void)a; (void)b; extern HANDLE WINAPI GetProcessHeap(void); return GetProcessHeap(); }
 EXPORT BOOL WINAPI HeapDestroy(HANDLE h) { (void)h; return 1; }
 EXPORT BOOL WINAPI HeapValidate(HANDLE h, u32 f, const void *p) { (void)h; (void)f; (void)p; return 1; }
-EXPORT u64 WINAPI HeapSize(HANDLE h, u32 f, const void *p) { (void)h; (void)f; return p ? ((mh *)p - 1)->size : (u64)-1; }
-EXPORT u64 WINAPI LocalSize(HANDLE p) { return p ? ((mh *)p - 1)->size : 0; }
-EXPORT u64 WINAPI GlobalSize(HANDLE p) { return LocalSize(p); }
-EXPORT HANDLE WINAPI LocalReAlloc(HANDLE p, u64 n, u32 f) { (void)f; return HeapReAlloc(0, 0, p, n); }
-EXPORT HANDLE WINAPI GlobalReAlloc(HANDLE p, u64 n, u32 f) { (void)f; return HeapReAlloc(0, 0, p, n); }
 EXPORT void *WINAPI GlobalLock(HANDLE p) { return p; }
 EXPORT BOOL WINAPI GlobalUnlock(HANDLE p) { (void)p; return 0; }
 EXPORT void *WINAPI LocalLock(HANDLE p) { return p; }
@@ -741,5 +713,289 @@ EXPORT u32 WINAPI FlsAlloc(void *cb) { (void)cb; return TlsAlloc(); }
 EXPORT BOOL WINAPI FlsFree(u32 i) { return TlsFree(i); }
 EXPORT BOOL WINAPI FlsSetValue(u32 i, void *v) { return TlsSetValue(i, v); }
 EXPORT void *WINAPI FlsGetValue(u32 i) { return TlsGetValue(i); }
+
+
+/* ======================================================================================================
+   What the Rust standard library (and similar runtimes) need on top of the above: the environment block,
+   file information, file mappings, init-once, waitable-timer refusal (callers fall back to Sleep), and
+   assorted stubs.
+   ====================================================================================================== */
+extern void *WINAPI RtlAddVectoredExceptionHandler(u32 first, void *handler);
+extern u32 WINAPI GetLastError(void);
+
+static char *env_names[64], *env_vals[64];
+static const char *env_defaults[][2] = { { "PATH", "C:\\Windows;C:\\Windows\\System32" }, { "TEMP", "C:\\tmp" }, { "TMP", "C:\\tmp" }, { "OS", "THOS" },
+    { "COMPUTERNAME", "THOS" }, { "SystemRoot", "C:\\Windows" }, { "USERPROFILE", "C:\\Users\\thos" }, { "HOMEDRIVE", "C:" }, { "HOMEPATH", "\\Users\\thos" },
+    { "USERNAME", "thos" }, { "PROCESSOR_ARCHITECTURE", "AMD64" } };
+static void env_init(void) {
+    static int done;
+    if (done) return;
+    done = 1;
+    for (unsigned i = 0; i < sizeof env_defaults / sizeof env_defaults[0]; i++) {
+        env_names[i] = (char *)env_defaults[i][0]; env_vals[i] = (char *)env_defaults[i][1];
+    }
+}
+static int env_find(const char *n) {
+    env_init();
+    for (int i = 0; i < 64; i++) if (env_names[i] && lstrcmpiA(env_names[i], n) == 0) return i;
+    return -1;
+}
+EXPORT u32 WINAPI GetEnvironmentVariableA(const char *n, char *buf, u32 size) {
+    int i = env_find(n);
+    if (i < 0 || !env_vals[i]) { SetLastError(203); return 0; }
+    u32 len = (u32)slen(env_vals[i]);
+    if (len + 1 > size) return len + 1;
+    cpy(buf, env_vals[i], size);
+    return len;
+}
+EXPORT BOOL WINAPI SetEnvironmentVariableA(const char *n, const char *v) {
+    int i = env_find(n);
+    if (i < 0) { if (!v) return 1; for (i = 0; i < 64; i++) if (!env_names[i]) break; if (i == 64) return 0; char *c = LocalAlloc(0, slen(n) + 1); if (!c) return 0; cpy(c, n, slen(n) + 1); env_names[i] = c; }
+    if (!v) { env_vals[i] = 0; env_names[i] = 0; return 1; }
+    char *c = LocalAlloc(0, slen(v) + 1); if (!c) return 0; cpy(c, v, slen(v) + 1); env_vals[i] = c; return 1;
+}
+EXPORT u32 WINAPI GetEnvironmentVariableW(const u16 *n, u16 *buf, u32 size) {
+    W2A(a, n); char tmp[2048]; u32 r = GetEnvironmentVariableA(a, tmp, sizeof tmp);
+    if (!r) return 0;
+    u16 w[2048]; size_t l = a2w(tmp, w, 2048);
+    if (l + 1 > size) return (u32)l + 1;
+    for (size_t j = 0; j <= l; j++) buf[j] = w[j];
+    return (u32)l;
+}
+EXPORT BOOL WINAPI SetEnvironmentVariableW(const u16 *n, const u16 *v) { W2A(a, n); if (!v) return SetEnvironmentVariableA(a, 0); W2A(b, v); return SetEnvironmentVariableA(a, b); }
+EXPORT char *WINAPI GetEnvironmentStringsA(void) {
+    env_init(); static char blk[8192]; size_t o = 0;
+    for (int i = 0; i < 64; i++) if (env_names[i] && env_vals[i]) {
+        size_t a = slen(env_names[i]), b = slen(env_vals[i]);
+        if (o + a + b + 3 >= sizeof blk) break;
+        for (size_t j = 0; j < a; j++) blk[o++] = env_names[i][j];
+        blk[o++] = '='; for (size_t j = 0; j < b; j++) blk[o++] = env_vals[i][j]; blk[o++] = 0;
+    }
+    blk[o++] = 0; blk[o] = 0;
+    return blk;
+}
+EXPORT u16 *WINAPI GetEnvironmentStringsW(void) {
+    char *a = GetEnvironmentStringsA(); static u16 blk[8192]; size_t o = 0;
+    while (*a && o + 2048 < 8192) { o += a2w(a, blk + o, 2048) + 1; a += slen(a) + 1; }
+    blk[o] = 0;
+    return blk;
+}
+EXPORT BOOL WINAPI FreeEnvironmentStringsA(char *p) { (void)p; return 1; }
+EXPORT BOOL WINAPI FreeEnvironmentStringsW(u16 *p) { (void)p; return 1; }
+
+/* file information */
+EXPORT BOOL WINAPI GetFileInformationByHandle(HANDLE h, u32 *info) {
+    unsigned char st[144];
+    if (sc3(5, (i64)h, st, 0) < 0) { SetLastError(6); return 0; }
+    u32 mode = *(u32 *)(st + 24); u64 size = *(u64 *)(st + 48);
+    for (int i = 0; i < 13; i++) info[i] = 0;
+    info[0] = (mode & 0xF000) == 0x4000 ? 0x10 : 0x80;
+    ft((unsigned char *)&info[1], *(i64 *)(st + 104)); ft((unsigned char *)&info[3], *(i64 *)(st + 72)); ft((unsigned char *)&info[5], *(i64 *)(st + 88));
+    info[7] = 1; info[8] = (u32)(size >> 32); info[9] = (u32)size; info[10] = 1;
+    u64 ino = *(u64 *)(st + 8); info[11] = (u32)(ino >> 32); info[12] = (u32)ino;
+    return 1;
+}
+EXPORT BOOL WINAPI GetFileInformationByHandleEx(HANDLE h, u32 cls, void *buf, u32 size) {
+    unsigned char st[144];
+    if (sc3(5, (i64)h, st, 0) < 0) { SetLastError(6); return 0; }
+    u32 mode = *(u32 *)(st + 24); u64 sz = *(u64 *)(st + 48); int dir = (mode & 0xF000) == 0x4000;
+    unsigned char *p = buf;
+    if (cls == 0 && size >= 40) {                 /* FileBasicInfo */
+        for (int i = 0; i < 40; i++) p[i] = 0;
+        ft(p, *(i64 *)(st + 104)); ft(p + 8, *(i64 *)(st + 72)); ft(p + 16, *(i64 *)(st + 88)); ft(p + 24, *(i64 *)(st + 88));
+        *(u32 *)(p + 32) = dir ? 0x10 : 0x80; return 1;
+    }
+    if (cls == 1 && size >= 24) {                 /* FileStandardInfo */
+        for (int i = 0; i < 24; i++) p[i] = 0;
+        *(u64 *)p = sz; *(u64 *)(p + 8) = sz; *(u32 *)(p + 16) = 1; p[21] = (unsigned char)dir; return 1;
+    }
+    SetLastError(87); return 0;
+}
+EXPORT BOOL WINAPI SetFileInformationByHandle(HANDLE h, u32 cls, void *buf, u32 size) { (void)h; (void)cls; (void)buf; (void)size; SetLastError(120); return 0; }
+EXPORT u32 WINAPI GetFinalPathNameByHandleW(HANDLE h, u16 *buf, u32 size, u32 flags) { (void)h; (void)buf; (void)size; (void)flags; SetLastError(120); return 0; }
+EXPORT BOOL WINAPI LockFileEx(HANDLE h, u32 f, u32 r, u32 lo, u32 hi, void *ov) { (void)h; (void)f; (void)r; (void)lo; (void)hi; (void)ov; return 1; }
+EXPORT BOOL WINAPI UnlockFile(HANDLE h, u32 a, u32 b, u32 c, u32 d) { (void)h; (void)a; (void)b; (void)c; (void)d; return 1; }
+EXPORT BOOL WINAPI CancelIo(HANDLE h) { (void)h; return 1; }
+EXPORT BOOL WINAPI GetOverlappedResult(HANDLE h, void *ov, u32 *n, BOOL wait) { (void)h; (void)ov; (void)n; (void)wait; SetLastError(6); return 0; }
+EXPORT BOOL WINAPI ReadFileEx(HANDLE h, void *b, u32 n, void *ov, void *cb) { (void)h; (void)b; (void)n; (void)ov; (void)cb; SetLastError(120); return 0; }
+EXPORT BOOL WINAPI WriteFileEx(HANDLE h, const void *b, u32 n, void *ov, void *cb) { (void)h; (void)b; (void)n; (void)ov; (void)cb; SetLastError(120); return 0; }
+EXPORT BOOL WINAPI CopyFileExW(const u16 *a, const u16 *b, void *cb, void *d, BOOL *cancel, u32 flags) { (void)cb; (void)d; (void)cancel; return CopyFileW(a, b, (flags & 1) != 0); }
+EXPORT BOOL WINAPI CreateHardLinkW(const u16 *a, const u16 *b, void *sa) { (void)a; (void)b; (void)sa; SetLastError(50); return 0; }
+EXPORT BOOL WINAPI CreateSymbolicLinkW(const u16 *link, const u16 *target, u32 flags) {
+    (void)flags; W2A(l, link); W2A(t, target); char x[512], y[512]; dos_path(x, t, sizeof x); dos_path(y, l, sizeof y);
+    return ret(sc3(88, x, y, 0)) == 0;
+}
+EXPORT HANDLE WINAPI FindFirstFileExW(const u16 *n, int level, void *data, int op, void *filter, u32 flags) { (void)level; (void)op; (void)filter; (void)flags; return FindFirstFileW(n, data); }
+EXPORT int WINAPI CompareStringOrdinal(const u16 *a, int na, const u16 *b, int nb, BOOL ic) { return CompareStringW(0, ic ? 1 : 0, a, na, b, nb); }
+EXPORT u32 WINAPI FormatMessageW(u32 flags, const void *src, u32 id, u32 lang, u16 *buf, u32 size, void *args) {
+    char tmp[64]; u32 n;
+    if (flags & 0x100) { char *p; n = FormatMessageA(flags, src, id, lang, (char *)&p, 0, args); if (!n) return 0; u16 *w = LocalAlloc(0, (n + 1) * 2); if (!w) return 0; a2w(p, w, n + 1); *(u16 **)buf = w; return n; }
+    n = FormatMessageA(0, src, id, lang, tmp, sizeof tmp, args); a2w(tmp, buf, size); return n;
+}
+EXPORT BOOL WINAPI GetModuleHandleExW(u32 flags, const u16 *name, HANDLE *out) { (void)flags; HANDLE h = GetModuleHandleW(name); if (out) *out = h; return h != 0; }
+EXPORT u32 WINAPI GetProcessId(HANDLE h) { (void)h; return (u32)sc3(S_GETPID, 0, 0, 0); }
+EXPORT BOOL WINAPI GetExitCodeProcess(HANDLE h, u32 *c) { (void)h; if (c) *c = 259; return 1; }
+EXPORT BOOL WINAPI TerminateProcess(HANDLE h, u32 code) { if ((i64)h == -1) sc3(231, code, 0, 0); SetLastError(5); return 0; }
+EXPORT BOOL WINAPI CreateProcessW(const u16 *a, u16 *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const u16 *cwd, void *si, void *pi) {
+    (void)a; (void)cmd; (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd; (void)si; (void)pi; SetLastError(120); return 0;
+}
+EXPORT BOOL WINAPI CreateProcessA(const char *a, char *cmd, void *pa, void *ta, BOOL inh, u32 fl, void *env, const char *cwd, void *si, void *pi) {
+    (void)a; (void)cmd; (void)pa; (void)ta; (void)inh; (void)fl; (void)env; (void)cwd; (void)si; (void)pi; SetLastError(120); return 0;
+}
+EXPORT HANDLE WINAPI CreateToolhelp32Snapshot(u32 f, u32 pid) { (void)f; (void)pid; SetLastError(120); return INVALID_HANDLE; }
+EXPORT BOOL WINAPI Module32FirstW(HANDLE h, void *e) { (void)h; (void)e; return 0; }
+EXPORT BOOL WINAPI Module32NextW(HANDLE h, void *e) { (void)h; (void)e; return 0; }
+EXPORT BOOL WINAPI InitializeProcThreadAttributeList(void *l, u32 n, u32 f, u64 *size) { (void)l; (void)n; (void)f; if (size) *size = 64; return 1; }
+EXPORT BOOL WINAPI UpdateProcThreadAttribute(void *l, u32 f, u64 a, void *v, u64 s, void *pv, u64 *r) { (void)l; (void)f; (void)a; (void)v; (void)s; (void)pv; (void)r; return 1; }
+EXPORT void WINAPI DeleteProcThreadAttributeList(void *l) { (void)l; }
+EXPORT BOOL WINAPI DeviceIoControl(HANDLE h, u32 code, void *in, u32 il, void *out, u32 ol, u32 *ret_len, void *ov) { (void)h; (void)code; (void)in; (void)il; (void)out; (void)ol; (void)ret_len; (void)ov; SetLastError(1); return 0; }
+EXPORT HANDLE WINAPI CreateWaitableTimerExW(void *sa, const u16 *n, u32 f, u32 a) { (void)sa; (void)n; (void)f; (void)a; SetLastError(120); return 0; }
+EXPORT BOOL WINAPI SetWaitableTimer(HANDLE h, const i64 *due, long period, void *cb, void *arg, BOOL resume) { (void)h; (void)due; (void)period; (void)cb; (void)arg; (void)resume; return 0; }
+EXPORT BOOL WINAPI IsThreadAFiber(void) { return 0; }
+EXPORT BOOL WINAPI SetThreadStackGuarantee(u32 *s) { (void)s; return 1; }
+EXPORT void *WINAPI AddVectoredExceptionHandler(u32 first, void *h) { return RtlAddVectoredExceptionHandler(first, h); }
+EXPORT void WINAPI RaiseException(u32 code, u32 flags, u32 n, const u64 *args) { (void)code; (void)flags; (void)n; (void)args; sc3(231, 0xC0000001u & 0xFF, 0, 0); for (;;) {} }
+EXPORT BOOL WINAPI ReadConsoleW(HANDLE h, u16 *buf, u32 n, u32 *got, void *ctl) {
+    (void)ctl; char tmp[512]; if (n > 120) n = 120;
+    i64 r = sc3(S_READ, (i64)h, tmp, n); if (r <= 0) { if (got) *got = 0; return r == 0; }
+    tmp[r] = 0; size_t w = a2w(tmp, buf, n + 1); if (got) *got = (u32)w; return 1;
+}
+EXPORT void WINAPI RtlCaptureContext(void *ctx) { unsigned char *p = ctx; for (int i = 0; i < 1232; i++) p[i] = 0; }
+EXPORT void *WINAPI RtlLookupFunctionEntry(u64 pc, u64 *base, void *hist) { (void)pc; (void)hist; if (base) *base = 0; return 0; }
+EXPORT void *WINAPI RtlVirtualUnwind(u32 t, u64 base, u64 pc, void *fn, void *ctx, void **hd, u64 *ef, void *cp) { (void)t; (void)base; (void)pc; (void)fn; (void)ctx; (void)hd; (void)ef; (void)cp; return 0; }
+EXPORT void WINAPI RtlUnwindEx(void *tf, void *ip, void *rec, void *rv, void *ctx, void *hist) { (void)tf; (void)ip; (void)rec; (void)rv; (void)ctx; (void)hist; sc3(231, 3, 0, 0); for (;;) {} }
+
+/* the C-language SEH personality lives in the built-in msvcrt: forward to it */
+static void *find_in(const char *module, const char *want) {
+    unsigned char *base = GetModuleHandleA(module);
+    if (!base) return 0;
+    u32 pe = *(u32 *)(base + 0x3C), exp = *(u32 *)(base + pe + 0x88);
+    unsigned char *ed = base + exp;
+    u32 n = *(u32 *)(ed + 0x18), *funcs = (u32 *)(base + *(u32 *)(ed + 0x1C)), *names = (u32 *)(base + *(u32 *)(ed + 0x20));
+    unsigned short *ords = (unsigned short *)(base + *(u32 *)(ed + 0x24));
+    for (u32 i = 0; i < n; i++) {
+        const char *nm = (const char *)(base + names[i]); int k = 0;
+        while (nm[k] && nm[k] == want[k]) k++;
+        if (!nm[k] && !want[k]) return base + funcs[ords[i]];
+    }
+    return 0;
+}
+EXPORT int WINAPI __C_specific_handler(void *rec, void *frame, void *ctx, void *disp) {
+    typedef int (WINAPI *h_t)(void *, void *, void *, void *);
+    static h_t fn; if (!fn) fn = (h_t)find_in("msvcrt.dll", "__C_specific_handler");
+    return fn ? fn(rec, frame, ctx, disp) : 1;
+}
+
+/* init-once: the INIT_ONCE is one pointer-sized word: 0 = fresh, 1 = being initialised, otherwise (context | 2) */
+EXPORT BOOL WINAPI InitOnceBeginInitialize(volatile u64 *once, u32 flags, BOOL *pending, void **ctx) {
+    for (;;) {
+        u64 v = *once;
+        if ((v & 3) == 2) { if (pending) *pending = 0; if (ctx) *ctx = (void *)(v & ~3ULL); return 1; }
+        if (flags & 1) { if (pending) *pending = 1; return 1; }                      /* CHECK_ONLY */
+        if (v == 0 && __sync_bool_compare_and_swap(once, 0, 1)) { if (pending) *pending = 1; return 1; }
+        sc3(24, 0, 0, 0);
+    }
+}
+EXPORT BOOL WINAPI InitOnceComplete(volatile u64 *once, u32 flags, void *ctx) {
+    if (flags & 2) { *once = 0; return 1; }                                          /* INIT_ONCE_INIT_FAILED */
+    *once = ((u64)ctx & ~3ULL) | 2; return 1;
+}
+
+/* file mappings */
+typedef struct { i64 fd; u64 size; u32 prot; } MAPOBJ;
+static struct { void *p; u64 n; } views[64];
+static HANDLE map_create(HANDLE h, u32 prot, u32 hi, u32 lo) {
+    MAPOBJ *m = LocalAlloc(0, sizeof *m); if (!m) return 0;
+    m->fd = (i64)h; m->size = ((u64)hi << 32) | lo; m->prot = prot;
+    if (m->size == 0 && (i64)h != -1) { GetFileSizeEx(h, (i64 *)&m->size); }
+    return m;
+}
+EXPORT HANDLE WINAPI CreateFileMappingA(HANDLE h, void *sa, u32 prot, u32 hi, u32 lo, const char *n) { (void)sa; (void)n; return map_create(h, prot, hi, lo); }
+EXPORT HANDLE WINAPI CreateFileMappingW(HANDLE h, void *sa, u32 prot, u32 hi, u32 lo, const u16 *n) { (void)sa; (void)n; return map_create(h, prot, hi, lo); }
+EXPORT void *WINAPI MapViewOfFile(HANDLE hm, u32 access, u32 offhi, u32 offlo, u64 bytes) {
+    MAPOBJ *m = hm; u64 len = bytes ? bytes : m->size; if (!len) { SetLastError(87); return 0; }
+    int prot = 1 | ((access & 2) || (m->prot & 4) || (m->prot & 8) ? 2 : 0);
+    int flags = (m->fd == -1) ? 0x22 : ((access & 4) ? 0x2 : 0x1);          /* anonymous, or shared / private file view */
+    if (m->fd != -1 && (access & 1)) flags = 0x2;                            /* FILE_MAP_COPY */
+    i64 p = sc6(S_MMAP, 0, (i64)len, prot, flags, m->fd, ((i64)offhi << 32) | offlo);
+    if (p < 0 && p > -4096) { SetLastError(8); return 0; }
+    for (int i = 0; i < 64; i++) if (!views[i].p) { views[i].p = (void *)p; views[i].n = len; break; }
+    return (void *)p;
+}
+EXPORT BOOL WINAPI UnmapViewOfFile(void *p) {
+    for (int i = 0; i < 64; i++) if (views[i].p == p) { sc3(S_MUNMAP, p, views[i].n, 0); views[i].p = 0; return 1; }
+    SetLastError(998); return 0;
+}
+
+
+/* ======================================================================================================
+   The heap: size-class free lists carved from big anonymous mappings; blocks above 32 KiB are mapped on their own.
+   Every block has a 16-byte header (payload size, class), so HeapSize / realloc / free need nothing else.
+   (The kernel's built-in HeapAlloc hands out whole pages and has no header: this one takes over for programs that
+   import from kernel32, since the loader prefers kernel32x.)
+   ====================================================================================================== */
+#define H_CLASSES 11
+#define H_BIG 0xFF
+static void *h_free[H_CLASSES];
+static char *h_arena, *h_arena_end;
+static volatile int h_lock;
+static void h_acquire(void) { while (__sync_lock_test_and_set(&h_lock, 1)) sc3(24, 0, 0, 0); }
+static void h_release(void) { __sync_lock_release(&h_lock); }
+static void *mem_alloc(u64 n, int zero) {
+    u64 total = n + sizeof(mh);
+    if (total < n) { SetLastError(8); return 0; }
+    mh *b;
+    if (total > 32768) {
+        u64 map = (total + 4095) & ~4095ULL;
+        char *p = (char *)sc6(S_MMAP, 0, (i64)map, 3, 0x22, -1, 0);
+        if ((i64)p < 0 && (i64)p > -4096) { SetLastError(8); return 0; }
+        b = (mh *)p; b->size = map - sizeof(mh); b->cls = H_BIG;
+        return b + 1;                                                                  /* fresh pages are zero */
+    }
+    int cls = 0; u64 csz = 32; while (csz < total) { csz <<= 1; cls++; }
+    h_acquire();
+    if (h_free[cls]) { b = h_free[cls]; h_free[cls] = *(void **)(b + 1); }
+    else {
+        if (h_arena + csz > h_arena_end) {
+            char *p = (char *)sc6(S_MMAP, 0, 1 << 20, 3, 0x22, -1, 0);
+            if ((i64)p < 0 && (i64)p > -4096) { h_release(); SetLastError(8); return 0; }
+            h_arena = p; h_arena_end = p + (1 << 20);
+        }
+        b = (mh *)h_arena; h_arena += csz;
+    }
+    h_release();
+    b->size = csz - sizeof(mh); b->cls = (u64)cls;
+    void *pl = b + 1;
+    if (zero) { char *q = pl; for (u64 i = 0; i < b->size; i++) q[i] = 0; }
+    return pl;
+}
+static void mem_free(void *p) {
+    if (!p) return;
+    mh *b = (mh *)p - 1;
+    if (b->cls == H_BIG) { sc3(S_MUNMAP, b, b->size + sizeof(mh), 0); return; }
+    h_acquire(); *(void **)p = h_free[b->cls]; h_free[b->cls] = b; h_release();
+}
+EXPORT void *WINAPI HeapAlloc(HANDLE heap, u32 flags, u64 n) { (void)heap; return mem_alloc(n ? n : 1, (flags & 8) != 0); }
+EXPORT BOOL WINAPI HeapFree(HANDLE heap, u32 flags, void *p) { (void)heap; (void)flags; mem_free(p); return 1; }
+EXPORT u64 WINAPI HeapSize(HANDLE heap, u32 flags, const void *p) { (void)heap; (void)flags; return p ? ((const mh *)p - 1)->size : (u64)-1; }
+EXPORT void *WINAPI HeapReAlloc(HANDLE heap, u32 flags, void *p, u64 n) {
+    (void)heap;
+    if (!p) return mem_alloc(n ? n : 1, (flags & 8) != 0);
+    mh *b = (mh *)p - 1;
+    if (n <= b->size) return p;
+    char *q = mem_alloc(n, (flags & 8) != 0);
+    if (!q) return 0;
+    char *s = p; for (u64 i = 0; i < b->size; i++) q[i] = s[i];
+    mem_free(p);
+    return q;
+}
+HANDLE WINAPI LocalAlloc(u32 flags, u64 n) { return mem_alloc(n ? n : 1, (flags & 0x40) != 0); }
+EXPORT HANDLE WINAPI LocalFree(HANDLE p) { mem_free(p); return 0; }
+EXPORT HANDLE WINAPI GlobalAlloc(u32 flags, u64 n) { return mem_alloc(n ? n : 1, (flags & 0x40) != 0); }
+EXPORT HANDLE WINAPI GlobalFree(HANDLE p) { mem_free(p); return 0; }
+EXPORT u64 WINAPI LocalSize(HANDLE p) { return p ? ((mh *)p - 1)->size : 0; }
+EXPORT u64 WINAPI GlobalSize(HANDLE p) { return LocalSize(p); }
+EXPORT HANDLE WINAPI LocalReAlloc(HANDLE p, u64 n, u32 f) { return HeapReAlloc(0, (f & 0x40) ? 8 : 0, p, n); }
+EXPORT HANDLE WINAPI GlobalReAlloc(HANDLE p, u64 n, u32 f) { return HeapReAlloc(0, (f & 0x40) ? 8 : 0, p, n); }
 
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }

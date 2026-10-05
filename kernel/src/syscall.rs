@@ -1487,7 +1487,10 @@ fn exec_resolved(path: alloc::string::String, argv: alloc::vec::Vec<alloc::strin
                     cl.push_str(a);
                 }
             }
-            process::spawn_pe_args(&bytes, cl.as_bytes(), &me).map_err(|_| ENOEXEC)
+            process::spawn_pe_args(&bytes, cl.as_bytes(), &me).map_err(|e| {
+                kprintln!("THOS: pe load failed: {e}");
+                ENOEXEC
+            })
         }) {
             Ok(pid) => {
                 let Some(t) = process::find_task(pid) else { return ENOEXEC };

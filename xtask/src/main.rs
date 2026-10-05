@@ -764,6 +764,19 @@ fn main() {
                 exit(1);
             }
         }
+        "winrt-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "winrt", "/busybox sh /winrt.sh", "winrt-done", 150);
+            let ok = out.contains("wsock-done") && out.contains("ws server got 17: ping-over-winsock") && out.contains("ws client got pong select=1") && out.contains("ws getaddrinfo=0 port=80")
+                && out.contains("hello from rust on THOS, 3 args") && out.contains("sorted first=0 last=976") && out.contains("read back: written by rust") && out.contains("rust-done");
+            if ok {
+                println!("winrt-test PASSED: Winsock over loopback and a real Rust program built for x86_64-pc-windows-gnu (std: heap, files, environment, random, stdout) run");
+            } else {
+                for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(25).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
+                eprintln!("winrt-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
@@ -1799,7 +1812,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -1830,6 +1843,32 @@ fn disk_image() -> PathBuf {
                 .unwrap_or(false)
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/kernel32x.dll", k32.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // more system DLLs (all freestanding C on top of system calls): ntdll extension, Winsock, Rust-runtime helpers
+            for (src, dll, libs) in [
+                ("ntdllx.c", "ntdllx.dll", vec!["-lkernel32"]),
+                ("ws2_32.c", "ws2_32.dll", vec!["-lkernel32"]),
+                ("bcryptprimitives.c", "bcryptprimitives.dll", vec!["-lkernel32"]),
+                ("userenv.c", "userenv.dll", vec!["-lkernel32"]),
+                ("synch.c", "api-ms-win-core-synch-l1-2-0.dll", vec!["-lkernel32"]),
+            ] {
+                let out = root.join(format!("target/{dll}"));
+                let mut args: Vec<String> = ["-O2", "-ffreestanding", "-fno-builtin", "-fno-stack-protector", "-mno-stack-arg-probe", "-nostdlib", "-shared", "-Wl,--entry=DllMain", "-Wl,--dynamicbase", "-o"].iter().map(|s| s.to_string()).collect();
+                args.push(out.to_str().unwrap().into());
+                args.push(root.join(format!("xtask/msvcrtx/{src}")).to_str().unwrap().into());
+                args.extend(libs.iter().map(|s| s.to_string()));
+                if Command::new("x86_64-w64-mingw32-gcc").args(&args).status().map(|s| s.success()).unwrap_or(false) {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Windows/System32/{dll}", out.to_str().unwrap()), img.to_str().unwrap()]));
+                }
+            }
+            let ws = root.join("target/wsock.exe");
+            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", ws.to_str().unwrap(), root.join("xtask/testdata/wsock.c").to_str().unwrap(), "-lws2_32"]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wsock.exe", ws.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // a real Rust program built for Windows (needs `rustup target add x86_64-pc-windows-gnu`)
+            let rh = root.join("target/rusthello-win.exe");
+            if Command::new("rustup").args(["run", "stable", "rustc", "--target", "x86_64-pc-windows-gnu", "-O", "-C", "debuginfo=0", "-C", "strip=symbols", "-o", rh.to_str().unwrap(), root.join("xtask/testdata/rusthello-win.rs").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rusthello-win.exe", rh.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let w3 = root.join("target/w32test.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", w3.to_str().unwrap(), root.join("xtask/testdata/w32test.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -5130,7 +5169,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "pkg-test", "hw-test", "wbig-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

@@ -733,7 +733,7 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         // NtWriteFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock,
         //             Buffer, Length, ByteOffset, Key)
         NT_NTWRITEFILE => {
-            let (iosb, buf, len) = (stack(0), stack(1), stack(2) as usize);
+            let (iosb, buf, len) = (stack(0), stack(1), (stack(2) & 0xFFFF_FFFF) as usize);
             let n = file_write_core(a0 as i32, buf, len);
             if n < 0 {
                 return STATUS_INVALID_HANDLE as i64;
@@ -744,7 +744,7 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
 
         // NtReadFile(same shape as NtWriteFile)
         NT_NTREADFILE => {
-            let (iosb, buf, len) = (stack(0), stack(1), stack(2) as usize);
+            let (iosb, buf, len) = (stack(0), stack(1), (stack(2) & 0xFFFF_FFFF) as usize);
             let n = file_read_core(a0 as i32, buf, len);
             if n < 0 {
                 return STATUS_INVALID_HANDLE as i64;
