@@ -824,6 +824,28 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_soft_test(&img);
         }
+        "desk-shot-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let sock = root.join("target/deskshot-mon.sock");
+            let log = root.join("target/deskshot-serial.log");
+            let _ = std::fs::remove_file(&sock);
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "win 1 ready", 200) { return; }
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                mon(&tsock, "sendkey print");
+            });
+            let out = boot_and_run(&img, "deskshot", "/busybox sh /desk-shot.sh", "desk ok:", 200);
+            let size = out.lines().find_map(|l| l.trim().strip_prefix("shot-size=")).and_then(|v| v.trim().parse::<u64>().ok()).unwrap_or(0);
+            if size > 1280 * 800 * 3 && out.contains("desk: screenshot /tmp/shot-1.png") && out.contains("P   N   G") {
+                println!("desk-shot-test PASSED: the Print key saved the screen as a PNG ({size} bytes)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("shot") || l.contains("desk:") || l.contains("PNG")) { eprintln!("  {l}"); }
+                eprintln!("desk-shot-test FAILED");
+                exit(1);
+            }
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -1832,7 +1854,7 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5193,7 +5215,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-shot-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

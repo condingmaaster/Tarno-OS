@@ -66,3 +66,4 @@ Tests: `cargo xtask desk-test | desk-kbd-test | desk-term-test | desk-panel-test
 - Tests: `desk-tasklist-test`, `desk-files-test`, `desk-menu-test`, `pkg-test` (alle in der Suite), `pkg-repo-test` (braucht Internet).
 - **Software** (`thossoft`, Startmenü): durchsucht den Debian-Paketindex (`thos-pkg update` einmalig vorher; der Knopf „Enter" ohne Index startet das). Tippen = suchen, Pfeiltasten/Doppelklick/Enter = installieren (oder entfernen, wenn schon installiert; `[*]` markiert Installiertes). Test: `desk-soft-test`.
 - Text-Webbrowser: `thos-pkg install w3m` (mit Netz; im Test `pkg-apps-test` zusammen mit htop, jq, ripgrep, nano geprüft).
+- **Bildschirmfoto:** die Taste *Druck* speichert den Desktop als PNG nach `/tmp/shot-1.png`, `/tmp/shot-2.png` … (unkomprimiert, ~3 MB; vom Stick an einem anderen Rechner lesbar). Test: `desk-shot-test`.

@@ -338,6 +338,7 @@ fn hid_plain(sc: u8) -> u8 {
 fn hid_ext(sc: u8) -> u8 {
     match sc {
         0x1C => 0x58, // keypad enter
+        0x37 => 0x46, // print screen
         0x47 => 0x4A, // home
         0x48 => 0x52, // up
         0x49 => 0x4B, // pgup

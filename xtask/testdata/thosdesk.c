@@ -553,6 +553,73 @@ static void update_hover(void) {
     if (b) compose(close_btn(b));
 }
 
+
+/* ---- screenshot (Print key): the composed screen as a PNG in /tmp (stored deflate blocks, no compression) ---- */
+static uint32_t crc_tab[256];
+static uint32_t crc_upd(uint32_t c, const unsigned char *p, size_t n) {
+    if (!crc_tab[1]) for (uint32_t i = 0; i < 256; i++) { uint32_t k = i; for (int j = 0; j < 8; j++) k = k & 1 ? 0xEDB88320u ^ (k >> 1) : k >> 1; crc_tab[i] = k; }
+    for (size_t i = 0; i < n; i++) c = crc_tab[(c ^ p[i]) & 255] ^ (c >> 8);
+    return c;
+}
+static void be32(unsigned char *p, uint32_t v) { p[0] = (unsigned char)(v >> 24); p[1] = (unsigned char)(v >> 16); p[2] = (unsigned char)(v >> 8); p[3] = (unsigned char)v; }
+static void png_chunk(FILE *f, const char *type, const unsigned char *data, uint32_t len) {
+    unsigned char h[8]; be32(h, len); memcpy(h + 4, type, 4);
+    fwrite(h, 1, 8, f);
+    uint32_t c = crc_upd(0xFFFFFFFFu, (const unsigned char *)type, 4);
+    if (len) { fwrite(data, 1, len, f); c = crc_upd(c, data, len); }
+    unsigned char t[4]; be32(t, c ^ 0xFFFFFFFFu); fwrite(t, 1, 4, f);
+}
+static void save_screenshot(void) {
+    static int n;
+    char path[64];
+    snprintf(path, sizeof path, "/tmp/shot-%d.png", ++n);
+    FILE *f = fopen(path, "wb");
+    if (!f) { printf("desk: screenshot failed (%s)\n", path); fflush(stdout); return; }
+    static const unsigned char sig[8] = { 0x89, 'P', 'N', 'G', 13, 10, 26, 10 };
+    fwrite(sig, 1, 8, f);
+    unsigned char ihdr[13]; be32(ihdr, (uint32_t)W); be32(ihdr + 4, (uint32_t)H); ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = ihdr[11] = ihdr[12] = 0;
+    png_chunk(f, "IHDR", ihdr, 13);
+    size_t raw = (size_t)H * ((size_t)W * 3 + 1);
+    size_t nblk = (raw + 65534) / 65535, idat_len = 2 + raw + 5 * nblk + 4;
+    unsigned char hdr[8]; be32(hdr, (uint32_t)idat_len); memcpy(hdr + 4, "IDAT", 4);
+    fwrite(hdr, 1, 8, f);
+    uint32_t c = crc_upd(0xFFFFFFFFu, (const unsigned char *)"IDAT", 4);
+    static unsigned char blk[65535 + 5];
+    unsigned char z[2] = { 0x78, 0x01 };
+    fwrite(z, 1, 2, f); c = crc_upd(c, z, 2);
+    uint32_t a = 1, b = 0;
+    size_t fill = 0, done = 0, row = 0, col = 0; int stage = 0;               /* stage 0: filter byte, then 3 bytes per pixel */
+    while (done < raw) {
+        size_t want = raw - done < 65535 ? raw - done : 65535;
+        unsigned char *d = blk + 5;
+        for (fill = 0; fill < want; fill++) {
+            unsigned char v;
+            if (col == 0) { v = 0; col = 1; stage = 0; }
+            else {
+                uint32_t p = bb[row * W + (col - 1) / 3];
+                int ch = (int)((col - 1) % 3);
+                v = ch == 0 ? (unsigned char)(p >> rs) : ch == 1 ? (unsigned char)(p >> gs) : (unsigned char)(p >> bs);
+                col++;
+                if (col - 1 == (size_t)W * 3) { col = 0; row++; }
+            }
+            d[fill] = v;
+            a = (a + v) % 65521; b = (b + a) % 65521;
+        }
+        (void)stage;
+        blk[0] = done + want == raw ? 1 : 0;
+        blk[1] = (unsigned char)want; blk[2] = (unsigned char)(want >> 8); blk[3] = (unsigned char)~want; blk[4] = (unsigned char)(~want >> 8);
+        fwrite(blk, 1, want + 5, f); c = crc_upd(c, blk, want + 5);
+        done += want;
+    }
+    unsigned char ad[4]; be32(ad, (b << 16) | a);
+    fwrite(ad, 1, 4, f); c = crc_upd(c, ad, 4);
+    unsigned char t[4]; be32(t, c ^ 0xFFFFFFFFu); fwrite(t, 1, 4, f);
+    png_chunk(f, "IEND", 0, 0);
+    fclose(f);
+    printf("desk: screenshot %s\n", path);
+    fflush(stdout);
+}
+
 static void on_new_client(int ls) {
     int c = accept(ls, 0, 0);
     if (c < 0) return;
@@ -653,6 +720,7 @@ int main(int argc, char **argv) {
             int t = nwin - 1;
             while (t >= 0 && !wins[t].deco && !wins[t].is_wl) t--;
             ssize_t kn = read(kbd, ev, 8);
+            if (kn == 8 && ev[0] && ev[1] == 0x46) { save_screenshot(); kn = 0; }                      /* Print: screenshot to /tmp */
             if (kn == 8 && ev[0] && ev[1] == 0x14 && (ev[2] & 0x11) && (ev[2] & 0x44)) { quit = 1; kn = 0; }   /* Ctrl+Alt+Q: leave the desktop */
             if (kn == 8 && ev[0] && (ev[2] & 0x44) && !(ev[2] & 0x40)) {
                 /* Left-Alt shortcuts (AltGr is not Alt): Enter = new terminal, Tab = cycle, F4 = close */
