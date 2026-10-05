@@ -189,8 +189,29 @@ cmd_list() {
     for d in $OPT/*; do [ -d "$d" ] && echo "${d##*/}"; done
 }
 
+# remove a package that came from the archive: delete its files unless another installed package lists them too
+remove_archive() {
+    name=$1
+    other=$($B ls $DB/*.list 2>/dev/null | $B grep -v "/$name.list$")
+    if [ -n "$other" ]; then
+        $B cat $other | $B sort -u > /tmp/pkg-keep.$$
+        $B grep -vxFf /tmp/pkg-keep.$$ $DB/$name.list > /tmp/pkg-del.$$
+        $B rm -f /tmp/pkg-keep.$$
+    else
+        $B cp $DB/$name.list /tmp/pkg-del.$$
+    fi
+    # files first (longest paths first so directories empty out), then empty directories
+    $B sort -r /tmp/pkg-del.$$ | while read -r f; do
+        [ -n "$f" ] || continue
+        if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi
+    done
+    $B rm -f /tmp/pkg-del.$$ $DB/$name.list
+    echo "removed $name"
+}
+
 cmd_remove() {
     name=$1
+    if [ -n "$name" ] && [ -f "$DB/$name.list" ]; then remove_archive "$name"; return; fi
     [ -n "$name" ] && [ -d "$OPT/$name" ] || die "not installed: $name"
     $B rm -rf "$OPT/$name"
     for f in $APPS /tmp/panel.conf /tmp/desktop.conf; do
