@@ -125,6 +125,11 @@ static void open_entry(struct ent *e) {
             snprintf(status, sizeof status, "installing %s ...", e->name);
             return;
         }
+    if (has_suffix(e->name, ".png") || has_suffix(e->name, ".jpg") || has_suffix(e->name, ".jpeg")) {      /* images open in the viewer */
+        if (fork() == 0) { execl("/thosview", "thosview", full, (char *)0); _exit(127); }
+        snprintf(status, sizeof status, "opening %s ...", e->name);
+        return;
+    }
     if (has_suffix(e->name, ".sh")) snprintf(cmd, sizeof cmd, "/busybox sh '%s'", full);
     else if (has_suffix(e->name, ".exe") || e->exec) snprintf(cmd, sizeof cmd, "'%s'", full);
     else snprintf(cmd, sizeof cmd, "/busybox less '%s'", full);

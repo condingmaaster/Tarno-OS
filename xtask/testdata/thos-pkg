@@ -188,8 +188,14 @@ install_one() {
     got=$($B sha256sum /tmp/pkg-$$.deb | $B cut -d' ' -f1)
     if [ "$got" != "$sha" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $name does not match the index"; return 1; fi
     $B mkdir -p $ROOT $DB
-    $B dpkg-deb -c /tmp/pkg-$$.deb | $B awk '{ print $NF }' | $B sed 's|^\./||' > $DB/$name.list
-    $B dpkg-deb -x /tmp/pkg-$$.deb $ROOT
+    $B dpkg-deb -c /tmp/pkg-$$.deb | $B awk '{ print $NF }' | $B sed 's|^\./||' > /tmp/pkg-$$.list
+    if ! $B dpkg-deb -x /tmp/pkg-$$.deb $ROOT; then
+        # whatever was unpacked before the failure is removed again (usually: the disk is full)
+        $B sort -r /tmp/pkg-$$.list | while read -r f; do [ -n "$f" ] || continue; if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi; done
+        $B rm -f /tmp/pkg-$$.deb /tmp/pkg-$$.list
+        echo "thos-pkg: unpacking $name failed (is the disk full? 'df' shows the free space)"; return 1
+    fi
+    $B mv /tmp/pkg-$$.list $DB/$name.list
     $B rm -f /tmp/pkg-$$.deb
 }
 

@@ -863,6 +863,40 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-view-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskview-serial.log"), root.join("target/deskview-mon.sock"));
+            let shots = [root.join("target/deskview1.ppm"), root.join("target/deskview2.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "view ready 200x100", 200) { return; }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                if !wait_for(&tlog, "view ready 160x90", 60) { return; }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "deskview", "/busybox sh /desk-view.sh", "desk ok:", 200);
+            let px = |n: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+                let (w, h, d) = read_ppm(&shots[n])?;
+                (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
+            };
+            let near = |c: Option<(u8, u8, u8)>, t: (i32, i32, i32)| c.is_some_and(|c| (c.0 as i32 - t.0).abs() + (c.1 as i32 - t.1).abs() + (c.2 as i32 - t.2).abs() < 40);
+            // window 1 (red.png, 200x100) at (100,80): its image is centred in the 800x580 picture area; window 2 (blue.jpg, 160x90) at (180,140)
+            let png = near(px(0, 410, 330), (255, 0, 0)) && near(px(0, 110, 90), (16, 16, 24));
+            let jpg = near(px(1, 510, 395), (0, 0, 255));
+            if out.contains("view ready 200x100") && out.contains("view ready 160x90") && png && jpg {
+                println!("desk-view-test PASSED: the image viewer decoded a PNG (libpng) and a JPEG (libjpeg) and drew them centred");
+            } else {
+                eprintln!("  png centre {:?}, jpeg centre {:?}", px(0, 410, 330), px(1, 510, 395));
+                for l in out.lines().filter(|l| l.contains("view") || l.contains("desk")) { eprintln!("  {l}"); }
+                eprintln!("desk-view-test FAILED");
+                exit(1);
+            }
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -1632,6 +1666,25 @@ fn disk_image() -> PathBuf {
             if Command::new("gcc").args(["-O1", "-pthread", "-o", mt.to_str().unwrap(), root.join("xtask/testdata/mapstest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} mapstest", mt.to_str().unwrap()), img.to_str().unwrap()]));
             }
+            // image viewer (PNG/JPEG through libpng and libjpeg, which go into the image with their dependencies)
+            let tv = root.join("target/thosview");
+            if Command::new("gcc").args(["-O1", "-o", tv.to_str().unwrap(), root.join("xtask/testdata/thosview.c").to_str().unwrap(), "-lpng", "-ljpeg"]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thosview", tv.to_str().unwrap()), img.to_str().unwrap()]));
+                let mut vdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                for lib in ["/usr/lib/x86_64-linux-gnu/libpng16.so.16", "/usr/lib/x86_64-linux-gnu/libjpeg.so.62"] {
+                    if std::path::Path::new(lib).exists() {
+                        add_dynamic_program(&img, lib, &mut vdirs);
+                    }
+                }
+            }
+            let blue = root.join("target/blue.jpg");
+            if Command::new("convert").args(["-size", "160x90", "xc:blue", blue.to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} blue.jpg", blue.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            let red = root.join("target/red.png");
+            if Command::new("convert").args(["-size", "200x100", "xc:red", red.to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} red.png", red.to_str().unwrap()), img.to_str().unwrap()]));
+            }
             let shim = root.join("target/openssl-shim");
             if Command::new("gcc").args(["-O1", "-o", shim.to_str().unwrap(), root.join("xtask/testdata/openssl-shim.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} openssl-shim", shim.to_str().unwrap()), img.to_str().unwrap()]));
@@ -1884,7 +1937,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5249,7 +5302,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-shot-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
