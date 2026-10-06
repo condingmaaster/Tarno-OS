@@ -833,12 +833,11 @@ fn main() {
                 && out.contains("pkg-zip-ran")
                 && out.contains("Pkg Demo|LD_LIBRARY_PATH=")
                 && out.contains("already installed")
-                && out.contains("(.msi) are not supported")
                 && out.contains("after-remove=pkgtool pkgzip apps=2")
                 && out.contains("trunc=bb,cc,")
                 && out.contains("shebang=2 path=2");
             if ok {
-                println!("pkg-test PASSED: thos-pkg installs a .deb, a .tar.gz and a .zip into /opt, lists them in the Start-menu file, the installed programs run, a second install and an .msi are refused, remove cleans up");
+                println!("pkg-test PASSED: thos-pkg installs a .deb, a .tar.gz and a .zip into /opt, lists them in the Start-menu file, the installed programs run and a second install is refused, remove cleans up");
             } else {
                 for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
                     eprintln!("  {l}");

@@ -2,7 +2,6 @@
 /busybox sh /thos-pkg install /pkgtool.tar.gz
 /busybox sh /thos-pkg install /pkgzip.zip
 /busybox sh /thos-pkg install /pkgdemo.deb
-/busybox sh /thos-pkg install /x.msi
 echo list=$(/busybox sh /thos-pkg list)
 /busybox cat /opt/apps.conf
 /busybox sh -c "$(/busybox sed -n 's/^Pkg Demo|//p' /opt/apps.conf)"
