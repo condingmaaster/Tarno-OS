@@ -21,7 +21,7 @@ Desktop mit schwebender Leiste, Startmenü, Dateimanager, Software-Zentrale, Bil
 - Parallel: Design fertigstellen (Fenster, Leiste, Menü, Programme) und Screenshots für die Doku.
 
 ### Woche 2 (bis ca. 20.10.): Installation auf die SSD
-- Installer im System: Platte wählen, Partition und ext2 anlegen, Limine in den MBR schreiben, System kopieren. Schutz: THOS fasst nur Platten an, die du ausdrücklich bestätigst; nie `THOSROOT`-fremde Partitionen ohne Rückfrage.
+- ✔ (2026-10-06, in QEMU) Installer `thos-install` (Stick → interne Platte, siehe acer-first-boot.md); offen: Auswahl zwischen mehreren Platten, Anpassung der Größe, grafische Oberfläche. Ursprünglicher Plan: Platte wählen, Partition und ext2 anlegen, Limine in den MBR schreiben, System kopieren. Schutz: THOS fasst nur Platten an, die du ausdrücklich bestätigst; nie `THOSROOT`-fremde Partitionen ohne Rückfrage.
 - Erster Start: Konto anlegen, Tastaturlayout, Zeitzone, Rechnername; danach Anmeldebildschirm im neuen Design.
 - Einstellungen-Programm (Netz, Anzeige, Konten, Autostart, Aussehen).
 

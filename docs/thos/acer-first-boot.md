@@ -63,3 +63,14 @@ sudo tools/make-stick.sh /dev/sdb               # schreibt das Image, erweitert 
 Das Skript weigert sich bei nicht-wechselbaren Datenträgern und bei eingehängten Partitionen und verlangt, dass man den Gerätenamen noch einmal eintippt.
 Benötigt: `dd lsblk sfdisk e2fsck resize2fs partprobe` (Paket `util-linux`, `e2fsprogs`). Das Vorgehen ist mit einer Imagedatei durchgespielt (Partition erweitern, `resize2fs`, `e2fsck` sauber).
 Beim Acer im BIOS (F2) „Boot Mode: Legacy" lassen, mit F12 den Stick wählen.
+
+
+## Auf die interne SSD installieren (`thos-install`)
+Läuft THOS vom Stick, kann es sich auf die interne Platte kopieren (in QEMU mit `cargo xtask install-test` geprüft: Stick → leere SATA-Platte → bootet allein).
+1. Vom Stick starten und anmelden. Im Startmenü erscheint **Install THOS** (nur wenn von USB gestartet), oder im Terminal: `thos-install`.
+2. Das Programm **löscht die ganze interne Platte** (`/dev/sda`): es fragt, ob du das Wort `ERASE` tippst, und danach das Administrator-Passwort (verdeckt eingegeben; nur das Admin-Konto darf das).
+3. Kopiert werden MBR, Limines Zwischenraum, die Boot-Partition und von der Root-Partition nur die belegten Blöcke (laut Block-Bitmap), mit Fortschrittsanzeige. Der MBR kommt zuletzt: bricht etwas ab, ist die Platte nicht bootbar, und der Installer lässt sich einfach neu starten.
+4. Danach herunterfahren, Stick ziehen, starten: THOS bootet von der Platte, dasselbe Konto gilt weiter.
+
+Technik dahinter: neue Rohgeräte `/dev/sda` (SATA) und `/dev/sdb` (USB) samt `/dev/sda1..4` (nur root; die Platte, von der gebootet wurde, ist schreibgeschützt), `/proc/bootdisk` (`usb` oder `sata`), `pwrite64`, THOS-Aufruf `readpass`, `thoselevate` (Admin-Passwort, dann Programm als root).
+Offen: die Root-Partition behält die Größe der Stick-Partition (der Rest der SSD bleibt frei); Größenanpassung folgt.
