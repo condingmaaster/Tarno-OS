@@ -1010,6 +1010,31 @@ fn main() {
                 None => { eprintln!("video-windows FAILED (no frames or ffmpeg failed)"); exit(1); }
             }
         }
+        "video-features" => {
+            let img = prod_interactive_image(cmd);
+            let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
+                let wait = |s: u64| std::thread::sleep(std::time::Duration::from_secs(s));
+                let mut cur = (640, 400);
+                wait(12);
+                let (wx, wy) = log_window(&log, "760x500", 0).unwrap_or((200, 100));
+                for i in 1..4 {                                      // through the settings pages
+                    pointer_to(&sock, &mut cur, wx + 100, wy + 62 + 44 * i + 22);
+                    wait(4);
+                    pointer_click(&sock);
+                    wait(9);
+                }
+                pointer_to(&sock, &mut cur, wx + 100, wy + 62 + 22);
+                wait(3);
+                pointer_click(&sock);
+                wait(20);
+                pointer_to(&sock, &mut cur, 640, 768);              // press the settings button in the dock
+                wait(10);
+            });
+            match record_video(&img, "videofeatures", "/busybox sh /desk-video-features.sh", "panel ready", 120, 20, Some(act)) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-features FAILED"); exit(1); }
+            }
+        }
         "video-menu" => {
             let img = prod_interactive_image(cmd);
             let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
@@ -1021,10 +1046,10 @@ fn main() {
                 pointer_click(&sock);
                 wait(12);
                 for i in 0..4 {                                      // glide down the list
-                    pointer_to(&sock, &mut cur, 150, 414 + 40 * i);
+                    pointer_to(&sock, &mut cur, 150, 374 + 40 * i);
                     wait(5);
                 }
-                pointer_to(&sock, &mut cur, 150, 454);              // Files
+                pointer_to(&sock, &mut cur, 150, 414);              // Files
                 wait(3);
                 pointer_click(&sock);
                 wait(16);
@@ -2118,7 +2143,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
