@@ -132,10 +132,10 @@ static char clock_hm[8], clock_day[24];
 static int hov_start;         /* the pointer is over the Start pill */
 enum { K_LAUNCH = 0, K_SEP = 1, K_WIN = 2 };
 #define MAXI 40
-struct dk { int kind, key, focused, present, x0, x1; char label[16]; struct spring w, pres, hov, foc; };
+struct dk { int kind, key, focused, present, x0, x1; char label[16]; struct spring w, pres, hov, foc, dip; };
 static struct dk items[MAXI];
 static int nitems;
-static struct spring start_hov;
+static struct spring start_hov, start_dip;                /* dip: the press feedback, 1 at the moment of the click and springing back to 0 */
 static int dock_avail(void) { return PW - 2 * DOCK_X - 118 - 112 - 2 * 14 - 20; }
 static struct dk *item_new(int kind, int key, const char *label, int at) {
     if (nitems >= MAXI) return 0;
@@ -144,7 +144,7 @@ static struct dk *item_new(int kind, int key, const char *label, int at) {
     memset(d, 0, sizeof *d);
     d->kind = kind; d->key = key; d->present = 1;
     snprintf(d->label, sizeof d->label, "%s", label);
-    spring_init(&d->w, 0, SP_DOCK); spring_init(&d->pres, 0, SP_SNAPPY); spring_init(&d->hov, 0, SP_HOVER); spring_init(&d->foc, 0, SP_SNAPPY);
+    spring_init(&d->w, 0, SP_DOCK); spring_init(&d->pres, 0, SP_SNAPPY); spring_init(&d->hov, 0, SP_HOVER); spring_init(&d->foc, 0, SP_SNAPPY); spring_init(&d->dip, 0, SP_SNAPPY);
     nitems++;
     return d;
 }
@@ -188,17 +188,17 @@ static void dock_sync(void) {
         spring_to(&d->foc, d->focused ? 1.0f : 0.0f);
     }
 }
-static int item_busy(const struct dk *d) { return spring_busy(&d->w) || spring_busy(&d->pres) || spring_busy(&d->hov) || spring_busy(&d->foc); }
+static int item_busy(const struct dk *d) { return spring_busy(&d->w) || spring_busy(&d->pres) || spring_busy(&d->hov) || spring_busy(&d->foc) || spring_busy(&d->dip); }
 static int dock_busy(void) {
-    if (spring_busy(&start_hov)) return 1;
+    if (spring_busy(&start_hov) || spring_busy(&start_dip)) return 1;
     for (int j = 0; j < nitems; j++) if (item_busy(&items[j])) return 1;
     return 0;
 }
 static void dock_step(float dt) {
-    spring_step(&start_hov, dt);
+    spring_step(&start_hov, dt); spring_step(&start_dip, dt);
     for (int j = 0; j < nitems; j++) {
         struct dk *d = &items[j];
-        spring_step(&d->w, dt); spring_step(&d->pres, dt); spring_step(&d->hov, dt); spring_step(&d->foc, dt);
+        spring_step(&d->w, dt); spring_step(&d->pres, dt); spring_step(&d->hov, dt); spring_step(&d->foc, dt); spring_step(&d->dip, dt);
         if (d->w.p < 0) d->w.p = 0;
     }
     for (int j = nitems - 1; j >= 0; j--)                                     /* gone for good once shrunk away */
@@ -221,8 +221,9 @@ static void draw_bar(void) {
     start_x0 = DOCK_X; start_x1 = DOCK_X + lw;
     if (start_hov.p > 0.02f) ui_rrect_g(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u, 0x2e3858u, fadeto(start_hov.p));
     float lift = start_hov.p * 1.0f;
-    ui_rrect_g(col, PW, PH, DOCK_X + 6, sy - (int)(lift + 0.5f), 36, 36, 12, UI_ACCENT_HI, 0x3560d4, 255);
-    ui_gloss(col, PW, PH, DOCK_X + 6, sy - (int)(lift + 0.5f), 36, 36, 12);
+    int ss = (int)(36 * (1.0f - 0.16f * (start_dip.p > 1 ? 1 : start_dip.p)) + 0.5f), so = (36 - ss) / 2;
+    ui_rrect_g(col, PW, PH, DOCK_X + 6 + so, sy - (int)(lift + 0.5f) + so, ss, ss, 12, UI_ACCENT_HI, 0x3560d4, 255);
+    ui_gloss(col, PW, PH, DOCK_X + 6 + so, sy - (int)(lift + 0.5f) + so, ss, ss, 12);
     ui_icon(col, PW, PH, DOCK_X + 24, sy + 18 - (int)(lift + 0.5f), 0xf00a, 16, 0xffffffu);
     ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
     /* right: clock */
@@ -248,18 +249,20 @@ static void draw_bar(void) {
             for (int y = DOCK_Y + 13; y < DOCK_Y + DOCK_H - 13; y++) col[y * PW + x + w / 2] = ui_mix(col[y * PW + x + w / 2], 0x4a5578u, fadeto(pr));
         } else if (d->kind == K_LAUNCH) {
             float h = d->hov.p < 0 ? 0 : d->hov.p;
-            int size = (int)((36 + 6 * h) * (0.55f + 0.45f * (pr > 1 ? 1 : pr)) + 0.5f), cx = x + w / 2;
+            float dp = d->dip.p > 1 ? 1 : d->dip.p < 0 ? 0 : d->dip.p;
+            int size = (int)((36 + 6 * h) * (0.55f + 0.45f * (pr > 1 ? 1 : pr)) * (1.0f - 0.16f * dp) + 0.5f), cx = x + w / 2;
             int ty = sy + (36 - size) / 2 - (int)(7 * h + 0.5f);
             if (h > 0.02f) ui_rrect_g(col, PW, PH, cx - 22, sy - 4, 44, 44, 14, 0x2e3858u, 0x2e3858u, fadeto(h));
             ui_set_clip(x, 0, x + w, PH);
             ui_tile(col, PW, PH, cx - size / 2, ty, size, d->label);
             ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
         } else {
-            int by = DOCK_Y + 5, bh = DOCK_H - 10;
+            float dp = d->dip.p > 1 ? 1 : d->dip.p < 0 ? 0 : d->dip.p;
+            int pin = (int)(dp * 4 + 0.5f), by = DOCK_Y + 5 + pin, bh = DOCK_H - 10 - 2 * pin;
             float f = d->foc.p < 0 ? 0 : d->foc.p > 1 ? 1 : d->foc.p, h = d->hov.p < 0 ? 0 : d->hov.p > 1 ? 1 : d->hov.p;
             ui_set_clip(x, 0, x + w - 6 > x ? x + w - 6 : x + 1, PH);
             uint32_t bg0 = ui_mix(ui_mix(0x1c2234u, 0x2a3350u, fadeto(h)), 0x34405fu, fadeto(f)), bg1 = ui_mix(ui_mix(0x1c2234u, 0x2a3350u, fadeto(h)), 0x232c45u, fadeto(f));
-            ui_rrect_g(col, PW, PH, x, by, w - 6, bh, 12, bg0, bg1, 255);
+            ui_rrect_g(col, PW, PH, x + pin, by, w - 6 - 2 * pin, bh, 12, bg0, bg1, 255);
             if (f > 0.02f) { ui_gloss(col, PW, PH, x, by, w - 6, bh, 12); int iw = (int)(24 * f); ui_rrect(col, PW, PH, x + (w - 6) / 2 - iw / 2, by + bh - 3, iw > 1 ? iw : 1, 3, 1, UI_ACCENT_HI); }
             char t[16]; snprintf(t, sizeof t, "%.12s", d->label[0] ? d->label : "Window");
             ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 8, ui_shade(ui_app_color(d->label), 18), ui_shade(ui_app_color(d->label), -20), 255);
@@ -431,7 +434,7 @@ int main(void) {
     fflush(stdout);
     int shown = -1, redraw = 0, log_pending = 0;
     long long last_ms = mo_now_ms();
-    spring_init(&start_hov, 0, SP_HOVER);
+    spring_init(&start_hov, 0, SP_HOVER); spring_init(&start_dip, 0, SP_SNAPPY);
     dock_sync();
     for (;;) {
         time_t now = time(0);
@@ -521,6 +524,7 @@ int main(void) {
         }
         if (m.op == WL_POINTER && m.c == 1) {
             if ((int)m.a >= start_x0 && (int)m.a < start_x1) {
+                start_dip.p = 1; spring_to(&start_dip, 0);
                 if (mfd >= 0) menu_close();
                 else if (ms_now() - closed_ms > 400) menu_open();    /* (a click outside the menu has just closed it) */
                 continue;
@@ -528,6 +532,7 @@ int main(void) {
             for (int j = 0; j < nitems; j++) {
                 struct dk *d = &items[j];
                 if (d->kind == K_SEP || !d->present || (int)m.a < d->x0 || (int)m.a >= d->x1) continue;
+                d->dip.p = 1; spring_to(&d->dip, 0);
                 if (d->kind == K_LAUNCH) { int i = find(bar, nbar, d->label); if (i >= 0) launch(bar[i].cmd); }
                 else { struct wl_msg r = { WL_RAISE, (uint32_t)d->key, 0, 0, 0 }; (void)!write(s, &r, sizeof r); }
                 break;

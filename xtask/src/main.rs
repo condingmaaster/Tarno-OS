@@ -7554,8 +7554,8 @@ fn desk_menu_test(img: &Path) {
             mon(sock, "mouse_button 0");
             std::thread::sleep(ms(700));
         };
-        // the menu: 7 programs, rows 40 px apart starting at y = 422 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
-        let row_y = |i: i32| 414 + 40 * i;
+        // the menu: 8 programs, rows 40 px apart starting at y = 382 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
+        let row_y = |i: i32| 374 + 40 * i;
         goto(36, 768);                       // Start
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
@@ -7567,9 +7567,9 @@ fn desk_menu_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
         goto(36, 768);                       // Start again, then the Terminal row itself
         click(&tsock);
-        goto(283, row_y(3));                 // dock chip of the Text editor row (fourth): pin to the dock
+        goto(283, row_y(4));                 // dock chip of the Text editor row (fifth): pin to the dock
         click(&tsock);
-        goto(319, row_y(5));                 // desktop chip of the Win32 demo row (sixth)
+        goto(319, row_y(6));                 // desktop chip of the Win32 demo row (seventh)
         click(&tsock);
         std::thread::sleep(ms(1500));
         mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
@@ -7586,10 +7586,10 @@ fn desk_menu_test(img: &Path) {
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
     let accent = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| (c.0 as i32 - 0x5b).abs() + (c.1 as i32 - 0x8d).abs() + (c.2 as i32 - 0xef).abs() < 60);
-    let menu_open = accent(px(0, 271, 414));                       // the Terminal row's dock chip is lit while the menu is open
+    let menu_open = accent(px(0, 271, 374));                       // the Terminal row's dock chip is lit while the menu is open
     let icon = px(1, 48, 40).is_some_and(|c| (c.0 as i32 - 16).abs() + (c.1 as i32 - 20).abs() + (c.2 as i32 - 40).abs() > 90); // a desktop icon tile, not wallpaper
     let icon_shot = px(1, 48, 50);
-    let menu_closed = !accent(px(1, 271, 414));
+    let menu_closed = !accent(px(1, 271, 374));
     let term = out.contains("term ready");
     if menu_open && icon && menu_closed && term {
         println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");
