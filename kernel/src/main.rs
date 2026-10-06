@@ -31,6 +31,7 @@ extern crate alloc;
 mod acpi;
 mod ahci;
 mod blk;
+mod rawdisk;
 mod apc;
 mod apic;
 mod console;

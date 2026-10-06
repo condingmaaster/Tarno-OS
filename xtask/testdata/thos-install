@@ -1,0 +1,25 @@
+#!/busybox sh
+# thos-install: put THOS on the internal disk (the one Windows or Linux may be on) from the stick it booted from.
+# It erases the whole internal disk, so it asks twice and needs the administrator password.
+B=/busybox
+BOOT=$($B cat /proc/bootdisk 2>/dev/null)
+if [ "$BOOT" != usb ]; then
+    echo "thos-install works from the THOS stick: boot the stick (this system is already running from the internal disk)."
+    exit 1
+fi
+echo "THOS installer"
+echo "  This ERASES the internal disk /dev/sda completely and copies THOS onto it."
+echo "  Everything that is on it now (Windows, Linux, your files) is lost."
+if [ "$1" != --yes ]; then
+    printf "  Type the word ERASE to continue: "
+    read ans
+    [ "$ans" = ERASE ] || { echo "cancelled, nothing was changed."; exit 1; }
+fi
+/bin/thoselevate /bin/thosinstall --erase /dev/sda
+rc=$?
+if [ $rc = 0 ]; then
+    echo "Done. Shut down, remove the stick and start the computer: it boots THOS from the internal disk."
+else
+    echo "The installation did not finish (code $rc). The internal disk is NOT bootable; run thos-install again."
+fi
+exit $rc

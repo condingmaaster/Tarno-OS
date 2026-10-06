@@ -29,6 +29,11 @@ pub struct Session {
 }
 
 /// Read one line from the keyboard console. `mask` hides it (password entry).
+/// One line from the keyboard (masked for passwords): also behind the THOS `readpass` syscall.
+pub fn read_line(label: &str, mask: bool) -> String {
+    prompt(label, mask)
+}
+
 fn prompt(label: &str, mask: bool) -> String {
     serial::write_bytes(label.as_bytes());
     console::set_echo(if mask { console::ECHO_MASKED } else { console::ECHO_NORMAL });

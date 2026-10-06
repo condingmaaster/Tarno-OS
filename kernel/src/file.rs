@@ -309,6 +309,7 @@ impl FileOps for DevFile {
 /// screen (the same objects fds 0/1 are made of).
 pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<dyn FileOps>> {
     Some(match path {
+        p if p.starts_with("/dev/sd") => crate::rawdisk::open(p)?,
         "/dev/null" => Arc::new(DevFile(DevKind::Null)),
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),

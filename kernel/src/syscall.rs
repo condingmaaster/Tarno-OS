@@ -92,6 +92,8 @@ const SYS_UTIMENSAT: u64 = 280;
 /// under `0xFFFF`, let alone this base.
 const THOS_BASE: u64 = 0x5448_0000; // 'T' 'H'
 const SYS_THOS_ELEVATE: u64 = THOS_BASE;
+/// `readpass(buf, cap)`: one line from the keyboard with the typed characters masked (a password prompt for programs that must not echo it).
+const SYS_THOS_READPASS: u64 = THOS_BASE + 1;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -200,6 +202,7 @@ const SYS_ACCESS: u64 = 21;
 const SYS_FACCESSAT: u64 = 269;
 const SYS_FACCESSAT2: u64 = 439;
 const SYS_PREAD64: u64 = 17;
+const SYS_PWRITE64: u64 = 18;
 const SYS_RT_SIGPENDING: u64 = 127;
 const SYS_RT_SIGSUSPEND: u64 = 130;
 const SYS_GETSID: u64 = 124;
@@ -642,6 +645,19 @@ fn sys_pread64(fd: u64, ptr: u64, len: u64, off: u64) -> i64 {
         return -29; // ESPIPE
     }
     let n = f.read(buf);
+    f.seek(save, 0);
+    n
+}
+
+/// `pwrite64(fd, buf, count, offset)`: write at an offset without moving the file position.
+fn sys_pwrite64(fd: u64, ptr: u64, len: u64, off: u64) -> i64 {
+    let Some(f) = cur_fd(fd) else { return EBADF };
+    let Ok(buf) = usercopy::slice(ptr, len as usize) else { return EFAULT };
+    let save = f.seek(0, 1);
+    if save < 0 || f.seek(off as i64, 0) < 0 {
+        return -29; // ESPIPE
+    }
+    let n = f.write(buf);
     f.seek(save, 0);
     n
 }
@@ -1723,6 +1739,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             _ => EINVAL,
         },
         SYS_PREAD64 => sys_pread64(a1, a2, a3, a4),
+        SYS_PWRITE64 => sys_pwrite64(a1, a2, a3, a4),
         SYS_ACCESS => sys_access(a1, a2),
         SYS_FACCESSAT | SYS_FACCESSAT2 => sys_access(a2, a3),
 
@@ -2213,6 +2230,21 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         SYS_THOS_ELEVATE => sys_elevate(a1, a2, a3),
         #[cfg(not(feature = "interactive"))]
         SYS_THOS_ELEVATE => ENOSYS,
+        #[cfg(feature = "interactive")]
+        SYS_THOS_READPASS => {
+            let line = crate::login::read_line("", true);
+            let n = line.len().min(a2.saturating_sub(1) as usize);
+            match usercopy::slice_mut(a1, n + 1) {
+                Ok(b) => {
+                    b[..n].copy_from_slice(&line.as_bytes()[..n]);
+                    b[n] = 0;
+                    n as i64
+                }
+                Err(e) => e,
+            }
+        }
+        #[cfg(not(feature = "interactive"))]
+        SYS_THOS_READPASS => ENOSYS,
 
         n => {
             kprintln!("THOS: unhandled syscall {}", n);

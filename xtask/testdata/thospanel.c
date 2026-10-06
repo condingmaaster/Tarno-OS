@@ -115,6 +115,10 @@ static void build_apps(void) {
     add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
     add_app("GTK demo", "/gtkhello 70");
     add_app("Win32 demo", "/thoswin");
+    { FILE *bd = fopen("/proc/bootdisk", "r");              /* booted from a stick: offer the installer */
+      char b[16] = "";
+      if (bd) { if (fgets(b, sizeof b, bd)) {} fclose(bd); }
+      if (!strncmp(b, "usb", 3)) add_app("Install THOS", "TERM:/bin/thos-install"); }
     add_app("System info", "TERM:/bin/hwreport > /dev/null; /busybox less /tmp/hwreport.txt");
     static struct ent extra[MAXA];
     for (int f = 0; f < 2; f++) {

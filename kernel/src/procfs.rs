@@ -170,7 +170,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
         [] => {
-            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "self"]
+            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "bootdisk", "self"]
                 .iter()
                 .map(|n| (n.to_string(), if *n == "self" { DT_DIR } else { DT_REG }))
                 .collect();
@@ -193,6 +193,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         }
         ["version"] => file(path, "Linux version 6.1.0-thos (thos@thos) (rustc) #1 SMP THOS\n".to_string()),
         ["cpuinfo"] => file(path, cpuinfo()),
+        ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_usb() { "usb" } else { "sata" })),
         ["netinfo"] => {
             let ip = crate::net::local_ip();
             let up = ip != [0; 4];

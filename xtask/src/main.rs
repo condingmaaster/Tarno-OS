@@ -575,6 +575,66 @@ fn main() {
                 exit(1);
             }
         }
+        "install-test" => {
+            // booted from a stick (USB) with a blank internal SATA disk: thos-install copies THOS onto it; then the internal disk boots alone
+            std::env::set_var("THOS_BOOT_USB", "1");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let target = root.join("target/install-target.img");
+            let _ = std::fs::remove_file(&target);
+            let size = std::fs::metadata(&img).map(|m| m.len()).unwrap_or(0) + (64 << 20);
+            std::fs::File::create(&target).and_then(|f| f.set_len(size)).expect("create the target disk");
+            let sock = root.join("target/installstick-mon.sock");
+            let log = root.join("target/installstick-serial.log");
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                if wait_for(&tlog, "Administrator password:", 200) {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    type_line(&tsock, "pass");
+                }
+            });
+            let tgt_arg = format!("id=tgt,if=none,format=raw,file={}", target.to_str().unwrap());
+            let out = boot_and_run_args(&img, "installstick", "thos-install --yes; echo install-ok-$((12))", "install-ok-12", 400,
+                &["-drive", &tgt_arg, "-device", "ahci,id=ahci1", "-device", "ide-hd,drive=tgt,bus=ahci1.0"]);
+            let done = out.contains("install done:") && out.lines().any(|l| l.trim() == "install-ok-12");
+            if !done {
+                for l in out.lines().filter(|l| l.contains("install") || l.contains("progress") || l.contains("password") || l.contains("cannot") || l.contains("denied")).take(30) { eprintln!("  {l}"); }
+                eprintln!("install-test FAILED (the installer did not finish)");
+                exit(1);
+            }
+            // now boot only the internal disk (no stick) and log in with the account that was created on the stick
+            let (log2, sock2) = (root.join("target/installed-serial.log"), root.join("target/installed-mon.sock"));
+            let _ = std::fs::remove_file(&log2);
+            let _ = std::fs::remove_file(&sock2);
+            let mut child = Command::new("qemu-system-x86_64")
+                .args(["-M", "pc", "-m", "512M", "-smp", "2", "-display", "none", "-no-reboot"])
+                .args(["-drive", &format!("id=disk0,if=none,format=raw,file={}", target.to_str().unwrap()), "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0"])
+                .args(["-serial", &format!("file:{}", log2.to_str().unwrap()), "-monitor", &format!("unix:{},server,nowait", sock2.to_str().unwrap())])
+                .spawn()
+                .expect("spawn qemu");
+            let ok = wait_for(&log2, "THOS login:", 120) && {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                type_line(&sock2, "thos");
+                wait_for(&log2, "password:", 20) && {
+                    std::thread::sleep(std::time::Duration::from_millis(800));
+                    type_line(&sock2, "pass");
+                    wait_for(&log2, "interactive hold", 90)
+                }
+            } && {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                type_line(&sock2, "echo reboot-ok-$((13))");
+                wait_for(&log2, "reboot-ok-13", 30)
+            };
+            let _ = child.kill();
+            let _ = child.wait();
+            if ok {
+                println!("install-test PASSED: thos-install copied THOS from the stick to the internal disk, which then booted on its own and accepted the same login");
+            } else {
+                eprintln!("{}", std::fs::read_to_string(&log2).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
+                eprintln!("install-test FAILED (the installed disk did not boot and log in)");
+                exit(1);
+            }
+        }
         "audio-test" => {
             // Intel HD Audio (QEMU's intel-hda + hda-output): a tone written to /dev/dsp reaches the (wav) audio backend
             let img = prod_interactive_image(cmd);
@@ -2254,7 +2314,13 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "winrg.sh", "winrt.sh"] {
+                for prog in ["thoselevate", "thosinstall"] {          // the installer: root helper + the disk copier
+                    let out = root.join(format!("target/{prog}"));
+                    if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                        run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
+                    }
+                }
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2542,7 +2608,7 @@ fn disk_image() -> PathBuf {
             img.to_str().unwrap(),
         ]));
     }
-    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart")] {
+    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall")] {
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
     }
     // links_count = the root `/busybox` entry + every `/bin/*` link.

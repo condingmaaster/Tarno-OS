@@ -194,7 +194,7 @@ static void ui_disc(uint32_t *buf, int bw, int bh, int cx, int cy, int rad, uint
 
 /* the glyph and tile colour a program gets on the desktop, in the Start menu and the software centre */
 static uint32_t ui_app_glyph(const char *label) {
-    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Settings", IC_COG }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
+    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Settings", IC_COG }, { "Install", IC_DOWNLOAD }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
         { "Win32", IC_WIN }, { "System", IC_INFO }, { "Web", 0xf0ac }, { "Image", IC_IMAGE }, { "GTK", IC_PUZZLE }, { "Pkg", IC_BOX } };
     for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) if (!strncasecmp(label, m[i].k, strlen(m[i].k))) return m[i].g;
     return IC_PUZZLE;
