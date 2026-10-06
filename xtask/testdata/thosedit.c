@@ -180,7 +180,8 @@ int main(int argc, char **argv) {
     int id = shmget(key, EW * EH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
     if (px == (void *)-1 || gfx_load_font() != 0 || ui_init() != 0) { puts("edit FAIL: shm/font"); return 1; }
-    snprintf(path, sizeof path, "%s", argc > 1 ? argv[1] : "/tmp/untitled.txt");
+    if (argc > 1) snprintf(path, sizeof path, "%s", argv[1]);
+    else { const char *h = getenv("HOME"); snprintf(path, sizeof path, "%s/untitled.txt", h && h[1] ? h : "/tmp"); }
     load(path);
     cw = ui_text_width(UI_MONO, FS, "MMMMMMMMMM") / 10;
     if (cw < 4) cw = 8;

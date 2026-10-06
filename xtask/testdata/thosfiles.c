@@ -39,9 +39,24 @@ static struct ui_list list;
 static struct spring side_hl;                  /* the sidebar's hover highlight: a pill that glides between places */
 static char status[140];
 static int armed = -1;                         /* Delete pressed once on this entry */
-static const struct { const char *label, *path; uint32_t icon; } places[] = {
-    { "Home", "/tmp", IC_HOME }, { "Programs", "/opt", IC_BOX }, { "Computer", "/", IC_DESKTOP }, { "System", "/etc", IC_COG } };
-#define NPLACES 4
+static struct { const char *label; char path[200]; uint32_t icon; } places[8];
+static int NPLACES;
+static void build_places(void) {                          /* the user's folders first, then the system ones */
+    const char *h = getenv("HOME");
+    char home[160];
+    int has_home = h && h[0] == '/' && h[1];
+    snprintf(home, sizeof home, "%s", has_home ? h : "/tmp");
+    struct { const char *l, *sub; uint32_t ic; } user[] = { { "Home", "", IC_HOME }, { "Documents", "/Documents", 0xf0f6 }, { "Downloads", "/Downloads", IC_DOWNLOAD }, { "Pictures", "/Pictures", IC_IMAGE } };
+    NPLACES = 0;
+    for (int i = 0; i < 4; i++) {
+        if (i > 0 && !has_home) break;
+        places[NPLACES].label = user[i].l; places[NPLACES].icon = user[i].ic;
+        snprintf(places[NPLACES].path, sizeof places[0].path, "%s%s", home, user[i].sub);
+        NPLACES++;
+    }
+    struct { const char *l, *p; uint32_t ic; } sys[] = { { "Programs", "/opt", IC_BOX }, { "Computer", "/", IC_DESKTOP }, { "System", "/etc", IC_COG } };
+    for (int i = 0; i < 3; i++) { places[NPLACES].label = sys[i].l; places[NPLACES].icon = sys[i].ic; snprintf(places[NPLACES].path, sizeof places[0].path, "%s", sys[i].p); NPLACES++; }
+}
 
 static int has_suffix(const char *n, const char *suf) {
     size_t a = strlen(n), b = strlen(suf);
@@ -97,7 +112,7 @@ static void render(void) {
     ui_text(px, FW, FH, 20, 36, "Places", UI_BOLD, 11, UI_MUTED);
     if (side_hover >= 0) ui_rrect_g(px, FW, FH, 10, 52 + (int)side_hl.p, SIDE - 20, 32, 9, 0x1c2336, 0x1c2336, 255);
     for (int i = 0; i < NPLACES; i++) {
-        int y = 52 + i * 38, here = !strcmp(cwd, places[i].path) || (i == 2 && !strcmp(cwd, "/"));
+        int y = 52 + i * 38, here = !strcmp(cwd, places[i].path);
         if (here) ui_rrect(px, FW, FH, 10, y, SIDE - 20, 32, 9, 0x232b42);
         ui_icon(px, FW, FH, 32, y + 16, places[i].icon, 14, here ? UI_ACCENT_HI : 0x8e97ae);
         ui_text(px, FW, FH, 52, y + 21, places[i].label, here ? UI_BOLD : UI_REG, 14, here ? UI_TEXT : 0xc2c9dc);
@@ -156,7 +171,7 @@ static void go(const char *to) {
 }
 static void in_terminal(const char *cmd) {
     if (fork() != 0) return;
-    setenv("HOME", "/tmp", 1); setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("LC_ALL", "C.UTF-8", 1);
+    if (!getenv("HOME") || !strcmp(getenv("HOME"), "/")) setenv("HOME", "/tmp", 1); setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("LC_ALL", "C.UTF-8", 1);
     if (getenv("FILES_LOG")) execl("/thosterm", "thosterm", "-l", "-c", cmd, (char *)0);   /* -l: terminal lines also to the serial log */
     execl("/thosterm", "thosterm", "-c", cmd, (char *)0);
     _exit(127);
@@ -211,6 +226,8 @@ int main(void) {
     (void)!write(sock, &t, sizeof t);
     ui_list_init(&list, ROW, LIST_H);
     spring_init(&side_hl, 0, SP_HOVER);
+    build_places();
+    snprintf(cwd, sizeof cwd, "%s", places[0].path);
     char *home = getenv("FILES_START");
     if (home) snprintf(cwd, sizeof cwd, "%s", home);
     load();

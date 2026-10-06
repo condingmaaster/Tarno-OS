@@ -227,14 +227,25 @@ extern "C" fn kmain() -> ! {
                 .read_path("/busybox")
                 .unwrap_or_else(|| fatal_boot("no login shell", "/busybox is missing from the root filesystem"));
             kprintln!("THOS: shell            /busybox sh = {} bytes", sh.len());
+            // the user's home folder (/home/<name> with the usual folders), created on first login; the name is reduced to safe characters
+            let safe: alloc::string::String = session.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+            let home = alloc::format!("/home/{}", if safe.is_empty() { "user" } else { safe.as_str() });
+            let _ = fs.mkdir_path("/home");
+            let _ = fs.mkdir_path_owned(&home, session.uid, session.uid);
+            for d in ["Documents", "Downloads", "Pictures", "Desktop"] {
+                let _ = fs.mkdir_path_owned(&alloc::format!("{home}/{d}"), session.uid, session.uid);
+            }
+            let home_env = alloc::format!("HOME={home}");
+            let user_env = alloc::format!("USER={}", session.name);
             let pid = process::spawn_init(
                 &sh,
                 &["sh"],
                 &[
+                    home_env.as_str(),
+                    user_env.as_str(),
                     "PATH=/bin:/:/opt/root/usr/bin:/opt/root/bin",
                     "LD_LIBRARY_PATH=/opt/root/usr/lib/x86_64-linux-gnu:/opt/root/lib/x86_64-linux-gnu:/opt/root/usr/lib",
                     "TERMINFO_DIRS=/usr/share/terminfo:/opt/root/lib/terminfo:/opt/root/usr/share/terminfo",
-                    "HOME=/",
                     "ENV=/shrc",
                     "PWD=/",
                     "TERM=dumb",

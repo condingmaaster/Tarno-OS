@@ -389,7 +389,7 @@ static void launch(const char *cmd) {
     if (fork() != 0) return;
     if (!*cmd) execl("/thosterm", "thosterm", "-l", (char *)0);
     if (!strncmp(cmd, "TERM:", 5)) execl("/thosterm", "thosterm", "-c", cmd + 5, (char *)0);          /* "TERM:command" runs in a terminal window */
-    setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("HOME", "/tmp", 1); setenv("LC_ALL", "C.UTF-8", 1);
+    setenv("XDG_RUNTIME_DIR", "/run", 1); if (!getenv("HOME") || !strcmp(getenv("HOME"), "/")) setenv("HOME", "/tmp", 1); setenv("LC_ALL", "C.UTF-8", 1);
     setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1); setenv("GDK_BACKEND", "wayland", 1);
     execl("/busybox", "sh", "-c", cmd, (char *)0);
     _exit(127);
