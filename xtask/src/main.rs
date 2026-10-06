@@ -5761,15 +5761,15 @@ fn shortcuts_test(img: &Path) {
     settle(300);
 
     // 3. Select all + copy + paste: the whole text model comes back as typed
-    //    input, which includes an early boot line a second time. (The first two
-    //    boot lines predate the framebuffer console, so they are not in its model.)
-    let boots = text(&log).matches("THOS: GDT + IDT loaded").count();
+    //    input, which includes the BusyBox banner a second time. (Boot lines are not in it:
+    //    the splash keeps them off the framebuffer.)
+    let boots = text(&log).matches("for a list of built-in commands").count();
     key("ctrl-shift-a");
     key("ctrl-shift-c");
     settle(300);
     key("ctrl-shift-v");
     settle(1500);
-    let boots2 = text(&log).matches("THOS: GDT + IDT loaded").count();
+    let boots2 = text(&log).matches("for a list of built-in commands").count();
     if boots2 <= boots {
         fails.push(format!("select-all+copy+paste did not reproduce the scrollback ({boots} -> {boots2})"));
     }
