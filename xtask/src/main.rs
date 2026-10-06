@@ -1271,6 +1271,31 @@ fn main() {
                 None => { eprintln!("video-minimize FAILED"); exit(1); }
             }
         }
+        "video-theme" => {
+            let img = prod_interactive_image(cmd);
+            let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
+                let wait = |s: u64| std::thread::sleep(std::time::Duration::from_secs(s));
+                let mut cur = (640, 400);
+                wait(14);
+                let (wx, wy) = log_window(&log, "760x500", 0).unwrap_or((200, 100));
+                for i in [5, 2, 4] {                                         // accent colours: pink, teal, amber
+                    pointer_to(&sock, &mut cur, wx + 264 + 56 * i, wy + 146);
+                    wait(3);
+                    pointer_click(&sock);
+                    wait(10);
+                }
+                for i in [1, 2, 3, 0] {                                      // wallpapers: dusk, forest, graphite, aurora
+                    pointer_to(&sock, &mut cur, wx + 301 + 116 * i, wy + 280);
+                    wait(3);
+                    pointer_click(&sock);
+                    wait(12);
+                }
+            });
+            match record_video(&img, "videotheme", "/busybox sh /desk-video-theme.sh", "panel ready", 100, 20, Some(act)) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-theme FAILED"); exit(1); }
+            }
+        }
         "video-menu" => {
             let img = prod_interactive_image(cmd);
             let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
@@ -2385,7 +2410,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
