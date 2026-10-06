@@ -251,7 +251,7 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
     }
     s->has_dmg = 0;
     buf_release(c, s->pend_buf);
-    if (fresh) { w->fade = 200; compose(outer_of(w)); wls_focus_keyboard(s); }   /* titlebar, border and shadow too; the new window takes the keyboard */
+    if (fresh) { win_anim_start(w); w->ready = 1; compose(outer_of(w)); wls_focus_keyboard(s); }   /* titlebar, border and shadow too; the new window takes the keyboard */
     else if (old.x1 > old.x0) compose(uni(old, outer_of(w)));
     else compose(isect(content_of(w), rect_xywh(w->x + x0, w->y + y0, x1 - x0, y1 - y0)));
 }

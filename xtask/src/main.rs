@@ -949,6 +949,13 @@ fn main() {
             let ok = shots.iter().all(|p| p.exists()) && out.contains("desk ok");
             if ok { println!("desk-showcase-test: screenshots in target/showcase-1.ppm and -2.ppm"); } else { eprintln!("desk-showcase-test FAILED"); exit(1); }
         }
+        "video-windows" => {
+            let img = prod_interactive_image(cmd);
+            match record_video(&img, "videowin", "/busybox sh /desk-video-windows.sh", "panel ready", 105, 20) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-windows FAILED (no frames or ffmpeg failed)"); exit(1); }
+            }
+        }
         "video-dock" => {
             let img = prod_interactive_image(cmd);
             match record_video(&img, "videodock", "/busybox sh /desk-video-dock.sh", "panel ready", 105, 20) {
@@ -2011,7 +2018,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));

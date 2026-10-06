@@ -24,6 +24,7 @@
 #include "thoswl.h"
 #include "thosgfx.h"
 #include "thosui.h"
+#include "thosmotion.h"
 
 #define MAXWIN 16
 #define BORDER 1
@@ -37,8 +38,10 @@ struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
     struct bitfield red, green, blue, transp; uint32_t rest[24]; };
 
+struct rect { int x0, y0, x1, y1; };     /* half-open */
 struct wlsurf;
-struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar; };
+struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar;
+    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc; struct tween opq; uint32_t *snap; struct rect snap_r; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -62,7 +65,6 @@ static void blit_row(uint32_t *dst, const uint32_t *src, int n) {
     for (int i = 0; i < n; i++) dst[i] = fbpx(src[i]);
 }
 
-struct rect { int x0, y0, x1, y1; };     /* half-open */
 static int in(struct rect r, int x, int y);
 static struct rect rect_xywh(int x, int y, int w, int h) { return (struct rect){ x, y, x + w, y + h }; }
 static struct rect clip(struct rect r) {
@@ -197,7 +199,7 @@ static struct rect shadow_src(struct win *w) { struct rect f = frame_of(w); retu
 static void draw_shadow(struct win *w, int top, struct rect r) {
     struct rect o = isect(outer_of(w), r), f = frame_of(w), S = shadow_src(w);
     if (empty(o)) return;
-    unsigned gain = top ? 256 : 190;
+    unsigned gain = 190 + (unsigned)(66.0f * (w->foc.p < 0 ? 0 : w->foc.p > 1 ? 1 : w->foc.p));
     for (int y = o.y0; y < o.y1; y++) {
         int dy = S.y0 - y > 0 ? S.y0 - y : (y - (S.y1 - 1) > 0 ? y - (S.y1 - 1) : 0);
         for (int x = o.x0; x < o.x1; x++) {
@@ -213,9 +215,8 @@ static void draw_shadow(struct win *w, int top, struct rect r) {
 }
 
 /* one titlebar row's colour: a vertical gradient, brighter when focused */
-static uint32_t title_color(int row, int top) {
-    if (!top) return rgb(27, 31, 43);
-    return ui_mix(0x333b58u, 0x1e2336u, (unsigned)(row * 255 / TITLE));
+static uint32_t title_color(int row, unsigned f) {                     /* f: focus 0..255, the titlebar brightens as the window takes focus */
+    return ui_mix(rgb(27, 31, 43), ui_mix(0x333b58u, 0x1e2336u, (unsigned)(row * 255 / TITLE)), f);
 }
 
 /* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
@@ -296,9 +297,9 @@ static void put_glyph_str(const char *t, int gx, int gy, uint32_t c, unsigned op
 static void draw_window(struct win *w, int top, struct rect r) {
     struct rect f = frame_of(w), v = isect(f, r);
     if (empty(v)) return;
-    unsigned op = 256 - (unsigned)w->fade * 256 / 256;      /* fade-in: 0..256 */
-    if (op > 256) op = 256;
-    uint32_t border = top ? rgb(66, 76, 108) : rgb(44, 50, 68);
+    unsigned op = 256;
+    unsigned fz = (unsigned)(255.0f * (w->foc.p < 0 ? 0 : w->foc.p > 1 ? 1 : w->foc.p));
+    uint32_t border = ui_mix(rgb(44, 50, 68), rgb(66, 76, 108), fz);
     for (int y = v.y0; y < v.y1; y++) {
         int row = y - f.y0, rows = f.y1 - f.y0;
         uint32_t *d = &bb[(size_t)y * W];
@@ -316,7 +317,7 @@ static void draw_window(struct win *w, int top, struct rect r) {
             uint32_t src;
             int cov = 256;
             if (w->deco) {
-                if (y < w->y) src = title_color(y - f.y0, top);
+                if (y < w->y) src = title_color(y - f.y0, fz);
                 else if (y >= w->y + w->h || x < w->x || x >= w->x + w->w) src = border;
                 else goto content;
                 if (y == f.y0 || x == f.x0 || x == f.x1 - 1 || y == f.y1 - 1) src = border;
@@ -351,15 +352,110 @@ static void draw_window(struct win *w, int top, struct rect r) {
     int tw = w->w - 90;
     char tt[80]; snprintf(tt, sizeof tt, "%s", w->title);
     while (tt[0] && ui_text_width(UI_REG, 13, tt) > tw && strlen(tt) > 3) tt[strlen(tt) - 1] = 0;
-    ui_text_a(B, W, H, w->x + 16, w->y - TITLE + 24, tt, top ? UI_BOLD : UI_REG, 13, top ? UI_TEXT : UI_MUTED, op);
+    ui_text_a(B, W, H, w->x + 16, w->y - TITLE + 24, tt, fz > 127 ? UI_BOLD : UI_REG, 13, ui_mix(UI_MUTED, UI_TEXT, fz), op);
     struct rect cb = close_btn(w);
     int ccx = (cb.x0 + cb.x1) / 2, ccy = (cb.y0 + cb.y1) / 2, hot = hover_win == w->id;
     if (hot) ui_disc(B, W, H, ccx, ccy, BTN / 2, UI_BAD);
-    ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, hot ? 0xffffffu : (top ? 0xb4bbd0u : 0x6c748cu));
+    ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, hot ? 0xffffffu : ui_mix(0x6c748cu, 0xb4bbd0u, fz));
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
 }
 
 /* Repaint everything inside `r` (screen coordinates), bottom to top, then blit it. */
+/* ---- window animations ----
+   A window that opens or closes is first captured as a premultiplied-ARGB snapshot (its frame, content and shadow, drawn once over black
+   and once over white; the difference gives the alpha), then that snapshot is scaled and faded each frame. Closing windows live on as
+   ghosts after the window itself is gone. */
+static struct rect inflate_r(struct rect r, int d) { return (struct rect){ r.x0 - d, r.y0 - d, r.x1 + d, r.y1 + d }; }
+static void snap_build(struct win *w) {
+    free(w->snap); w->snap = 0;
+    struct rect r = clip(outer_of(w));
+    if (empty(r)) return;
+    int sw = r.x1 - r.x0, sh = r.y1 - r.y0;
+    uint32_t *out = malloc((size_t)sw * sh * 4), *blk = malloc((size_t)sw * sh * 4);
+    if (!out || !blk) { free(out); free(blk); return; }
+    float keep = w->foc.p, keepsc = w->sc.p;
+    w->foc.p = 1;                                                   /* captured in its focused look */
+    for (int pass = 0; pass < 2; pass++) {
+        uint32_t bgc = pass ? 0x00ffffffu : 0u;
+        for (int y = r.y0; y < r.y1; y++) for (int x = r.x0; x < r.x1; x++) bb[(size_t)y * W + x] = bgc;
+        if (w->deco) draw_shadow(w, 1, r);
+        draw_window(w, 1, r);
+        for (int y = 0; y < sh; y++)
+            for (int x = 0; x < sw; x++) {
+                uint32_t p = bb[(size_t)(r.y0 + y) * W + r.x0 + x];
+                if (!pass) blk[(size_t)y * sw + x] = p;
+                else {
+                    uint32_t b0 = blk[(size_t)y * sw + x];
+                    int dr = (int)((p >> 16) & 255) - (int)((b0 >> 16) & 255), dg = (int)((p >> 8) & 255) - (int)((b0 >> 8) & 255), db = (int)(p & 255) - (int)(b0 & 255);
+                    int a = 255 - (dr + dg + db) / 3;
+                    if (a < 0) a = 0;
+                    if (a > 255) a = 255;
+                    out[(size_t)y * sw + x] = ((uint32_t)a << 24) | (b0 & 0x00ffffffu);          /* colour over black is already premultiplied */
+                }
+            }
+    }
+    free(blk);
+    w->foc.p = keep; w->sc.p = keepsc;
+    w->snap = out; w->snap_r = r;
+}
+/* draw a snapshot scaled about (ax, ay) (fractions of its size) and faded; only inside `r` */
+static void draw_snap_at(const uint32_t *snap, struct rect o, float ax, float ay, float scale, float opac, struct rect r) {
+    if (!snap) return;
+    if (scale < 0.05f) scale = 0.05f;
+    if (opac <= 0) return;
+    if (opac > 1) opac = 1;
+    int sw = o.x1 - o.x0, sh = o.y1 - o.y0;
+    float cx = o.x0 + ax * sw, cy = o.y0 + ay * sh, inv = 1.0f / scale;
+    struct rect d = isect(clip((struct rect){ (int)floorf(cx + (o.x0 - cx) * scale), (int)floorf(cy + (o.y0 - cy) * scale), (int)ceilf(cx + (o.x1 - cx) * scale), (int)ceilf(cy + (o.y1 - cy) * scale) }), r);
+    if (empty(d)) return;
+    unsigned op = (unsigned)(opac * 256.0f);
+    for (int y = d.y0; y < d.y1; y++) {
+        int sy = (int)((y + 0.5f - cy) * inv + cy - o.y0);
+        if (sy < 0 || sy >= sh) continue;
+        const uint32_t *row = snap + (size_t)sy * sw;
+        uint32_t *dst = &bb[(size_t)y * W];
+        float fx = (d.x0 + 0.5f - cx) * inv + cx - o.x0;
+        for (int x = d.x0; x < d.x1; x++, fx += inv) {
+            int sx = (int)fx;
+            if (sx < 0 || sx >= sw) continue;
+            uint32_t p = row[sx];
+            unsigned a = (p >> 24) * op >> 8;
+            if (!a) continue;
+            uint32_t c = scale_px(p & 0x00ffffffu, op);
+            dst[x] = (c & 0x00ffffffu) + scale_px(dst[x], 256 - a - (a >> 7));
+        }
+    }
+}
+struct ghost { uint32_t *snap; struct rect r; float ax, ay; struct spring sc; struct tween opq; int active; };
+#define MAXGHOST 8
+static struct ghost ghosts[MAXGHOST];
+static void draw_ghosts(struct rect r) {
+    for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) draw_snap_at(ghosts[i].snap, ghosts[i].r, ghosts[i].ax, ghosts[i].ay, ghosts[i].sc.p, tween_value(&ghosts[i].opq, ease_in), r);
+}
+/* the window is about to be removed: keep a fading copy of it */
+static void ghost_from(struct win *w) {
+    if (w->anim == 1 || (!w->deco && !w->menu && !w->popup) || w->taskbar) return;
+    int slot = -1;
+    for (int i = 0; i < MAXGHOST; i++) if (!ghosts[i].active) { slot = i; break; }
+    if (slot < 0) return;
+    float s0 = w->anim == 2 ? w->sc.p : 1.0f;
+    if (w->anim != 2 || !w->snap) snap_build(w);
+    if (!w->snap) return;
+    struct ghost *g = &ghosts[slot];
+    g->snap = w->snap; w->snap = 0; g->r = w->snap_r; g->ax = w->ax; g->ay = w->ay; g->active = 1;
+    int quick = w->menu || w->popup;
+    spring_init(&g->sc, s0, SP_SNAPPY);
+    spring_to(&g->sc, quick ? 0.97f : 0.94f);
+    tween_start(&g->opq, 1.0f, 0.0f, quick ? 110 : MO_FAST + 20);
+}
+static void win_anim_start(struct win *w) {                           /* called when a window is created: it stays hidden until its first content arrived */
+    w->anim = 1; w->anim_t0 = mo_now_ms(); w->ax = 0.5f; w->ay = 0.5f;
+    if (w->menu) { w->ax = 0.12f; w->ay = 1.0f; }
+    if (w->popup) { w->ax = 0.3f; w->ay = 0.0f; }
+    spring_init(&w->sc, 0.9f, SP_POP);
+    spring_init(&w->foc, 0, SP_SNAPPY);
+}
+
 static void compose(struct rect r) {
     r = clip(r);
     if (empty(r)) return;
@@ -368,9 +464,12 @@ static void compose(struct rect r) {
     for (int i = 0; i < nwin; i++) {
         struct win *w = &wins[i];
         int top = i == nwin - 1;
+        if (w->anim == 1) continue;                                     /* not shown yet */
+        if (w->anim == 2) { draw_snap_at(w->snap, w->snap_r, w->ax, w->ay, w->sc.p, tween_value(&w->opq, ease_out), r); continue; }
         if (w->deco) draw_shadow(w, top, r);
         draw_window(w, top, r);
     }
+    draw_ghosts(r);
     for (int y = r.y0; y < r.y1; y++)
         blit_row((uint32_t *)(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4), &bb[(size_t)y * W + r.x0], r.x1 - r.x0);
     draw_cursor();
@@ -395,6 +494,9 @@ static void ws_send(unsigned kind, unsigned hwnd, unsigned a, unsigned b, unsign
 
 static void remove_win(int i) {
     struct rect f = outer_of(&wins[i]);
+    ghost_from(&wins[i]);                                    /* a closing window fades out as a ghost */
+    free(wins[i].snap);
+    wins[i].snap = 0;
     if (wins[i].hwnd) ws_send(14, wins[i].hwnd, 0, 0, 0);
     else if (wins[i].is_wl) free(wins[i].px);
     else { close(wins[i].fd); if (wins[i].px) shmdt(wins[i].px); }
@@ -458,6 +560,8 @@ static void on_client(int i) {
         compose(uni(old, outer_of(&wins[i])));
     } else if (m.op == WL_COMMIT) {
         struct win *w = &wins[i];
+        w->ready = 1;
+        if (w->anim == 1) return;                                       /* appears with its pop-in */
         compose(isect(content_of(w), rect_xywh(w->x + m.a, w->y + m.b, m.c, m.d)));
     }
 }
@@ -473,7 +577,8 @@ static void on_winsys(unsigned *e) {
         memcpy(w->title, "win32", 6);
         printf("desk: win32 window %u created %dx%d\n", e[1], w->w, w->h);
         fflush(stdout);
-        w->fade = 200;
+        win_anim_start(w);
+        w->ready = 1;
         compose(outer_of(w));
     } else if (e[0] == 2) {
         for (int i = 0; i < nwin; i++) if (wins[i].hwnd == e[1]) { struct rect f = outer_of(&wins[i]); memmove(&wins[i], &wins[i + 1], (size_t)(nwin - i - 1) * sizeof wins[0]); nwin--; compose(f); break; }
@@ -489,15 +594,50 @@ static void on_winsys(unsigned *e) {
 static void place_window(struct win *w);
 #include "thoswls.h"
 
-/* new windows fade in over a handful of frames */
-static unsigned long long last_anim;
-static int anim_pending(void) { for (int i = 0; i < nwin; i++) if (wins[i].fade) return 1; return 0; }
+/* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
+static long long anim_last;
+static int anim_pending(void) {
+    for (int i = 0; i < nwin; i++) if (wins[i].anim || (wins[i].foc.k != 0 && (spring_busy(&wins[i].foc) || wins[i].foc.t != (i == nwin - 1 ? 1.0f : 0.0f)))) return 1;
+    for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) return 1;
+    return 0;
+}
 static void anim_tick(void) {
-    unsigned long long t = now_ms();
-    if (t - last_anim < 16) return;
-    last_anim = t;
-    for (int i = 0; i < nwin; i++)
-        if (wins[i].fade) { wins[i].fade -= wins[i].fade > 36 ? 36 : wins[i].fade; compose(outer_of(&wins[i])); }
+    long long t = mo_now_ms();
+    if (t - anim_last < MO_FRAME_MS) return;
+    float dt = (float)(t - anim_last) / 1000.0f;
+    if (dt > 0.1f) dt = 0.1f;
+    anim_last = t;
+    for (int i = 0; i < nwin; i++) {
+        struct win *w = &wins[i];
+        float tgt = i == nwin - 1 ? 1.0f : 0.0f;
+        if (w->foc.k == 0) spring_init(&w->foc, tgt, SP_SNAPPY);        /* windows that never popped in (the panel) just follow the focus */
+        if (w->foc.t != tgt) spring_to(&w->foc, tgt);
+        if (spring_busy(&w->foc)) { spring_step(&w->foc, dt); if (w->anim != 2 && w->anim != 1) compose(inflate_r(outer_of(w), 2)); }
+        if (w->anim == 1) {
+            if ((w->ready && t - w->anim_t0 >= 30) || t - w->anim_t0 > 350) {
+                w->foc.p = w->foc.t;                                   /* the snapshot is taken in its final look */
+                snap_build(w);
+                if (!w->snap) { w->anim = 0; compose(outer_of(w)); continue; }
+                w->anim = 2;
+                spring_to(&w->sc, 1.0f);
+                tween_start(&w->opq, 0.0f, 1.0f, MO_BASE);
+                compose(inflate_r(w->snap_r, 14));
+            }
+        } else if (w->anim == 2) {
+            spring_step(&w->sc, dt);
+            struct rect rr = inflate_r(w->snap_r, 14);
+            if (!spring_busy(&w->sc) && !tween_busy(&w->opq)) { w->anim = 0; free(w->snap); w->snap = 0; }
+            compose(rr);
+        }
+    }
+    for (int i = 0; i < MAXGHOST; i++) {
+        struct ghost *g = &ghosts[i];
+        if (!g->active) continue;
+        spring_step(&g->sc, dt);
+        struct rect rr = inflate_r(g->r, 14);
+        if (!tween_busy(&g->opq)) { g->active = 0; free(g->snap); g->snap = 0; }
+        compose(rr);
+    }
 }
 
 /* ---- resizing and maximizing (Wayland windows: the client is asked for the new size) ---- */
@@ -686,7 +826,7 @@ static void on_new_client(int ls) {
     (void)!write(c, &r, sizeof r);
     printf("desk: window %d created %dx%d at %d,%d\n", w->id, w->w, w->h, w->x, w->y);
     fflush(stdout);
-    if (w->deco) w->fade = 200;
+    if (w->deco || w->menu) win_anim_start(w);
     compose(outer_of(w));
     winlist_dirty = 1;
 }
