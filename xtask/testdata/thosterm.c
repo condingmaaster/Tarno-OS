@@ -17,13 +17,21 @@
 #include <unistd.h>
 #include "thoswl.h"
 #include "thosgfx.h"
+#include "thosui.h"
 
 #define COLS 80
 #define ROWS 24
-#define PW (COLS * 8)
-#define PH (ROWS * 16)
+#define FSIZE 15                                  /* the monospace font's pixel size */
+#define CW 9                                      /* cell size in pixels (Hack at 15 px: advance 9) */
+#define CH 20
+#define PAD 12
+#define PW (COLS * CW + 2 * PAD)
+#define PH (ROWS * CH + 2 * PAD)
 
-static const uint32_t pal[8] = { 0x00101010, 0x00cc3333, 0x0033cc33, 0x00cccc33, 0x003366cc, 0x00cc33cc, 0x0033cccc, 0x00c8c8c8 };
+#define TERM_BG 0x11141cu
+#define TERM_FG 0xd5d9e6u
+static const uint32_t pal[16] = { 0x11141c, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xd5d9e6,
+                                  0x414868, 0xff9ab0, 0xb9f27c, 0xffc777, 0x9db8ff, 0xd0b4ff, 0xa4e4ff, 0xf3f6ff };
 struct cell { unsigned char ch, fg, bg, inv; };
 static struct cell grid[ROWS][COLS];
 static int cx, cy, cur_fg = 7, cur_bg = 0, cur_inv, dirty0 = ROWS, dirty1 = -1, logging;
@@ -113,7 +121,10 @@ static void csi(unsigned char f) {
             if (p == 0) { cur_fg = 7; cur_bg = 0; cur_inv = 0; }
             else if (p == 7) cur_inv = 1;
             else if (p == 27) cur_inv = 0;
+            else if (p == 1) { if (cur_fg < 8) cur_fg += 8; }
+            else if (p == 22) cur_fg &= 7;
             else if (p >= 30 && p <= 37) cur_fg = p - 30;
+            else if (p >= 90 && p <= 97) cur_fg = p - 90 + 8;
             else if (p >= 40 && p <= 47) cur_bg = p - 40;
             else if (p == 39) cur_fg = 7;
             else if (p == 49) cur_bg = 0;
@@ -151,18 +162,30 @@ static void feed(unsigned char c) {
     }
 }
 
-static int last_cy;
+static int last_cy, first_paint = 1;
 static void render(void) {
+    if (first_paint) { for (int i = 0; i < PW * PH; i++) px[i] = TERM_BG; first_paint = 0; dirty0 = 0; dirty1 = ROWS - 1; }
     mark(last_cy); mark(cy); last_cy = cy;
     if (dirty1 < 0) return;
     for (int r = dirty0; r <= dirty1; r++)
         for (int c = 0; c < COLS; c++) {
             struct cell *k = &grid[r][c];
-            int fg = k->fg, bg = k->bg, inv = k->inv ^ (r == cy && c == cx);
-            if (inv) { int t = fg; fg = bg; bg = t; }
-            gfx_char(px, PW, PH, c * 8, r * 16, k->ch, pal[fg], pal[bg]);
+            int fg = k->fg, bg = k->bg, inv = k->inv;
+            uint32_t fc = pal[fg], bc = bg == 0 ? TERM_BG : pal[bg];
+            if (fg == 7) fc = TERM_FG;
+            if (inv) { uint32_t t2 = fc; fc = bc == TERM_BG && !k->bg ? TERM_BG : bc; bc = t2; }
+            int x0 = PAD + c * CW, y0 = PAD + r * CH;
+            for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) px[(y0 + j) * PW + x0 + i] = bc;
+            unsigned cp = latin15_to_cp(k->ch);
+            if (cp > 32) {
+                char u[4]; int n = put_utf8(u, cp); u[n] = 0;
+                ui_text(px, PW, PH, x0, y0 + 15, u, UI_MONO, FSIZE, fc);
+            }
+            if (r == cy && c == cx) {                                     /* a soft block cursor */
+                for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) { uint32_t *p = &px[(y0 + j) * PW + x0 + i]; *p = ui_mix(*p, 0x7ba3ffu, 150); }
+            }
         }
-    struct wl_msg m = { WL_COMMIT, 0, (uint32_t)(dirty0 * 16), PW, (uint32_t)((dirty1 - dirty0 + 1) * 16) };
+    struct wl_msg m = { WL_COMMIT, 0, (uint32_t)(PAD + dirty0 * CH), PW, (uint32_t)((dirty1 - dirty0 + 1) * CH) };
     (void)!write(sock, &m, sizeof m);
     dirty0 = ROWS; dirty1 = -1;
 }
@@ -192,7 +215,7 @@ int main(int argc, char **argv) {
     logging = argc > 1 && !strcmp(argv[1], "-l");
     const char *run = 0;                              /* `-c command`: run it (then wait for Enter) instead of a shell */
     for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "-c")) run = argv[i + 1];
-    if (gfx_load_font() != 0) { puts("term FAIL: font"); return 1; }
+    if (gfx_load_font() != 0 || ui_init() != 0) { puts("term FAIL: font"); return 1; }
     int ky = 0x5000 + getpid();
     int id = shmget(ky, PW * PH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
@@ -207,7 +230,7 @@ int main(int argc, char **argv) {
     if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("term FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
-    memcpy(&t.a, "terminal", 8);
+    memcpy(&t.a, "Terminal", 8);
     (void)!write(sock, &t, sizeof t);
 
     master = open("/dev/ptmx", O_RDWR);

@@ -21,7 +21,7 @@
 #include "thosgfx.h"
 #include "thosui.h"
 
-#define PH 56                                  /* the panel surface: the dock plus a margin of wallpaper around it */
+#define PH 64                                  /* the panel surface: floating glass pills with a margin of wallpaper around them */
 static int PW = 1024;
 #define MAXB 10
 #define MAXD 16
@@ -36,11 +36,11 @@ struct tbw { uint32_t id; int focused, x0, x1; char title[13]; };
 #define MAXT 12
 static struct tbw tbs[MAXT], tbs_new[MAXT];
 static int ntb, ntb_new, ntb_expect;
-#define DOCK_X 10
-#define DOCK_Y 6
-#define DOCK_H 44
-#define START_X0 (DOCK_X + 6)
-#define START_X1 (START_X0 + 40)
+#define DOCK_X 12
+#define DOCK_Y 9
+#define DOCK_H 46
+#define GLASS 236                              /* the pills are slightly see-through */
+static int start_x0, start_x1;
 
 static int sock_connect(void) {
     int s = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -122,49 +122,70 @@ static void build_apps(void) {
     }
 }
 
-/* ---- the dock ---- */
+/* ---- the dock: three floating glass pills (Start, apps and windows, clock) ---- */
 static uint32_t *px;          /* premultiplied ARGB for the compositor */
-static uint32_t *col, *mask;  /* the colours drawn over black, and the shape of the dock */
-static int clock_w = 78;
+static uint32_t *col, *mask;  /* the colours drawn over black, and the shape of the pills */
 static char clock_hm[8], clock_day[24];
+static int hov = -1;          /* what the pointer is over: 0..nbar-1 launcher, 100+i window button, 200 Start */
+static void pill(int x, int w) {                                    /* one glass capsule: rim light on top, a tinted body, a gloss sheen */
+    ui_rrect(mask, PW, PH, x, DOCK_Y, w, DOCK_H, 17, 0xffffffu);
+    ui_rrect_g(col, PW, PH, x, DOCK_Y, w, DOCK_H, 17, 0x5b678c, 0x2a3148, 255);                       /* rim */
+    ui_rrect_g(col, PW, PH, x + 1, DOCK_Y + 1, w - 2, DOCK_H - 2, 16, 0x262d44, 0x151a2a, 255);
+    ui_rrect_ga(col, PW, PH, x + 2, DOCK_Y + 2, w - 4, DOCK_H / 2 - 2, 15, 0xffffffu, 0xffffffu, 34, 4);   /* sheen */
+}
+static int pill_w_apps(void) {
+    int w = 14 + nbar * 46;
+    if (ntb) { w += 16; for (int i = 0; i < ntb; i++) { char t[16]; snprintf(t, sizeof t, "%.12s", tbs[i].title[0] ? tbs[i].title : "Window"); w += 14 + 24 + 8 + ui_text_width(tbs[i].focused ? UI_BOLD : UI_REG, 12, t) + 14 + 6; } }
+    return w < 60 ? 60 : w;
+}
 static void draw_bar(void) {
     for (int i = 0; i < PW * PH; i++) col[i] = mask[i] = 0;
-    int dw = PW - 2 * DOCK_X;
-    ui_rrect(mask, PW, PH, DOCK_X, DOCK_Y, dw, DOCK_H, 15, 0xffffffu);
-    ui_rrect(col, PW, PH, DOCK_X, DOCK_Y, dw, DOCK_H, 15, 0x363e58u);                                    /* border */
-    ui_rrect_g(col, PW, PH, DOCK_X + 1, DOCK_Y + 1, dw - 2, DOCK_H - 2, 14, 0x232a3cu, 0x171c29u, 255);
-    /* Start: an accent tile */
     int sy = DOCK_Y + (DOCK_H - 36) / 2;
-    ui_rrect_g(col, PW, PH, START_X0, sy, 36, 36, 11, UI_ACCENT_HI, 0x3f69d6u, 255);
-    ui_icon(col, PW, PH, START_X0 + 18, sy + 18, 0xf1b2, 18, 0xffffffu);
-    /* pinned launchers */
-    int x = START_X0 + 36 + 14;
+    /* left: Start */
+    int lw = 118;
+    pill(DOCK_X, lw);
+    start_x0 = DOCK_X; start_x1 = DOCK_X + lw;
+    if (hov == 200) ui_rrect(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u);
+    ui_rrect_g(col, PW, PH, DOCK_X + 6, sy, 36, 36, 12, UI_ACCENT_HI, 0x3560d4, 255);
+    ui_gloss(col, PW, PH, DOCK_X + 6, sy, 36, 36, 12);
+    ui_icon(col, PW, PH, DOCK_X + 24, sy + 18, 0xf00a, 16, 0xffffffu);
+    ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
+    /* right: clock */
+    int rw = 112, rx = PW - DOCK_X - rw;
+    pill(rx, rw);
+    ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
+    ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_REG, 11, clock_day)) / 2, DOCK_Y + 38, clock_day, UI_REG, 11, UI_MUTED);
+    /* centre: pinned apps and open windows */
+    int aw = pill_w_apps(), ax = (PW - aw) / 2;
+    if (ax < DOCK_X + lw + 14) ax = DOCK_X + lw + 14;
+    if (ax + aw > rx - 14) aw = rx - 14 - ax;
+    pill(ax, aw);
+    int x = ax + 10;
     for (int i = 0; i < nbar; i++) {
-        bx0[i] = x; bx1[i] = x + 38;
-        ui_tile(col, PW, PH, x + 1, sy, 36, bar[i].label);
-        x += 44;
+        bx0[i] = x - 2; bx1[i] = x + 40;
+        if (hov == i) ui_rrect(col, PW, PH, x - 4, sy - 4, 44, 44, 14, 0x2e3858u);
+        ui_tile(col, PW, PH, x, sy, 36, bar[i].label);
+        x += 46;
     }
-    /* open windows */
-    if (ntb) { for (int y = DOCK_Y + 12; y < DOCK_Y + DOCK_H - 12; y++) col[y * PW + x - 2] = 0x39425eu; x += 10; }
-    int limit = PW - DOCK_X - clock_w - 24;
+    if (ntb) { for (int y = DOCK_Y + 13; y < DOCK_Y + DOCK_H - 13; y++) col[y * PW + x - 2] = 0x3d4766u; x += 12; }
     for (int i = 0; i < ntb; i++) {
         char t[16]; snprintf(t, sizeof t, "%.12s", tbs[i].title[0] ? tbs[i].title : "Window");
         int tw = ui_text_width(tbs[i].focused ? UI_BOLD : UI_REG, 12, t), w = 14 + 24 + 8 + tw + 14;
-        if (x + w > limit) { tbs[i].x0 = tbs[i].x1 = 0; continue; }
+        if (x + w > ax + aw - 8) { tbs[i].x0 = tbs[i].x1 = 0; continue; }
         tbs[i].x0 = x; tbs[i].x1 = x + w;
         int by = DOCK_Y + 5, bh = DOCK_H - 10;
-        if (tbs[i].focused) { ui_rrect(col, PW, PH, x, by, w, bh, 10, 0x2d3650u); ui_rrect(col, PW, PH, x + w / 2 - 12, by + bh - 3, 24, 3, 1, UI_ACCENT_HI); }
-        else ui_rrect(col, PW, PH, x, by, w, bh, 10, 0x1d2333u);
-        ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 7, ui_shade(ui_app_color(tbs[i].title), 15), ui_shade(ui_app_color(tbs[i].title), -20), 255);
+        if (tbs[i].focused) { ui_rrect_g(col, PW, PH, x, by, w, bh, 12, 0x34405f, 0x232c45, 255); ui_gloss(col, PW, PH, x, by, w, bh, 12); ui_rrect(col, PW, PH, x + w / 2 - 12, by + bh - 3, 24, 3, 1, UI_ACCENT_HI); }
+        else ui_rrect(col, PW, PH, x, by, w, bh, 12, hov == 100 + i ? 0x2a3350u : 0x1c2234u);
+        ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 8, ui_shade(ui_app_color(tbs[i].title), 18), ui_shade(ui_app_color(tbs[i].title), -20), 255);
         ui_icon(col, PW, PH, x + 20, by + bh / 2, ui_app_glyph(tbs[i].title), 11, 0xffffffu);
         ui_text(col, PW, PH, x + 40, by + bh / 2 + 4, t, tbs[i].focused ? UI_BOLD : UI_REG, 12, tbs[i].focused ? UI_TEXT : 0xb4bbd0u);
         x += w + 6;
     }
-    /* clock */
-    int cx = PW - DOCK_X - clock_w - 8;
-    ui_text(col, PW, PH, cx + (clock_w - ui_text_width(UI_BOLD, 15, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 15, UI_TEXT);
-    ui_text(col, PW, PH, cx + (clock_w - ui_text_width(UI_REG, 10, clock_day)) / 2, DOCK_Y + 36, clock_day, UI_REG, 10, UI_MUTED);
-    for (int i = 0; i < PW * PH; i++) px[i] = ((mask[i] & 255) << 24) | (col[i] & 0x00ffffffu);
+    for (int i = 0; i < PW * PH; i++) {                                 /* glass: premultiplied ARGB at GLASS/255 opacity */
+        unsigned a = (mask[i] & 255) * GLASS / 255;
+        unsigned r = ((col[i] >> 16) & 255) * GLASS / 255, g = ((col[i] >> 8) & 255) * GLASS / 255, b = (col[i] & 255) * GLASS / 255;
+        px[i] = (a << 24) | (r << 16) | (g << 8) | b;
+    }
 }
 
 /* ---- the Start menu ---- */
@@ -219,7 +240,11 @@ static void draw_menu(void) {
         ui_icon(mcol, M_W, mh, x + (w - tw - 20) / 2 + 7, fy + 19, ic, 13, c);
         ui_text(mcol, M_W, mh, x + (w - tw - 20) / 2 + 22, fy + 24, lab, UI_REG, 12, c);
     }
-    for (int i = 0; i < M_W * mh; i++) mpx[i] = ((mmask[i] & 255) << 24) | (mcol[i] & 0x00ffffffu);
+    ui_rrect_ga(mcol, M_W, mh, 2, 2, M_W - 4, 70, 16, 0xffffffu, 0xffffffu, 26, 0);                          /* sheen across the top */
+    for (int i = 0; i < M_W * mh; i++) {                                                                     /* glass: slightly see-through */
+        unsigned a = (mmask[i] & 255) * 244 / 255, r = ((mcol[i] >> 16) & 255) * 244 / 255, g = ((mcol[i] >> 8) & 255) * 244 / 255, b = (mcol[i] & 255) * 244 / 255;
+        mpx[i] = (a << 24) | (r << 16) | (g << 8) | b;
+    }
 }
 static void menu_commit(void) {
     struct wl_msg cm = { WL_COMMIT, 0, 0, M_W, (uint32_t)mh };
@@ -328,6 +353,7 @@ int main(void) {
             if (y >= mh - M_FOOT + 10 && y < mh - M_FOOT + 48) for (int i = 0; i < 3; i++) { int bx, bw; foot_btn_rect(i, &bx, &bw); if (x >= bx && x < bx + bw) fb = i; }
             int hv = r >= 0 ? r : fb >= 0 ? ROWS + fb : -1;
             if (m.c == 0) { if (hv != hover) { hover = hv; draw_menu(); menu_commit(); } continue; }
+            if (m.c == 2) { if (hover != -1) { hover = -1; draw_menu(); menu_commit(); } continue; }
             if (m.c != 1) continue;
             if (fb >= 0) {                                    /* Quit desktop / Restart / Shut down */
                 menu_close();
@@ -372,11 +398,28 @@ int main(void) {
                 memcpy(tbs, tbs_new, sizeof tbs); ntb = ntb_new;
                 draw_bar();
                 commit_all(s);
+                printf("panel tasks:");                           /* the layout, for the desktop tests: title[*]=x0-x1 (* = focused) */
+                for (int i = 0; i < ntb; i++) printf(" %s%s=%d-%d", tbs[i].title, tbs[i].focused ? "*" : "", tbs[i].x0, tbs[i].x1);
+                printf("\n");
+                fflush(stdout);
             }
             continue;
         }
+        if (m.op == WL_POINTER && (m.c == 0 || m.c == 2)) {              /* motion over the dock: light up what is under the pointer */
+            int h = -1;
+            if (m.c == 0) {
+                int x = (int)m.a, y = (int)m.b;
+                if (y >= DOCK_Y && y < DOCK_Y + DOCK_H) {
+                    if (x >= start_x0 && x < start_x1) h = 200;
+                    for (int i = 0; i < nbar; i++) if (x >= bx0[i] && x < bx1[i]) h = i;
+                    for (int i = 0; i < ntb; i++) if (tbs[i].x1 && x >= tbs[i].x0 && x < tbs[i].x1) h = 100 + i;
+                }
+            }
+            if (h != hov) { hov = h; draw_bar(); commit_all(s); }
+            continue;
+        }
         if (m.op == WL_POINTER && m.c == 1) {
-            if ((int)m.a >= START_X0 && (int)m.a < START_X1) {
+            if ((int)m.a >= start_x0 && (int)m.a < start_x1) {
                 if (mfd >= 0) menu_close();
                 else if (ms_now() - closed_ms > 400) menu_open();    /* (a click outside the menu has just closed it) */
                 continue;

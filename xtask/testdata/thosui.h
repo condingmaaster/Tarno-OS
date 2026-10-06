@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 /* ---- design tokens (one place for the whole desktop) ---- */
 #define UI_BG        0x0e1118u   /* deepest ground */
@@ -24,11 +25,11 @@
 #define UI_WARN      0xf0b24bu
 #define UI_BAD       0xe5534bu
 
-enum { UI_REG = 0, UI_BOLD = 1, UI_ICON = 2 };
+enum { UI_REG = 0, UI_BOLD = 1, UI_ICON = 2, UI_MONO = 3 };
 static int ui_clip[4] = { 0, 0, 0x7fffffff, 0x7fffffff };   /* x0, y0, x1, y1 (half-open): nothing outside is touched */
 static void ui_set_clip(int x0, int y0, int x1, int y1) { ui_clip[0] = x0; ui_clip[1] = y0; ui_clip[2] = x1; ui_clip[3] = y1; }
 static FT_Library ui_ft;
-static FT_Face ui_face[3];
+static FT_Face ui_face[4];
 static int ui_ready;
 
 /* Font Awesome 4 code points used around the desktop */
@@ -58,8 +59,8 @@ static int ui_ready;
 static int ui_init(void) {
     if (ui_ready) return 0;
     if (FT_Init_FreeType(&ui_ft)) return -1;
-    const char *f[3] = { "/usr/share/fonts/thos/Lato-Regular.ttf", "/usr/share/fonts/thos/Lato-Bold.ttf", "/usr/share/fonts/thos/icons.ttf" };
-    for (int i = 0; i < 3; i++) if (FT_New_Face(ui_ft, f[i], 0, &ui_face[i])) { ui_face[i] = 0; if (i != 2) return -1; }
+    const char *f[4] = { "/usr/share/fonts/thos/Lato-Regular.ttf", "/usr/share/fonts/thos/Lato-Bold.ttf", "/usr/share/fonts/thos/icons.ttf", "/usr/share/fonts/thos/Hack-Regular.ttf" };
+    for (int i = 0; i < 4; i++) if (FT_New_Face(ui_ft, f[i], 0, &ui_face[i])) { ui_face[i] = 0; if (i < 2) return -1; }
     ui_ready = 1;
     return 0;
 }
@@ -156,8 +157,8 @@ static inline unsigned ui_cov(int px, int py, int x, int y, int w, int h, int r)
     if (c <= 0.0f) return 0;
     return (unsigned)(c * 255.0f);
 }
-/* a rounded rectangle, filled with a vertical gradient c0 -> c1; alpha 0..255 */
-static void ui_rrect_g(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r, uint32_t c0, uint32_t c1, unsigned alpha) {
+/* a rounded rectangle, filled with a vertical gradient c0 -> c1 whose opacity also runs from a0 (top) to a1 (bottom), 0..255 */
+static void ui_rrect_ga(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r, uint32_t c0, uint32_t c1, unsigned a0, unsigned a1) {
     if (r * 2 > w) r = w / 2;
     if (r * 2 > h) r = h / 2;
     for (int j = 0; j < h; j++) {
@@ -165,6 +166,7 @@ static void ui_rrect_g(uint32_t *buf, int bw, int bh, int x, int y, int w, int h
         if (py < 0 || py >= bh || py < ui_clip[1] || py >= ui_clip[3]) continue;
         unsigned t = h > 1 ? (unsigned)(j * 255 / (h - 1)) : 0;
         uint32_t col = ui_mix(c0, c1, t);
+        unsigned alpha = (unsigned)((int)a0 + ((int)a1 - (int)a0) * (int)t / 255);
         for (int i = 0; i < w; i++) {
             int px = x + i;
             if (px < 0 || px >= bw || px < ui_clip[0] || px >= ui_clip[2]) continue;
@@ -173,6 +175,11 @@ static void ui_rrect_g(uint32_t *buf, int bw, int bh, int x, int y, int w, int h
             if (a) buf[(size_t)py * bw + px] = ui_mix(buf[(size_t)py * bw + px], col, a);
         }
     }
+}
+static void ui_rrect_g(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r, uint32_t c0, uint32_t c1, unsigned alpha) { ui_rrect_ga(buf, bw, bh, x, y, w, h, r, c0, c1, alpha, alpha); }
+/* the glossy sheen over the upper half of a rounded shape */
+static void ui_gloss(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r) {
+    ui_rrect_ga(buf, bw, bh, x + 1, y + 1, w - 2, h / 2, r > 1 ? r - 1 : 0, 0xffffffu, 0xffffffu, 70, 6);
 }
 static void ui_rrect(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r, uint32_t c) { ui_rrect_g(buf, bw, bh, x, y, w, h, r, c, c, 255); }
 /* a rounded rectangle with a 1 px border */
@@ -187,7 +194,7 @@ static void ui_disc(uint32_t *buf, int bw, int bh, int cx, int cy, int rad, uint
 static uint32_t ui_app_glyph(const char *label) {
     static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
         { "Win32", IC_WIN }, { "System", IC_INFO }, { "Web", 0xf0ac }, { "Image", IC_IMAGE }, { "GTK", IC_PUZZLE }, { "Pkg", IC_BOX } };
-    for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) if (!strncmp(label, m[i].k, strlen(m[i].k))) return m[i].g;
+    for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) if (!strncasecmp(label, m[i].k, strlen(m[i].k))) return m[i].g;
     return IC_PUZZLE;
 }
 static uint32_t ui_app_color(const char *label) {
@@ -206,5 +213,6 @@ static void ui_tile(uint32_t *buf, int bw, int bh, int x, int y, int size, const
     uint32_t c = ui_app_color(label);
     ui_rrect_g(buf, bw, bh, x, y + 2, size, size, size / 4, 0x000000u, 0x000000u, 70);              /* soft contact shadow */
     ui_rrect_g(buf, bw, bh, x, y, size, size, size / 4, ui_shade(c, 22), ui_shade(c, -18), 255);
+    ui_gloss(buf, bw, bh, x, y, size, size, size / 4);
     ui_icon(buf, bw, bh, x + size / 2, y + size / 2, ui_app_glyph(label), size * 5 / 12, 0xffffffu);
 }

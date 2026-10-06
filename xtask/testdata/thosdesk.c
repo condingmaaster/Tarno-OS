@@ -29,8 +29,8 @@
 #define BORDER 1
 #define TITLE 38
 #define BTN 28
-#define SH 26           /* reach of the soft window shadow */
-#define SH_OFF 9        /* the shadow sits a little below the window */
+#define SH 34           /* reach of the soft window shadow */
+#define SH_OFF 12        /* the shadow sits a little below the window */
 #define CORNER 12       /* window corner radius */
 
 struct bitfield { uint32_t offset, length, msb_right; };
@@ -48,6 +48,7 @@ static uint32_t *bb;                     /* back buffer, W*H */
 static uint32_t rs, gs, bs;
 static int mx, my, quit;
 static int winlist_dirty;               /* the task list of the panel needs sending */
+static int hover_client;                 /* id of the legacy window that last got pointer motion */
 static int last_icon = -1;
 static unsigned long long last_icon_ms;
 static int drag, dx0, dy0;                       /* a window move in progress (titlebar, or asked for by the client) */
@@ -116,7 +117,7 @@ static void theme_init(void) {
                 }
             cov_tab[j][i] = (uint8_t)(in_s * 255 / 16);
         }
-    for (int d = 0; d < SH; d++) sh_tab[d] = (uint8_t)(190 * (SH - d) * (SH - d) * (SH - d) / (SH * SH * SH) + 20 * (SH - d) / SH);
+    for (int d = 0; d < SH; d++) { int t = (SH - d) * 256 / SH; int sm = (t * t * (3 * 256 - 2 * t)) >> 16; sh_tab[d] = (uint8_t)(112 * sm / 256); }          /* smoothstep falloff */
     wall = malloc((size_t)W * H * 4);
     if (!wall) return;
     int cx = W * 72 / 100, cy = H * 28 / 100, dx2 = W * 18 / 100, dy2 = H * 82 / 100;          /* two soft glows over a deep slate ground */
@@ -129,6 +130,7 @@ static void theme_init(void) {
             if (g2 < 0) g2 = 0;
             int r = 13 + t * 10 / 256 + g1 * 4 / 10 + g2 * 5 / 10, g = 16 + t * 14 / 256 + g1 * 6 / 10 + g2 * 2 / 10, b = 28 + t * 30 / 256 + g1 * 11 / 10 + g2 * 8 / 10;
             int n = ((x * 7 + y * 13) & 3) - 1;                                                  /* a little dither against banding */
+            { int d = x - y * 7 / 10 - W * 40 / 100, k = (W / 9) * (W / 9) + 1; int v = (int)(24LL * k / (k + (long long)d * d)); r += v * 5 / 10; g += v * 7 / 10; b += v * 12 / 10; }   /* a soft diagonal light band */
             r += n; g += n; b += n;
             wall[(size_t)y * W + x] = rgb(r < 0 ? 0 : r > 255 ? 255 : r, g < 0 ? 0 : g > 255 ? 255 : g, b < 0 ? 0 : b > 255 ? 255 : b);
         }
@@ -140,19 +142,53 @@ static void fill(struct rect r, uint32_t c) {
         for (int x = r.x0; x < r.x1; x++) bb[(size_t)y * W + x] = c;
 }
 
-static const char *cursor_art[19] = {
-    "#           ", "##          ", "#.#         ", "#..#        ", "#...#       ", "#....#      ", "#.....#     ", "#......#    ", "#.......#   ",
-    "#........#  ", "#.....#####", "#..#..#     ", "#.# #..#    ", "##  #..#    ", "#    #..#   ", "     #..#   ", "      #..#  ", "      #..#  ", "       ##   ",
-};
-#define CUR_W 12
-#define CUR_H 19
+/* the pointer: an anti-aliased arrow, rendered once from a polygon (4x4 supersampling), with a dark outline */
+#define CUR_W 18
+#define CUR_H 26
+static uint8_t cur_fill[CUR_H][CUR_W], cur_out[CUR_H][CUR_W];
+static int in_poly(float x, float y) {
+    static const float P[7][2] = { { 1.5f, 1.5f }, { 1.5f, 19.5f }, { 5.6f, 15.6f }, { 8.8f, 22.6f }, { 11.9f, 21.2f }, { 8.8f, 14.4f }, { 14.4f, 14.4f } };
+    int c = 0;
+    for (int i = 0, j = 6; i < 7; j = i++)
+        if (((P[i][1] > y) != (P[j][1] > y)) && (x < (P[j][0] - P[i][0]) * (y - P[i][1]) / (P[j][1] - P[i][1]) + P[i][0])) c = !c;
+    return c;
+}
+static float poly_dist(float x, float y) {          /* distance to the outline of the arrow, for the dark rim */
+    static const float P[7][2] = { { 1.5f, 1.5f }, { 1.5f, 19.5f }, { 5.6f, 15.6f }, { 8.8f, 22.6f }, { 11.9f, 21.2f }, { 8.8f, 14.4f }, { 14.4f, 14.4f } };
+    float best = 1e9f;
+    for (int i = 0, j = 6; i < 7; j = i++) {
+        float ax = P[j][0], ay = P[j][1], bx = P[i][0], by = P[i][1], dx = bx - ax, dy = by - ay;
+        float t = ((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy);
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        float ex = ax + t * dx - x, ey = ay + t * dy - y, d = ex * ex + ey * ey;
+        if (d < best) best = d;
+    }
+    return sqrtf(best);
+}
+static void cursor_init(void) {
+    for (int j = 0; j < CUR_H; j++)
+        for (int i = 0; i < CUR_W; i++) {
+            int f = 0, o = 0;
+            for (int sy = 0; sy < 4; sy++)
+                for (int sx = 0; sx < 4; sx++) {
+                    float x = i + (sx + 0.5f) / 4, y = j + (sy + 0.5f) / 4;
+                    int inside = in_poly(x, y);
+                    if (inside) { f++; o++; }
+                    else if (poly_dist(x, y) < 1.15f) o++;
+                }
+            cur_fill[j][i] = (uint8_t)(f * 255 / 16);
+            cur_out[j][i] = (uint8_t)(o * 255 / 16);
+        }
+}
 static void draw_cursor(void) {
     for (int j = 0; j < CUR_H; j++) {
         if (my + j >= H) break;
         for (int i = 0; i < CUR_W; i++) {
-            char c = cursor_art[j][i];
-            if (c == ' ' || mx + i >= W) continue;
-            *(uint32_t *)(fbmap + (size_t)(my + j) * pitch + (size_t)(mx + i) * 4) = c == '#' ? fbpx(0x000000u) : fbpx(0xffffffu);
+            if (mx + i >= W || !cur_out[j][i]) continue;
+            uint32_t base = bb[(size_t)(my + j) * W + mx + i];
+            uint32_t c = ui_mix(base, 0x0a0c12u, cur_out[j][i] * 215u / 255);
+            c = ui_mix(c, 0xffffffu, cur_fill[j][i]);
+            *(uint32_t *)(fbmap + (size_t)(my + j) * pitch + (size_t)(mx + i) * 4) = fbpx(c);
         }
     }
 }
@@ -161,7 +197,7 @@ static struct rect shadow_src(struct win *w) { struct rect f = frame_of(w); retu
 static void draw_shadow(struct win *w, int top, struct rect r) {
     struct rect o = isect(outer_of(w), r), f = frame_of(w), S = shadow_src(w);
     if (empty(o)) return;
-    unsigned gain = top ? 256 : 160;
+    unsigned gain = top ? 256 : 190;
     for (int y = o.y0; y < o.y1; y++) {
         int dy = S.y0 - y > 0 ? S.y0 - y : (y - (S.y1 - 1) > 0 ? y - (S.y1 - 1) : 0);
         for (int x = o.x0; x < o.x1; x++) {
@@ -179,7 +215,7 @@ static void draw_shadow(struct win *w, int top, struct rect r) {
 /* one titlebar row's colour: a vertical gradient, brighter when focused */
 static uint32_t title_color(int row, int top) {
     if (!top) return rgb(27, 31, 43);
-    return ui_mix(0x272d41u, 0x1f2435u, (unsigned)(row * 255 / TITLE));
+    return ui_mix(0x333b58u, 0x1e2336u, (unsigned)(row * 255 / TITLE));
 }
 
 /* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
@@ -450,6 +486,7 @@ static void on_winsys(unsigned *e) {
     }
 }
 
+static void place_window(struct win *w);
 #include "thoswls.h"
 
 /* new windows fade in over a handful of frames */
@@ -475,6 +512,30 @@ static int resize_dir(struct win *w, int px, int py) {
     int right = px >= f.x1 - m && px < f.x1 + m && py >= w->y && py < f.y1 + m;
     int bottom = py >= f.y1 - m && py < f.y1 + m && px >= f.x0 && px < f.x1 + m;
     return (right ? 1 : 0) | (bottom ? 2 : 0);
+}
+static int work_bottom(void);
+/* a new window opens near the middle of the free area (above the dock), each one a little offset from the last, never off screen */
+static int cascade_n;
+static void place_window(struct win *w) {
+    int off = ((cascade_n++ % 6) - 2) * 30, wb = work_bottom();
+    if (w->csd) {
+        int x = (W - w->gw) / 2 + off, y = (wb - w->gh) / 2 + off / 2;
+        if (x < 8) x = 8;
+        if (x + w->gw > W - 8) x = W - 8 - w->gw;
+        if (y < 8) y = 8;
+        if (y + w->gh > wb - 10) y = wb - 10 - w->gh;
+        w->x = x - w->gx; w->y = y - w->gy;
+        return;
+    }
+    int top = w->deco ? TITLE : 0, ow = w->w + (w->deco ? 2 * BORDER : 0), oh = w->h + (w->deco ? TITLE + BORDER : 0);
+    int x = (W - ow) / 2 + off, y = (wb - oh) / 2 + off / 2;
+    if (x < 6) x = 6;
+    if (x + ow > W - 6) x = W - 6 - ow;
+    if (y < 8) y = 8;
+    if (y + oh > wb - 10) y = wb - 10 - oh;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    w->x = x + (w->deco ? BORDER : 0); w->y = y + top;
 }
 static int work_bottom(void) {          /* a panel along the bottom edge is not covered by maximized windows */
     int b = H;
@@ -620,6 +681,7 @@ static void on_new_client(int ls) {
     w->taskbar = (m.d & 4) != 0;   /* the panel: told about the open windows */
     w->alpha = (m.d & 8) != 0;     /* premultiplied ARGB pixels (the floating dock, the Start menu) */      /* a start-menu surface: closed by a click anywhere outside it */
     if (!w->deco) { w->x = 0; w->y = 0; }
+    else place_window(w);
     struct wl_msg r = { WL_CREATED, (uint32_t)w->id, (uint32_t)W, (uint32_t)H, 0 };
     (void)!write(c, &r, sizeof r);
     printf("desk: window %d created %dx%d at %d,%d\n", w->id, w->w, w->h, w->x, w->y);
@@ -650,6 +712,7 @@ int main(int argc, char **argv) {
     bb = calloc((size_t)W * H, 4);
     if (fbmap == MAP_FAILED || !bb) { puts("desk FAIL: mmap"); return 1; }
     theme_init();
+    cursor_init();
     if (!wall) { puts("desk FAIL: wallpaper"); return 1; }
 
     int ls = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -750,12 +813,20 @@ int main(int argc, char **argv) {
             if (mx > W - 1) mx = W - 1;
             if (my > H - 1) my = H - 1;
             int btn = pkt[0] & 1;
-            if (ddx || ddy)                                  /* start-menu surfaces follow the pointer (c = 0: motion) */
-                for (int i = nwin - 1; i >= 0; i--)
-                    if (wins[i].menu && in(frame_of(&wins[i]), mx, my)) {
-                        struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - wins[i].x), (uint32_t)(my - wins[i].y), 0, 0 };
-                        (void)!write(wins[i].fd, &pm, sizeof pm);
-                    }
+            if (ddx || ddy) {                                /* legacy clients see the pointer move over their content (c = 0), and leave it (c = 2) */
+                int over = -1;
+                for (int i = nwin - 1; i >= 0 && over < 0; i--) if (in(frame_of(&wins[i]), mx, my)) over = i;
+                int over_id = over >= 0 && !wins[over].is_wl && !wins[over].hwnd && wins[over].fd >= 0 && in(content_of(&wins[over]), mx, my) && !drag && !rs_id ? wins[over].id : 0;
+                if (hover_client && hover_client != over_id) {
+                    struct win *o = win_by_id(hover_client);
+                    if (o && o->fd >= 0) { struct wl_msg lm = { WL_POINTER, 0, 0, 2, 0 }; (void)!write(o->fd, &lm, sizeof lm); }
+                }
+                hover_client = over_id;
+                if (over_id) {
+                    struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - wins[over].x), (uint32_t)(my - wins[over].y), 0, 0 };
+                    (void)!write(wins[over].fd, &pm, sizeof pm);
+                }
+            }
             int started_resize = 0;
             if (btn && !prev_btn) {
                 for (int i = nwin - 1; i >= 0 && !started_resize; i--) {

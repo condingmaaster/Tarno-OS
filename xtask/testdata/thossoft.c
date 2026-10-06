@@ -16,12 +16,13 @@
 #include <unistd.h>
 #include "thoswl.h"
 #include "thosgfx.h"
+#include "thosui.h"
 
-#define SW 700
-#define SH 460
-#define HEAD 56
-#define ROW 18
-#define FOOT 22
+#define SW 760
+#define SH 520
+#define HEAD 78
+#define ROW 58
+#define FOOT 30
 #define VIS ((SH - HEAD - FOOT) / ROW)
 #define MAXR 300
 static uint32_t *px;
@@ -92,35 +93,57 @@ static void search(void) {
             p = nl + 1;
         }
     }
-    snprintf(status, sizeof status, "%d match%s", nres, nres == 1 ? "" : "es");
+    snprintf(status, sizeof status, "%d result%s", nres, nres == 1 ? "" : "s");
 }
 static void commit(void) { struct wl_msg c = { WL_COMMIT, 0, 0, SW, SH }; (void)!write(sock, &c, sizeof c); }
-static void box(int x0, int y0, int x1, int y1, uint32_t c) {
-    for (int y = y0; y < y1 && y < SH; y++) for (int x = x0; x < x1 && x < SW; x++) px[y * SW + x] = c;
-}
+static int hover_row = -1;
 static void render(void) {
-    box(0, 0, SW, SH, 0x001c1c26);
-    box(0, 0, SW, HEAD, 0x002a2a3a);
-    gfx_str(px, SW, SH, 10, 6, "Software - Debian archive", 0x00ffffff, 0xFFFFFFFFu);
-    box(8, 28, SW - 8, 50, 0x00101018);
-    char q[80]; snprintf(q, sizeof q, "> %s_", query);
-    gfx_str(px, SW, SH, 14, 31, q, 0x00f0f0b0, 0xFFFFFFFFu);
+    for (int i = 0; i < SW * SH; i++) px[i] = UI_SURFACE;
+    /* header with the search field */
+    for (int y = 0; y < HEAD; y++) for (int x = 0; x < SW; x++) px[y * SW + x] = 0x1b202e;
+    for (int x = 0; x < SW; x++) px[(HEAD - 1) * SW + x] = UI_LINE;
+    ui_text(px, SW, SH, 20, 28, "Software", UI_BOLD, 17, UI_TEXT);
+    ui_text(px, SW, SH, 20 + ui_text_width(UI_BOLD, 17, "Software") + 10, 28, "Debian archive", UI_REG, 12, UI_MUTED);
+    ui_card(px, SW, SH, 16, 38, SW - 32, 32, 10, 0x131722, query[0] ? 0x4a639e : 0x2d3448);
+    ui_icon(px, SW, SH, 34, 54, IC_SEARCH, 13, UI_MUTED);
+    char q[90]; snprintf(q, sizeof q, "%s%s", query, "|");
+    if (query[0]) ui_text(px, SW, SH, 52, 59, q, UI_REG, 14, UI_TEXT);
+    else ui_text(px, SW, SH, 52, 59, index_buf ? "Search programs by name or description" : "No package index yet", UI_REG, 14, 0x657090);
     if (!index_buf) {
-        gfx_str(px, SW, SH, 14, HEAD + 14, "No package index yet. Press Enter to download it (thos-pkg update).", 0x00e0e0e8, 0xFFFFFFFFu);
+        ui_rrect_g(px, SW, SH, SW / 2 - 130, HEAD + 80, 260, 44, 12, UI_ACCENT_HI, 0x3f69d6, 255);
+        ui_icon(px, SW, SH, SW / 2 - 100, HEAD + 102, IC_REFRESH, 15, 0xffffffu);
+        ui_text(px, SW, SH, SW / 2 - 78, HEAD + 108, "Download the package list", UI_BOLD, 14, 0xffffffu);
+        ui_text(px, SW, SH, SW / 2 - ui_text_width(UI_REG, 13, "Needs the network. Takes a few minutes the first time.") / 2, HEAD + 150, "Needs the network. Takes a few minutes the first time.", UI_REG, 13, UI_MUTED);
+    } else if (!query[0]) {
+        ui_text(px, SW, SH, SW / 2 - ui_text_width(UI_REG, 15, "Type a name to find a program") / 2, HEAD + 120, "Type a name to find a program", UI_REG, 15, UI_MUTED);
+        ui_icon(px, SW, SH, SW / 2, HEAD + 80, IC_SEARCH, 30, 0x39425e);
+    } else if (nres == 0) {
+        ui_text(px, SW, SH, SW / 2 - ui_text_width(UI_REG, 15, "Nothing matches") / 2, HEAD + 120, "Nothing matches", UI_REG, 15, UI_MUTED);
     }
+    ui_set_clip(0, HEAD, SW, SH - FOOT);
     for (int r = 0; r < VIS && top + r < nres; r++) {
-        int i = top + r, y = HEAD + r * ROW;
-        char name[64], ver[40], desc[160], size[16], row[200];
+        int i = top + r, y = HEAD + 6 + r * ROW;
+        char name[64], ver[40], desc[160], size[16];
         field(&res[i], 0, name, sizeof name); field(&res[i], 1, ver, sizeof ver); field(&res[i], 5, size, sizeof size); field(&res[i], 6, desc, sizeof desc);
-        long kb = atol(size) / 1024;
-        if (i == sel) box(0, y, SW, y + ROW, 0x00364868);
-        gfx_str(px, SW, SH, 8, y + 1, installed(name) ? "[*]" : "   ", 0x0080e080, 0xFFFFFFFFu);
-        snprintf(row, sizeof row, "%-22.22s %-14.14s %5ldk  %s", name, ver, kb, desc);
-        row[(SW - 50) / 8] = 0;
-        gfx_str(px, SW, SH, 40, y + 1, row, 0x00e0e0e8, 0xFFFFFFFFu);
+        int inst = installed(name);
+        if (i == sel) ui_rrect(px, SW, SH, 8, y, SW - 16, ROW - 4, 11, 0x222a40);
+        else if (i == hover_row) ui_rrect(px, SW, SH, 8, y, SW - 16, ROW - 4, 11, 0x1b2132);
+        ui_tile(px, SW, SH, 20, y + 4, 42, name);
+        ui_text(px, SW, SH, 76, y + 20, name, UI_BOLD, 14, UI_TEXT);
+        char meta[80]; snprintf(meta, sizeof meta, "%s   %ld kB", ver, atol(size) / 1024);
+        ui_text(px, SW, SH, 76 + ui_text_width(UI_BOLD, 14, name) + 12, y + 20, meta, UI_REG, 11, UI_MUTED);
+        char dd[160]; snprintf(dd, sizeof dd, "%s", desc);
+        while (ui_text_width(UI_REG, 12, dd) > SW - 76 - 150 && strlen(dd) > 4) dd[strlen(dd) - 1] = 0;
+        ui_text(px, SW, SH, 76, y + 40, dd, UI_REG, 12, 0xa8b0c8);
+        int bx = SW - 112, by = y + 11, bw = 88;                                          /* the action pill */
+        if (inst) { ui_card(px, SW, SH, bx, by, bw, 28, 14, 0x1d2333, 0x3a4560); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_REG, 12, "Remove")) / 2, by + 19, "Remove", UI_REG, 12, 0xff9aa6); }
+        else { ui_rrect_g(px, SW, SH, bx, by, bw, 28, 14, UI_ACCENT_HI, 0x3f69d6, 255); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_BOLD, 12, "Install")) / 2, by + 19, "Install", UI_BOLD, 12, 0xffffffu); }
+        if (inst) ui_icon(px, SW, SH, bx - 16, by + 14, 0xf00c, 12, UI_GOOD);
     }
-    box(0, SH - FOOT, SW, SH, 0x002a2a3a);
-    gfx_str(px, SW, SH, 8, SH - FOOT + 3, status, 0x00c0c0d0, 0xFFFFFFFFu);
+    ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+    for (int y = SH - FOOT; y < SW * SH / SW && y < SH; y++) for (int x = 0; x < SW; x++) px[y * SW + x] = 0x1b202e;
+    for (int x = 0; x < SW; x++) px[(SH - FOOT) * SW + x] = UI_LINE;
+    ui_text(px, SW, SH, 16, SH - 10, status, UI_REG, 12, UI_MUTED);
     commit();
 }
 static void in_terminal(const char *cmd) {
@@ -152,7 +175,7 @@ int main(void) {
     int key = 0x5000 + getpid();
     int id = shmget(key, SW * SH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
-    if (px == (void *)-1 || gfx_load_font() != 0) { puts("soft FAIL: shm/font"); return 1; }
+    if (px == (void *)-1 || gfx_load_font() != 0 || ui_init() != 0) { puts("soft FAIL: shm/font"); return 1; }
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
@@ -167,7 +190,7 @@ int main(void) {
     load_index();
     const char *q0 = getenv("SOFT_QUERY");
     if (q0) { snprintf(query, sizeof query, "%s", q0); search(); }
-    else snprintf(status, sizeof status, index_buf ? "type a name or a word from the description" : "no index");
+    else snprintf(status, sizeof status, index_buf ? "Type a name or a word from the description" : "No package index");
     render();
     printf("soft ready\n");
     fflush(stdout);
@@ -178,14 +201,20 @@ int main(void) {
         if (m.op == WL_POINTER && m.c == 1) {
             struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
             long long now = ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
-            if ((int)m.b >= HEAD) {
-                int r = ((int)m.b - HEAD) / ROW, i = top + r;
-                if (r < VIS && i < nres) {
+            if (!index_buf && (int)m.b > HEAD + 70 && (int)m.b < HEAD + 130) act();
+            else if ((int)m.b >= HEAD) {
+                int r = ((int)m.b - HEAD - 6) / ROW, i = top + r;
+                if (r >= 0 && r < VIS && i < nres) {
                     move(i);
-                    if (i == last_row && now - last_ms < 800) { act(); last_row = -1; } else { last_row = i; last_ms = now; }
+                    if ((int)m.a >= SW - 112 || (i == last_row && now - last_ms < 800)) { act(); last_row = -1; } else { last_row = i; last_ms = now; }
                 }
             }
             render();
+        } else if (m.op == WL_POINTER) {
+            int h = m.c == 0 && (int)m.b >= HEAD + 6 ? ((int)m.b - HEAD - 6) / ROW : -1;
+            if (h >= 0) h += top;
+            if (h >= nres) h = -1;
+            if (h != hover_row) { hover_row = h; render(); }
         } else if (m.op == WL_KEY && m.b) {
             size_t ql = strlen(query);
             if (m.a == 0x52) move(sel - 1);

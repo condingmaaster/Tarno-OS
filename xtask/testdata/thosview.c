@@ -17,9 +17,10 @@
 #include <unistd.h>
 #include "thoswl.h"
 #include "thosgfx.h"
+#include "thosui.h"
 
-#define VW 800
-#define VH 600
+#define VW 760
+#define VH 520
 static uint32_t *px;
 static int sock;
 static char dir[512], files[256][96], cur_name[96];
@@ -72,15 +73,19 @@ static int load_jpeg(const char *path) {
 }
 static void commit(void) { struct wl_msg c = { WL_COMMIT, 0, 0, VW, VH }; (void)!write(sock, &c, sizeof c); }
 static void show(void) {
-    for (int i = 0; i < VW * VH; i++) px[i] = 0x00101018;
+    for (int i = 0; i < VW * VH; i++) px[i] = 0x0c0e14;
     if (!img) {
-        gfx_str(px, VW, VH, 20, 20, nfiles || errmsg[0] ? "cannot read this image" : "usage: thosview <file.png|file.jpg>", 0x00e0e0e8, 0xFFFFFFFFu);
-        gfx_str(px, VW, VH, 20, 40, errmsg, 0x00f0b0b0, 0xFFFFFFFFu);
+        ui_icon(px, VW, VH, VW / 2, VH / 2 - 24, IC_IMAGE, 40, 0x39425e);
+        const char *msg = nfiles || errmsg[0] ? "This image cannot be read" : "Open an image from the file manager";
+        ui_text(px, VW, VH, (VW - ui_text_width(UI_REG, 15, msg)) / 2, VH / 2 + 30, msg, UI_REG, 15, UI_MUTED);
+        if (errmsg[0]) ui_text(px, VW, VH, (VW - ui_text_width(UI_REG, 12, errmsg)) / 2, VH / 2 + 54, errmsg, UI_REG, 12, 0x8a6670);
     } else {
-        int dw = VW, dh = ih * VW / iw;                         /* scale to fit, keep the aspect ratio */
-        if (dh > VH - 20) { dh = VH - 20; dw = iw * dh / ih; }
+        int avail_h = VH - 56;
+        int dw = VW - 40, dh = ih * dw / iw;                      /* scale to fit, keep the aspect ratio */
+        if (dh > avail_h - 24) { dh = avail_h - 24; dw = iw * dh / ih; }
         if (dw > iw && dh > ih) { dw = iw; dh = ih; }          /* never enlarge */
-        int ox = (VW - dw) / 2, oy = (VH - 20 - dh) / 2;
+        int ox = (VW - dw) / 2, oy = (avail_h - dh) / 2;
+        ui_rrect(px, VW, VH, ox - 1, oy - 1, dw + 2, dh + 2, 6, 0x2b3142);           /* a hairline frame */
         for (int y = 0; y < dh; y++) {
             int sy = y * ih / dh;
             for (int x = 0; x < dw; x++) {
@@ -90,10 +95,14 @@ static void show(void) {
             }
         }
     }
+    /* a floating info pill at the bottom */
     char info[200];
-    snprintf(info, sizeof info, "%s  %dx%d  (%d/%d)", cur_name, iw, ih, nfiles ? cur + 1 : 0, nfiles);
-    for (int y = VH - 20; y < VH; y++) for (int x = 0; x < VW; x++) px[y * VW + x] = 0x002a2a3a;
-    gfx_str(px, VW, VH, 8, VH - 18, info, 0x00c0c0d0, 0xFFFFFFFFu);
+    snprintf(info, sizeof info, "%s", cur_name);
+    char dims[60]; snprintf(dims, sizeof dims, "%d x %d   %d / %d", iw, ih, nfiles ? cur + 1 : 0, nfiles);
+    int w1 = ui_text_width(UI_BOLD, 13, info), w2 = ui_text_width(UI_REG, 12, dims), pw = w1 + w2 + 56;
+    ui_card(px, VW, VH, (VW - pw) / 2, VH - 46, pw, 32, 16, 0x1a1f2c, 0x303850);
+    ui_text(px, VW, VH, (VW - pw) / 2 + 18, VH - 25, info, UI_BOLD, 13, UI_TEXT);
+    ui_text(px, VW, VH, (VW - pw) / 2 + 18 + w1 + 20, VH - 25, dims, UI_REG, 12, UI_MUTED);
     commit();
 }
 static void open_file(const char *name_in) {
@@ -117,7 +126,7 @@ int main(int argc, char **argv) {
     int key = 0x5000 + getpid();
     int id = shmget(key, VW * VH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
-    if (px == (void *)-1 || gfx_load_font() != 0) { puts("view FAIL: shm/font"); return 1; }
+    if (px == (void *)-1 || gfx_load_font() != 0 || ui_init() != 0) { puts("view FAIL: shm/font"); return 1; }
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);

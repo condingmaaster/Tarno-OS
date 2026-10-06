@@ -898,22 +898,56 @@ fn main() {
                 mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
             });
             let out = boot_and_run(&img, "deskview", "/busybox sh /desk-view.sh", "desk ok:", 200);
-            let px = |n: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
+            let px = |n: usize, x: i32, y: i32| -> Option<(u8, u8, u8)> {
                 let (w, h, d) = read_ppm(&shots[n])?;
+                let (x, y) = (x as usize, y as usize);
                 (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
             };
             let near = |c: Option<(u8, u8, u8)>, t: (i32, i32, i32)| c.is_some_and(|c| (c.0 as i32 - t.0).abs() + (c.1 as i32 - t.1).abs() + (c.2 as i32 - t.2).abs() < 40);
-            // window 1 (red.png, 200x100) at (100,80): its image is centred in the 800x580 picture area; window 2 (blue.jpg, 160x90) at (180,140)
-            let png = near(px(0, 410, 330), (255, 0, 0)) && near(px(0, 110, 90), (16, 16, 24));
-            let jpg = near(px(1, 510, 395), (0, 0, 255));
+            // each viewer window is 760x520; the picture area is the top 464 px (a 56 px strip with the info pill sits below), the image centred in it
+            let w1 = log_window(&log, "760x520", 0).unwrap_or((0, 0));
+            let w2 = log_window(&log, "760x520", 1).unwrap_or((0, 0));
+            let png = near(px(0, w1.0 + 380, w1.1 + 232), (255, 0, 0)) && near(px(0, w1.0 + 20, w1.1 + 20), (12, 14, 20));
+            let jpg = near(px(1, w2.0 + 380, w2.1 + 232), (0, 0, 255));
             if out.contains("view ready 200x100") && out.contains("view ready 160x90") && png && jpg {
                 println!("desk-view-test PASSED: the image viewer decoded a PNG (libpng) and a JPEG (libjpeg) and drew them centred");
             } else {
-                eprintln!("  png centre {:?}, jpeg centre {:?}", px(0, 410, 330), px(1, 510, 395));
+                eprintln!("  png centre {:?}, jpeg centre {:?}, windows {:?} {:?}", px(0, w1.0 + 380, w1.1 + 232), px(1, w2.0 + 380, w2.1 + 232), w1, w2);
                 for l in out.lines().filter(|l| l.contains("view") || l.contains("desk")) { eprintln!("  {l}"); }
                 eprintln!("desk-view-test FAILED");
                 exit(1);
             }
+        }
+        "desk-showcase-test" => {
+            // a visual check, not an assertion: opens every desktop program once and saves screenshots to target/showcase-N.ppm
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/showcase-serial.log"), root.join("target/showcase-mon.sock"));
+            let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/showcase-{i}.ppm"))).collect();
+            for f in shots.iter().chain([&log, &sock]) { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "view ready 200x100", 300) { return; }
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                // move the pointer onto the dock's first launcher and open the Start menu for the second picture
+                let (mut rx, mut ry) = (36 - 640, 768 - 400);
+                while rx != 0 || ry != 0 {
+                    let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+                    mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                    rx -= sx; ry -= sy;
+                }
+                std::thread::sleep(ms(300));
+                mon(&tsock, "mouse_button 1");
+                std::thread::sleep(ms(250));
+                mon(&tsock, "mouse_button 0");
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "showcase", "/busybox sh /desk-showcase.sh", "desk ok:", 300);
+            let ok = shots.iter().all(|p| p.exists()) && out.contains("desk ok");
+            if ok { println!("desk-showcase-test: screenshots in target/showcase-1.ppm and -2.ppm"); } else { eprintln!("desk-showcase-test FAILED"); exit(1); }
         }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
@@ -1130,13 +1164,13 @@ fn main() {
                 let (w, h, d) = read_ppm(&shot)?;
                 (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
             };
-            let panel = px(600, 790).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70);
+            let panel = px(125, 768).is_some_and(|c| c.0 < 70 && c.1 < 80 && c.2 > 30 && c.2 < 110);
             let log_text = String::from_utf8_lossy(&std::fs::read(&log).unwrap_or_default()).to_string();
             let echoed = log_text.contains("hellodesktop");
             if panel && echoed && out.contains("panel ready") {
                 println!("desktop-test PASSED: `desktop` starts compositor, panel and a terminal; a command typed in the terminal ran");
             } else {
-                eprintln!("  panel pixel {:?}, command echoed {echoed}", px(600, 790));
+                eprintln!("  panel pixel {:?}, command echoed {echoed}", px(125, 768));
                 for l in log_text.lines().filter(|l| l.contains("desk") || l.contains("panel") || l.contains("term")) {
                     eprintln!("  {l}");
                 }
@@ -1688,7 +1722,7 @@ fn disk_image() -> PathBuf {
             for d in ["usr/share/fonts", "usr/share/fonts/thos"] {
                 let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
             }
-            for (src, dst) in [("/usr/share/fonts/truetype/lato/Lato-Regular.ttf", "Lato-Regular.ttf"), ("/usr/share/fonts/truetype/lato/Lato-Bold.ttf", "Lato-Bold.ttf"), ("/usr/share/fonts/truetype/font-awesome/fontawesome-webfont.ttf", "icons.ttf")] {
+            for (src, dst) in [("/usr/share/fonts/truetype/lato/Lato-Regular.ttf", "Lato-Regular.ttf"), ("/usr/share/fonts/truetype/lato/Lato-Bold.ttf", "Lato-Bold.ttf"), ("/usr/share/fonts/truetype/font-awesome/fontawesome-webfont.ttf", "icons.ttf"), ("/usr/share/fonts/truetype/hack/Hack-Regular.ttf", "Hack-Regular.ttf")] {
                 if std::path::Path::new(src).exists() {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {src} usr/share/fonts/thos/{dst}"), img.to_str().unwrap()]));
                 }
@@ -1701,7 +1735,7 @@ fn disk_image() -> PathBuf {
             }
             // image viewer (PNG/JPEG through libpng and libjpeg, which go into the image with their dependencies)
             let tv = root.join("target/thosview");
-            if Command::new("gcc").args(["-O1", "-o", tv.to_str().unwrap(), root.join("xtask/testdata/thosview.c").to_str().unwrap(), "-lpng", "-ljpeg"]).status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("gcc").args(["-O1", "-o", tv.to_str().unwrap(), root.join("xtask/testdata/thosview.c").to_str().unwrap(), "-I/usr/include/freetype2", "-lpng", "-ljpeg", "-lfreetype", "-lm"]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thosview", tv.to_str().unwrap()), img.to_str().unwrap()]));
                 let mut vdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
                 for lib in ["/usr/lib/x86_64-linux-gnu/libpng16.so.16", "/usr/lib/x86_64-linux-gnu/libjpeg.so.62"] {
@@ -1970,7 +2004,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2086,7 +2120,7 @@ fn disk_image() -> PathBuf {
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
                 }
                 let out = root.join(format!("target/{prog}"));
-                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft"].contains(&prog);       // these draw with the UI toolkit (FreeType)
+                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
                 let mut gargs: Vec<String> = vec!["-O1".into(), "-o".into(), out.to_str().unwrap().into(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap().into()];
                 if ui {
                     gargs.extend(["-I/usr/include/freetype2".to_string(), "-lfreetype".to_string(), "-lm".to_string()]);
@@ -7332,8 +7366,8 @@ fn desk_panel_test(img: &Path) {
             return;
         }
         std::thread::sleep(ms(1000));
-        // cursor starts at the centre (640,400); the Terminal button (after "Start") is at (118, 784)
-        let (mut rx, mut ry) = (118 - 640, 784 - 400);
+        // cursor starts at the centre (640,400); the dock's one pinned launcher (Terminal) is the middle of the dock at (638, 768)
+        let (mut rx, mut ry) = (638 - 640, 768 - 400);
         while rx != 0 || ry != 0 {
             let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
             mon(&tsock, &format!("mouse_move {sx} {sy}"));
@@ -7354,12 +7388,12 @@ fn desk_panel_test(img: &Path) {
         let (w, h, d) = read_ppm(&shot)?;
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
-    let bar_ok = px(600, 790).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // panel colour 0x282832
+    let bar_ok = px(125, 768).is_some_and(|c| c.0 < 70 && c.1 < 80 && c.2 > 30 && c.2 < 110); // the glass pill behind "Start"
     let term = out.contains("term ready");
     if bar_ok && term {
         println!("desk-panel-test PASSED: undecorated panel at the bottom edge; a click on its button launched a terminal window");
     } else {
-        eprintln!("  panel pixel {:?}, terminal launched: {term}", px(600, 790));
+        eprintln!("  panel pixel {:?}, terminal launched: {term}", px(125, 768));
         for l in out.lines().filter(|l| l.contains("panel") || l.contains("term") || l.contains("desk") || l.contains("fault")) {
             eprintln!("  {l}");
         }
@@ -7407,8 +7441,8 @@ fn desk_menu_test(img: &Path) {
             std::thread::sleep(ms(700));
         };
         // the menu: 7 programs, rows 40 px apart starting at y = 422 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
-        let row_y = |i: i32| 422 + 40 * i;
-        goto(34, 778);                       // Start
+        let row_y = |i: i32| 414 + 40 * i;
+        goto(36, 768);                       // Start
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
         goto(319, row_y(0));                 // desktop chip of the Terminal row: pin to the desktop
@@ -7417,7 +7451,7 @@ fn desk_menu_test(img: &Path) {
         goto(700, 300);                      // a click on empty desktop closes the menu
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
-        goto(34, 778);                       // Start again, then the Terminal row itself
+        goto(36, 768);                       // Start again, then the Terminal row itself
         click(&tsock);
         goto(283, row_y(3));                 // dock chip of the Text editor row (fourth): pin to the dock
         click(&tsock);
@@ -7438,10 +7472,10 @@ fn desk_menu_test(img: &Path) {
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
     let accent = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| (c.0 as i32 - 0x5b).abs() + (c.1 as i32 - 0x8d).abs() + (c.2 as i32 - 0xef).abs() < 60);
-    let menu_open = accent(px(0, 283, 422));                       // the Terminal row's dock chip is lit while the menu is open
+    let menu_open = accent(px(0, 271, 414));                       // the Terminal row's dock chip is lit while the menu is open
     let icon = px(1, 48, 40).is_some_and(|c| (c.0 as i32 - 16).abs() + (c.1 as i32 - 20).abs() + (c.2 as i32 - 40).abs() > 90); // a desktop icon tile, not wallpaper
     let icon_shot = px(1, 48, 50);
-    let menu_closed = !accent(px(1, 283, 422));
+    let menu_closed = !accent(px(1, 271, 414));
     let term = out.contains("term ready");
     if menu_open && icon && menu_closed && term {
         println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");
@@ -7455,56 +7489,74 @@ fn desk_menu_test(img: &Path) {
     }
 }
 
+/// The position of the n-th (0-based) legacy window of this size that the compositor logged: "desk: window N created WxH at X,Y".
+fn log_window(log: &Path, size: &str, nth: usize) -> Option<(i32, i32)> {
+    let text = std::fs::read_to_string(log).ok()?;
+    let line = text.lines().filter(|l| l.contains("desk: window") && l.contains(&format!(" created {size} at "))).nth(nth)?;
+    let at = line.rsplit(" at ").next()?;
+    let (x, y) = at.trim().split_once(',')?;
+    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+}
+/// The panel's last "panel tasks:" line as (title, focused, x0, x1).
+fn log_tasks(log: &Path) -> Vec<(String, bool, i32, i32)> {
+    let text = std::fs::read_to_string(log).unwrap_or_default();
+    let Some(line) = text.lines().filter(|l| l.starts_with("panel tasks:")).last() else { return Vec::new() };
+    line["panel tasks:".len()..].split_whitespace().filter_map(|t| {
+        let (name, span) = t.rsplit_once('=')?;
+        let (a, b) = span.split_once('-')?;
+        Some((name.trim_end_matches('*').to_string(), name.ends_with('*'), a.parse().ok()?, b.parse().ok()?))
+    }).collect()
+}
+/// Move the emulated pointer from `cur` to (x, y) in steps the PS/2 mouse can carry.
+fn pointer_to(sock: &Path, cur: &mut (i32, i32), x: i32, y: i32) {
+    let (mut rx, mut ry) = (x - cur.0, y - cur.1);
+    while rx != 0 || ry != 0 {
+        let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+        mon(sock, &format!("mouse_move {sx} {sy}"));
+        rx -= sx;
+        ry -= sy;
+    }
+    *cur = (x, y);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+}
+fn pointer_click(sock: &Path) {
+    let ms = std::time::Duration::from_millis;
+    mon(sock, "mouse_button 1");
+    std::thread::sleep(ms(250));
+    mon(sock, "mouse_button 0");
+    std::thread::sleep(ms(700));
+}
+
 /// `cargo xtask desk-tasklist-test`: two windows open; the panel lists both as buttons (the newest lit);
 /// a click on the other one's button raises that window and moves the highlight.
 fn desk_tasklist_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/desktask-serial.log");
     let sock = root.join("target/desktask-mon.sock");
-    let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/desktask-{i}.ppm"))).collect();
-    for f in shots.iter().chain([&log, &sock]) {
-        let _ = std::fs::remove_file(f);
-    }
-    let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+    let _ = std::fs::remove_file(&log);
+    let _ = std::fs::remove_file(&sock);
+    let (tlog, tsock) = (log.clone(), sock.clone());
     std::thread::spawn(move || {
-        let ms = std::time::Duration::from_millis;
         if !wait_for(&tlog, "win 3 ready", 200) {
             return;
         }
-        std::thread::sleep(ms(2500));
-        mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
-        // the Alpha button is the first after the pinned Terminal (x ~ 176..236): click it
-        let (mut rx, mut ry) = (200 - 640, 784 - 400);
-        while rx != 0 || ry != 0 {
-            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
-            mon(&tsock, &format!("mouse_move {sx} {sy}"));
-            rx -= sx;
-            ry -= sy;
+        std::thread::sleep(std::time::Duration::from_millis(2500));
+        let tasks = log_tasks(&tlog);
+        if let Some((_, _, x0, x1)) = tasks.iter().find(|t| t.0.starts_with("Alpha")) {
+            let mut cur = (640, 400);
+            pointer_to(&tsock, &mut cur, (x0 + x1) / 2, 768);
+            pointer_click(&tsock);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
         }
-        std::thread::sleep(ms(300));
-        mon(&tsock, "mouse_button 1");
-        std::thread::sleep(ms(300));
-        mon(&tsock, "mouse_button 0");
-        std::thread::sleep(ms(1500));
-        mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
     });
     let out = boot_and_run(img, "desktask", "/busybox sh /desk-tasklist.sh", "desk ok:", 200);
-    // the first two task buttons sit at x 176..236 and 242..302; sample their left edge (below the text rows)
-    let kind = |n: usize, x: usize| -> Option<u8> {
-        let (w, h, d) = read_ppm(&shots[n])?;
-        if h < 790 || x >= w {
-            return None;
-        }
-        let c = (d[(775 * w + x) * 3] as i32, d[(775 * w + x) * 3 + 1] as i32, d[(775 * w + x) * 3 + 2] as i32);
-        let dist = |a: (i32, i32, i32), b: (i32, i32, i32)| (a.0 - b.0).abs() + (a.1 - b.1).abs() + (a.2 - b.2).abs();
-        if dist(c, (0x56, 0x6a, 0x94)) < 40 || dist(c, (0x6a, 0x7f, 0xa8)) < 40 { Some(2) } else if dist(c, (0x3a, 0x3a, 0x4c)) < 24 || dist(c, (0x44, 0x44, 0x58)) < 24 { Some(1) } else { Some(0) }
-    };
-    let (a, b) = ((kind(0, 184), kind(0, 250)), (kind(1, 184), kind(1, 250)));
-    let ok = a == (Some(1), Some(2)) && b == (Some(2), Some(1));
-    if ok {
-        println!("desk-tasklist-test PASSED: the panel lists the open windows, lights the focused one, and a click on a button raises that window");
+    // the panel prints its task layout each time it changes: Beta (the newer window) is focused first, Alpha after the click
+    let lines: Vec<&str> = out.lines().filter(|l| l.contains("panel tasks:")).collect();
+    let first = lines.iter().position(|l| l.contains("Beta*") && l.contains("Alpha=") );
+    let then = lines.iter().rposition(|l| l.contains("Alpha*") && l.contains("Beta="));
+    if first.is_some() && then.is_some() && first < then {
+        println!("desk-tasklist-test PASSED: the panel lists the open windows, marks the focused one, and a click on a button raises that window");
     } else {
-        eprintln!("  before {a:?}, after {b:?} (1 = dim, 2 = lit)");
         for l in out.lines().filter(|l| l.contains("win") || l.contains("panel") || l.contains("desk")) {
             eprintln!("  {l}");
         }
@@ -7530,15 +7582,10 @@ fn desk_files_test(img: &Path) {
             return;
         }
         std::thread::sleep(ms(1500));
-        // the window sits at (100,80); its first list row is at y = 80 + 30 .. 48
-        let (mut rx, mut ry) = (200 - 640, 80 + 40 - 400);
-        while rx != 0 || ry != 0 {
-            let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
-            mon(&tsock, &format!("mouse_move {sx} {sy}"));
-            rx -= sx;
-            ry -= sy;
-        }
-        std::thread::sleep(ms(300));
+        let Some((wx, wy)) = log_window(&tlog, "780x500", 0) else { return };
+        // the first list row: x = window + 176 (sidebar) + 300, y = window + 52 (toolbar) + 6 + 18
+        let mut cur = (640, 400);
+        pointer_to(&tsock, &mut cur, wx + 176 + 300, wy + 76);
         mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
         for _ in 0..2 {
             mon(&tsock, "mouse_button 1");
@@ -7550,16 +7597,18 @@ fn desk_files_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshot.with_extension("after.ppm").to_str().unwrap()));
     });
     let out = boot_and_run(img, "deskfiles", "/busybox sh /desk-files.sh", "desk ok:", 220);
-    // the row is highlighted (0x364868) in the screenshot taken before the click? no: after hover only, so look for the list text instead
-    let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+    let px = |x: i32, y: i32| -> Option<(u8, u8, u8)> {
         let (w, h, d) = read_ppm(&shot)?;
+        let (x, y) = (x as usize, y as usize);
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
-    let header = px(400, 90).is_some_and(|c| c.0 == 0x2a && c.1 == 0x2a && c.2 == 0x3a); // the 0x2a2a3a header bar
-    if out.contains("opt-pkgdemo") && header {
+    let (wx, wy) = log_window(&log, "780x500", 0).unwrap_or((0, 0));
+    let toolbar = px(wx + 780 - 8, wy + 26) == Some((0x1b, 0x20, 0x2e));        // the toolbar's own background
+    let row_hl = px(wx + 176 + 300, wy + 76).is_some_and(|c| c.2 > 0x40 && c.0 < 0x40);   // the hovered first row is the selected one: blue-tinted
+    if out.contains("opt-pkgdemo") && toolbar && row_hl {
         println!("desk-files-test PASSED: the file manager lists a folder and a double-click on a .deb installed the package");
     } else {
-        eprintln!("  header pixel {:?}", px(400, 90));
+        eprintln!("  toolbar {:?}, row {:?} (window at {:?})", px(wx + 772, wy + 26), px(wx + 476, wy + 76), (wx, wy));
         for l in out.lines().filter(|l| l.contains("files") || l.contains("opt-") || l.contains("desk") || l.contains("thos-pkg")) {
             eprintln!("  {l}");
         }
@@ -7587,21 +7636,22 @@ fn desk_soft_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
     });
     let _ = boot_and_run(img, "desksoft", "/busybox sh /desk-soft.sh", "desk ok:", 200);
-    // window at (100,80); rows start at content y 56: row 0 selected (0x364868), row 1 plain, row 2 empty (0x1c1c26)
-    let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
+    let (wx, wy) = log_window(&log, "760x520", 0).unwrap_or((0, 0));
+    let px = |x: i32, y: i32| -> Option<(u8, u8, u8)> {
         let (w, h, d) = read_ppm(&shot)?;
+        let (x, y) = (x as usize, y as usize);
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
-    let row0 = px(500, 80 + 56 + 9) == Some((0x36, 0x48, 0x68));
-    let row1 = px(500, 80 + 56 + 18 + 9) == Some((0x1c, 0x1c, 0x26));
-    let row2 = px(500, 80 + 56 + 36 + 9) == Some((0x1c, 0x1c, 0x26));
-    // text pixels in the two result rows: the name column has bright glyphs
-    let text = |y0: usize| (0..120).any(|dx| px(140 + dx, y0).is_some_and(|c| c.0 > 200 && c.1 > 200));
-    let has_text = (0..16).any(|dy| text(80 + 56 + dy)) && (0..16).any(|dy| text(80 + 56 + 18 + dy));
-    if row0 && row1 && row2 && has_text {
+    // content: header 78 px, rows 58 px apart from y = 84; row 0 is selected (0x222a40), row 1 and 2 are plain (0x171b26)
+    let row0 = px(wx + 400, wy + 78 + 6 + 27) == Some((0x22, 0x2a, 0x40));
+    let row1 = px(wx + 400, wy + 78 + 6 + 58 + 27) == Some((0x17, 0x1b, 0x26));
+    let row2 = px(wx + 400, wy + 78 + 6 + 116 + 27) == Some((0x17, 0x1b, 0x26));
+    // each of the two results has a coloured app tile at x = 20..62 (not the plain surface colour)
+    let tile = |row: i32| px(wx + 40, wy + 78 + 6 + row * 58 + 4 + 21).is_some_and(|c| (c.0 as i32 - 0x17).abs() + (c.1 as i32 - 0x1b).abs() + (c.2 as i32 - 0x26).abs() > 80);
+    if row0 && row1 && row2 && tile(0) && tile(1) {
         println!("desk-soft-test PASSED: the software centre filters the package index and lists the two matches");
     } else {
-        eprintln!("  row0 {row0} row1 {row1} row2 {row2} text {has_text}");
+        eprintln!("  row0 {row0} row1 {row1} row2 {row2} tiles {} {} (window at {:?})", tile(0), tile(1), (wx, wy));
         eprintln!("desk-soft-test FAILED");
         exit(1);
     }
