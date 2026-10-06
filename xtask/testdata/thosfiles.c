@@ -179,6 +179,13 @@ static void open_entry(struct ent *e) {
         snprintf(status, sizeof status, "Opening %s ...", e->name);
         return;
     }
+    static const char *txt[] = { ".txt", ".md", ".c", ".h", ".py", ".json", ".conf", ".cfg", ".ini", ".log", ".xml", ".html", ".csv", ".rs", ".toml", ".yaml", ".yml" };
+    for (unsigned k = 0; k < sizeof txt / sizeof txt[0]; k++)                                  /* text opens in the editor */
+        if (has_suffix(e->name, txt[k])) {
+            if (fork() == 0) { execl("/thosedit", "thosedit", full, (char *)0); _exit(127); }
+            snprintf(status, sizeof status, "Opening %s ...", e->name);
+            return;
+        }
     if (has_suffix(e->name, ".sh")) snprintf(cmd, sizeof cmd, "/busybox sh '%s'", full);
     else if (has_suffix(e->name, ".exe") || e->exec) snprintf(cmd, sizeof cmd, "'%s'", full);
     else snprintf(cmd, sizeof cmd, "/busybox less '%s'", full);

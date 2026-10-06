@@ -110,7 +110,7 @@ static void build_apps(void) {
     add_app("Files", "/thosfiles");
     add_app("Software", "/thossoft");
     add_app("Settings", "/thossettings");
-    add_app("Text editor", "/thostext");
+    add_app("Text editor", "/thosedit");
     add_app("Foot terminal", "/usr/bin/foot");
     add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
     add_app("GTK demo", "/gtkhello 70");
