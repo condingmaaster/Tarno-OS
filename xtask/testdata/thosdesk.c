@@ -41,7 +41,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
 struct rect { int x0, y0, x1, y1; };     /* half-open */
 struct wlsurf;
 struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar;
-    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo, mxs; struct tween opq; uint32_t *snap; struct rect snap_r; };
+    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo, mxs; int cursor; struct tween opq; uint32_t *snap; struct rect snap_r; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -150,6 +150,47 @@ static void fill(struct rect r, uint32_t c) {
 #define CUR_W 18
 #define CUR_H 26
 static uint8_t cur_fill[CUR_H][CUR_W], cur_out[CUR_H][CUR_W];
+/* the other pointer shapes (a client asks for one with WL_CURSOR while the pointer is over its window): 1 text, 2 hand, 3 busy ring.
+   They are 32x32 sprites drawn around a hotspot; the arrow keeps its own 18x26 bitmap with the hotspot at its tip. */
+#define CS 32
+static int cur_kind;                                  /* the shape shown right now */
+static uint8_t shp_fill[3][CS][CS], shp_out[3][CS][CS];
+static const int shp_hot[4][2] = { { 0, 0 }, { 16, 16 }, { 13, 3 }, { 16, 16 } };
+static float box_sd(float x, float y, float x0, float y0, float x1, float y1, float r) {     /* signed distance to a rounded box */
+    float cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, hx = (x1 - x0) / 2 - r, hy = (y1 - y0) / 2 - r;
+    float qx = fabsf(x - cx) - hx, qy = fabsf(y - cy) - hy;
+    float ox = qx > 0 ? qx : 0, oy = qy > 0 ? qy : 0, in = qx > qy ? qx : qy;
+    return sqrtf(ox * ox + oy * oy) + (in < 0 ? in : 0) - r;
+}
+static float shape_sd(int k, float x, float y) {
+    float d = 1e9f, t;
+    if (k == 0) {            /* text: an I-beam */
+        t = box_sd(x, y, 15, 6, 17, 26, 0.6f); if (t < d) d = t;
+        t = box_sd(x, y, 11, 5, 21, 7.2f, 0.8f); if (t < d) d = t;
+        t = box_sd(x, y, 11, 24.8f, 21, 27, 0.8f); if (t < d) d = t;
+    } else {                 /* hand: index finger, palm, two knuckles */
+        t = box_sd(x, y, 10.5f, 3, 15.5f, 17, 2.3f); if (t < d) d = t;
+        t = box_sd(x, y, 7.5f, 14, 23.5f, 28, 3.5f); if (t < d) d = t;
+        t = box_sd(x, y, 15, 11, 19, 18, 2.0f); if (t < d) d = t;
+        t = box_sd(x, y, 18.5f, 12, 22.5f, 19, 2.0f); if (t < d) d = t;
+        t = box_sd(x, y, 4.5f, 16, 9, 23, 2.2f); if (t < d) d = t;
+    }
+    return d;
+}
+static void shapes_init(void) {
+    for (int k = 0; k < 2; k++)
+        for (int j = 0; j < CS; j++)
+            for (int i = 0; i < CS; i++) {
+                int f = 0, o = 0;
+                for (int sy = 0; sy < 4; sy++) for (int sx = 0; sx < 4; sx++) {
+                    float d = shape_sd(k, i + (sx + 0.5f) / 4, j + (sy + 0.5f) / 4);
+                    if (d < 0) { f++; o++; } else if (d < 1.15f) o++;
+                }
+                shp_fill[k == 0 ? 0 : 1][j][i] = (uint8_t)(f * 255 / 16);
+                shp_out[k == 0 ? 0 : 1][j][i] = (uint8_t)(o * 255 / 16);
+            }
+}
+static struct rect cur_rect(int x, int y, int kind) { return kind == 0 ? rect_xywh(x, y, CUR_W, CUR_H) : rect_xywh(x - shp_hot[kind][0], y - shp_hot[kind][1], CS, CS); }
 static int in_poly(float x, float y) {
     static const float P[7][2] = { { 1.5f, 1.5f }, { 1.5f, 19.5f }, { 5.6f, 15.6f }, { 8.8f, 22.6f }, { 11.9f, 21.2f }, { 8.8f, 14.4f }, { 14.4f, 14.4f } };
     int c = 0;
@@ -184,7 +225,33 @@ static void cursor_init(void) {
             cur_out[j][i] = (uint8_t)(o * 255 / 16);
         }
 }
+static void draw_cursor_sprite(int kind) {
+    int ox = mx - shp_hot[kind][0], oy = my - shp_hot[kind][1];
+    long long t = mo_now_ms();
+    for (int j = 0; j < CS; j++) {
+        if (oy + j < 0 || oy + j >= H) continue;
+        for (int i = 0; i < CS; i++) {
+            if (ox + i < 0 || ox + i >= W) continue;
+            unsigned o, f;
+            if (kind == 3) {                          /* busy: a ring with a gap that turns */
+                float dx = i + 0.5f - 16, dy = j + 0.5f - 16, r = sqrtf(dx * dx + dy * dy);
+                float a = atan2f(dy, dx) - (float)(t % 900) / 900.0f * 6.2832f;
+                while (a < 0) a += 6.2832f;
+                int arc = a < 4.4f;
+                float dr = fabsf(r - 8.5f);
+                f = arc && dr < 1.7f ? 255 : (arc && dr < 2.4f ? (unsigned)(255 * (2.4f - dr) / 0.7f) : 0);
+                o = arc && dr < 3.3f ? 255 : 0;
+            } else { f = shp_fill[kind - 1][j][i]; o = shp_out[kind - 1][j][i]; }
+            if (!o) continue;
+            uint32_t base = bb[(size_t)(oy + j) * W + ox + i];
+            uint32_t c = ui_mix(base, 0x0a0c12u, o * 215u / 255);
+            c = ui_mix(c, 0xffffffu, f);
+            *(uint32_t *)(fbmap + (size_t)(oy + j) * pitch + (size_t)(ox + i) * 4) = fbpx(c);
+        }
+    }
+}
 static void draw_cursor(void) {
+    if (cur_kind) { draw_cursor_sprite(cur_kind); return; }
     for (int j = 0; j < CUR_H; j++) {
         if (my + j >= H) break;
         for (int i = 0; i < CUR_W; i++) {
@@ -617,6 +684,14 @@ static void send_winlist(void) {
 }
 static void raise_win(int i);
 static struct win *win_by_id(int id);
+static void update_cursor(void) {                   /* the shape under the pointer: its window's request, the arrow over frames and the desktop */
+    int nk = 0;
+    for (int i = nwin - 1; i >= 0; i--) if (in(frame_of(&wins[i]), mx, my)) { nk = in(content_of(&wins[i]), mx, my) ? wins[i].cursor : 0; break; }
+    if (nk == cur_kind) return;
+    struct rect a = cur_rect(mx, my, cur_kind);
+    cur_kind = nk;
+    compose(uni(a, cur_rect(mx, my, nk)));
+}
 struct wlsurf;
 static void wls_focus_keyboard(struct wlsurf *s);
 static void on_client(int i) {
@@ -628,6 +703,9 @@ static void on_client(int i) {
         wins[i].title[16] = 0;
         winlist_dirty = 1;
         compose(frame_of(&wins[i]));
+    } else if (m.op == WL_CURSOR) {                     /* the shape the pointer takes over this window */
+        wins[i].cursor = (int)(m.a & 3);
+        update_cursor();
     } else if (m.op == WL_RAISE) {                      /* the panel's task list asks for a window */
         struct win *t = win_by_id((int)m.a);
         if (t && is_listed(t)) {
@@ -682,7 +760,7 @@ static void place_window(struct win *w);
 /* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
 static long long anim_last;
 static int anim_pending(void) {
-    if (toasts_busy()) return 1;
+    if (toasts_busy() || cur_kind == 3) return 1;
     if (icons_busy()) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].clo.k != 0 && (spring_busy(&wins[i].clo) || wins[i].clo.t != (hover_win == wins[i].id ? 1.0f : 0.0f))) return 1;
@@ -726,6 +804,7 @@ static void anim_tick(void) {
         }
     }
     toasts_step(dt);
+    if (cur_kind == 3) compose(cur_rect(mx, my, 3));
     if (icons_busy()) { icons_step(dt); for (int j = 0; j < nicons; j++) compose(inflate_r(icon_cell(j), 10)); }
     for (int i = 0; i < MAXGHOST; i++) {
         struct ghost *g = &ghosts[i];
@@ -966,6 +1045,7 @@ int main(int argc, char **argv) {
     if (fbmap == MAP_FAILED || !bb) { puts("desk FAIL: mmap"); return 1; }
     theme_init();
     cursor_init();
+    shapes_init();
     if (!wall) { puts("desk FAIL: wallpaper"); return 1; }
 
     int ls = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -1063,7 +1143,7 @@ int main(int argc, char **argv) {
             unsigned char pkt[3];
             { ssize_t rn = read(mice, pkt, 3); if (rn != 3) { printf("desk: mouse read %zd\n", rn); break; } }
             int ddx = pkt[1] - ((pkt[0] & 0x10) ? 256 : 0), ddy = pkt[2] - ((pkt[0] & 0x20) ? 256 : 0);
-            struct rect oldc = rect_xywh(mx, my, CUR_W, CUR_H);
+            struct rect oldc = cur_rect(mx, my, cur_kind);
             mx += ddx; my -= ddy;
             if (mx < 0) mx = 0;
             if (my < 0) my = 0;
@@ -1177,6 +1257,7 @@ int main(int argc, char **argv) {
             prev_btn = btn;
             if (!rs_id && !started_resize) wls_pointer(mx, my, btn, pb);
             update_hover();
+            { int ok = cur_kind; update_cursor(); if (cur_kind != ok) oldc = uni(oldc, cur_rect(mx, my, ok)); }
             icons_springs_init();
             { int over = 0; for (int i = 0; i < nwin; i++) if (in(frame_of(&wins[i]), mx, my)) over = 1; int hi = over || drag || rs_id ? -1 : icon_at(mx, my); for (int j = 0; j < nicons; j++) spring_to(&icon_hov[j], j == hi ? 1.0f : 0.0f); }
             if (drag && nwin) {

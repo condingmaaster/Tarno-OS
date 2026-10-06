@@ -69,7 +69,7 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Software-Zentrale | Suche, Ergebnis Hover/Auswahl, Installieren/Entfernen | wie Dateimanager | ◐ (Installation läuft in der App: Knopf wird „Installing“ mit gleitendem Balken, letzte Ausgabezeile in der Fußleiste; Knopf-Druck –) |
 | Bildbetrachter | Bild, Fehler | – (Überblenden beim Blättern fehlt) | ◐ |
 | Terminal | Cursor, Farben | Cursor atmet im Leerlauf, ist bei Eingabe voll | ✔ |
-| Zeiger | normal | – (Hand, Text, Warten fehlen) | ◐ |
+| Zeiger | Pfeil, Text (I-Balken), Hand, Warten (Ring dreht sich); das Fenster fordert die Form mit `WL_CURSOR` / `ui_cursor()` an | Formwechsel sofort; Ring animiert | ✔ (Größenänderungs-Pfeile –) |
 | Hintergrund | – | – | ✔ |
 | Benachrichtigungen (Toasts) | Info, Fertig, Warnung, Fehler; bis zu 4 gestapelt | gleiten per Feder (SP_POP) von rechts ein, stehen 5 s, blenden aus; `thosnotify.h` oder Befehl `thosnotify 'Titel|Text'` | ✔ (Klick zum Schließen –) |
 | Start-Bildschirm / Anmeldung | Splash mit Wortmarke + Fortschrittsbalken, danach Anmeldekonsole im THOS-Farbschema (Logo, zentrierte Spalte, keine Log-Zeilen) | Balken füllt sich an Startmeilensteinen | ◐ (grafische Anmeldung im Desktop –) |

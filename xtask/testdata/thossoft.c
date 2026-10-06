@@ -286,7 +286,9 @@ int main(void) {
         } else if (m.op == WL_POINTER && m.c == 3) {
             ui_list_wheel(&list, (int)(int32_t)m.d);
         } else if (m.op == WL_POINTER) {
-            ui_list_hover(&list, m.c == 0 && (int)m.b >= LIST_Y ? ui_list_at(&list, (int)m.b - LIST_Y) : -1);
+            int row = m.c == 0 && (int)m.b >= LIST_Y ? ui_list_at(&list, (int)m.b - LIST_Y) : -1;
+            ui_list_hover(&list, row);
+            ui_cursor(sock, m.c != 0 ? 0 : (int)m.b > 36 && (int)m.b < 72 ? 1 : (row >= 0 && row < nres) || (!index_buf && (int)m.b > HEAD + 70 && (int)m.b < HEAD + 130) ? 2 : 0);
         } else if (m.op == WL_KEY && m.b) {
             size_t ql = strlen(query);
             if (m.a == 0x52) move(list.sel - 1);

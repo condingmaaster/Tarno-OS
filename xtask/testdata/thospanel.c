@@ -518,6 +518,7 @@ int main(void) {
                     for (int j = 0; j < nitems; j++) if (items[j].kind != K_SEP && items[j].present && x >= items[j].x0 && x < items[j].x1) over = j;
                 }
             }
+            ui_cursor(s, over_start || over >= 0 ? 2 : 0);
             spring_to(&start_hov, over_start ? 1.0f : 0.0f);
             for (int j = 0; j < nitems; j++) spring_to(&items[j].hov, j == over ? 1.0f : 0.0f);
             continue;

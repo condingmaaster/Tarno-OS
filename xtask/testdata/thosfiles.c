@@ -240,7 +240,7 @@ int main(void) {
         } else if (m.op == WL_POINTER && m.c == 3) {                          /* wheel */
             ui_list_wheel(&list, (int)(int32_t)m.d);
         } else if (m.op == WL_POINTER && m.c == 2) {
-            side_hover = -1; side_hot = -1; ui_list_hover(&list, -1); spring_to(&side_hl, side_hl.p);
+            ui_cursor(sock, 0); side_hover = -1; side_hot = -1; ui_list_hover(&list, -1); spring_to(&side_hl, side_hl.p);
         } else if (m.op == WL_POINTER && m.c == 0) {                          /* motion: highlights glide to what is under the pointer */
             int x = (int)m.a, y = (int)m.b;
             int h = x < SIDE && y >= 52 && (y - 52) / 38 < NPLACES ? (y - 52) / 38 : -1;
@@ -249,6 +249,7 @@ int main(void) {
             if (h >= 0) spring_to(&side_hl, (float)(h * 38));
             side_hover = h; side_hot = hot;
             ui_list_hover(&list, x >= SIDE && y >= LIST_Y ? ui_list_at(&list, y - LIST_Y) : -1);
+            ui_cursor(sock, h >= 0 || hot >= 0 || (x >= SIDE && y >= LIST_Y && ui_list_at(&list, y - LIST_Y) >= 0) ? 2 : 0);
             render();
         } else if (m.op == WL_KEY && m.b) {
             switch (m.a) {

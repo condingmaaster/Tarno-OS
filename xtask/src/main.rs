@@ -913,6 +913,51 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-cursor-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskcursor-serial.log"), root.join("target/deskcursor-mon.sock"));
+            let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/deskcursor{i}.ppm"))).collect();
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            for f in &shots { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "soft ready", 200) { return; }
+                std::thread::sleep(ms(1500));
+                let (wx, wy) = log_window(&tlog, "760x520", 0).unwrap_or((200, 100));
+                let mut cur = (640i32, 400i32);
+                let mut goto = |x: i32, y: i32| {
+                    let (mut rx, mut ry) = (x - cur.0, y - cur.1);
+                    while rx != 0 || ry != 0 {
+                        let (sx, sy) = (rx.clamp(-40, 40), ry.clamp(-40, 40));
+                        mon(&tsock, &format!("mouse_move {sx} {sy}"));
+                        rx -= sx; ry -= sy;
+                    }
+                    cur = (x, y);
+                    std::thread::sleep(ms(900));
+                };
+                goto(wx + 300, wy + 54);                 // over the search field: the text beam
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                goto(wx + 680, wy + 113);                // over a result's button: the hand
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+                goto(wx + 300, wy + 400);                // empty list area: the arrow
+                mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "deskcursor", "/busybox sh /desk-soft.sh", "desk ok:", 200);
+            let diff = |a: usize, b: usize| match (read_ppm(&shots[a]), read_ppm(&shots[b])) {
+                (Some(x), Some(y)) => x.2.iter().zip(y.2.iter()).filter(|(p, q)| p != q).count(),
+                _ => 0,
+            };
+            // every pair of shots differs by at least the pointer shapes (a few hundred pixels) and the hover glides
+            if out.contains("soft ready") && diff(0, 1) > 200 && diff(1, 2) > 200 {
+                println!("desk-cursor-test PASSED: the pointer changed shape over the search field, a button and empty space");
+            } else {
+                eprintln!("  diffs {} {}", diff(0, 1), diff(1, 2));
+                eprintln!("desk-cursor-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -5527,7 +5572,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-cursor-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];
@@ -7813,11 +7858,11 @@ fn desk_files_test(img: &Path) {
     };
     let (wx, wy) = log_window(&log, "780x500", 0).unwrap_or((0, 0));
     let toolbar = px(wx + 780 - 8, wy + 26) == Some((0x1b, 0x20, 0x2e));        // the toolbar's own background
-    let row_hl = px(wx + 176 + 300, wy + 76).is_some_and(|c| c.2 > 0x40 && c.0 < 0x40);   // the hovered first row is the selected one: blue-tinted
+    let row_hl = px(wx + 176 + 400, wy + 76).is_some_and(|c| c.2 > 0x40 && c.0 < 0x40);   // the hovered first row is the selected one: blue-tinted
     if out.contains("opt-pkgdemo") && toolbar && row_hl {
         println!("desk-files-test PASSED: the file manager lists a folder and a double-click on a .deb installed the package");
     } else {
-        eprintln!("  toolbar {:?}, row {:?} (window at {:?})", px(wx + 772, wy + 26), px(wx + 476, wy + 76), (wx, wy));
+        eprintln!("  toolbar {:?}, row {:?} (window at {:?})", px(wx + 772, wy + 26), px(wx + 576, wy + 76), (wx, wy));
         for l in out.lines().filter(|l| l.contains("files") || l.contains("opt-") || l.contains("desk") || l.contains("thos-pkg")) {
             eprintln!("  {l}");
         }

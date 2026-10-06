@@ -190,7 +190,9 @@ int main(void) {
             if (i >= 0) goto_page(i);
             render();
         } else if (m.op == WL_POINTER && m.c != 3) {
-            ui_list_hover(&list, m.c == 0 && (int)m.a < SIDE && (int)m.b >= 62 ? ui_list_at(&list, (int)m.b - 62) : -1);
+            int rw = m.c == 0 && (int)m.a < SIDE && (int)m.b >= 62 ? ui_list_at(&list, (int)m.b - 62) : -1;
+            ui_list_hover(&list, rw);
+            ui_cursor(sock, rw >= 0 ? 2 : 0);
         } else if (m.op == WL_KEY && m.b) {
             if (m.a == 0x52) goto_page(page - 1);
             else if (m.a == 0x51) goto_page(page + 1);

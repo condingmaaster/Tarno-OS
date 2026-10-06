@@ -28,6 +28,7 @@ int main(void) {
     struct wl_msg m = { WL_CREATE, TW, TH, (uint32_t)key, 0 };
     (void)!write(s, &m, sizeof m);
     if (read(s, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("text FAIL: no CREATED"); return 1; }
+    { uint32_t cm[5] = { WL_CURSOR, 1, 0, 0, 0 }; (void)!write(s, cm, sizeof cm); }
     shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "typewriter", 10);

@@ -296,6 +296,14 @@ static void ui_scrollbar(uint32_t *buf, int bw, int bh, const struct ui_list *l,
 }
 /* the blocking part of a client's event loop: sleeps until the compositor sends something, but wakes every animation frame while
    anything is moving. Returns what poll returned (> 0: a message is waiting). */
+/* ask the compositor for a pointer shape while the pointer is over this window: 0 arrow, 1 text, 2 hand, 3 busy (sent only on change) */
+static void ui_cursor(int sock, int kind) {
+    static int last;
+    if (kind == last) return;
+    last = kind;
+    uint32_t m[5] = { 14, (uint32_t)kind, 0, 0, 0 };
+    (void)!write(sock, m, sizeof m);
+}
 static int ui_wait(int sock, int animating) {
     struct pollfd p = { sock, POLLIN, 0 };
     return poll(&p, 1, animating ? MO_FRAME_MS : -1);
