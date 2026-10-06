@@ -67,3 +67,6 @@ Tests: `cargo xtask desk-test | desk-kbd-test | desk-term-test | desk-panel-test
 - **Software** (`thossoft`, Startmenü): durchsucht den Debian-Paketindex (`thos-pkg update` einmalig vorher; der Knopf „Enter" ohne Index startet das). Tippen = suchen, Pfeiltasten/Doppelklick/Enter = installieren (oder entfernen, wenn schon installiert; `[*]` markiert Installiertes). Test: `desk-soft-test`.
 - Text-Webbrowser: `thos-pkg install w3m` (mit Netz; im Test `pkg-apps-test` zusammen mit htop, jq, ripgrep, nano geprüft).
 - **Bildschirmfoto:** die Taste *Druck* speichert den Desktop als PNG nach `/tmp/shot-1.png`, `/tmp/shot-2.png` … (unkomprimiert, ~3 MB; vom Stick an einem anderen Rechner lesbar). Test: `desk-shot-test`.
+- **Bildbetrachter** (`thosview`, öffnet sich per Doppelklick auf `.png`/`.jpg` im Dateimanager): PNG über libpng, JPEG über libjpeg, skaliert aufs Fenster; Links/Rechts blättert durch den Ordner, Esc schließt. Test: `desk-view-test`.
+- **Startmenü:** die Zeile unter dem Zeiger leuchtet auf; „System info" führt `hwreport` aus und zeigt das Ergebnis in `less`.
+- **Autostart:** `thos-autostart on` (siehe `acer-first-boot.md`).
