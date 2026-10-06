@@ -16,4 +16,4 @@ struct wl_msg { uint32_t op, a, b, c, d; };
    CLOSE   s->c: the user closed the window
    TITLE   c->s: a..d = up to 16 title characters
    KEY     s->c: a = HID usage, b = 1 press / 0 release, c = ASCII (0 = none), d = modifier byte
-   POINTER s->c: a,b = surface-local x,y  c = 1 on a press  */
+   POINTER s->c: a,b = surface-local x,y  c = 1 on a press, 0 = moved over the surface, 2 = left it, 3 = wheel (d = signed clicks, positive = up)  */

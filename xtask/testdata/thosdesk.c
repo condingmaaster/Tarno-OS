@@ -41,7 +41,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
 struct rect { int x0, y0, x1, y1; };     /* half-open */
 struct wlsurf;
 struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar;
-    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc; struct tween opq; uint32_t *snap; struct rect snap_r; };
+    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo; struct tween opq; uint32_t *snap; struct rect snap_r; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -237,15 +237,27 @@ static int icon_at(int x, int y) {
     return -1;
 }
 static void put_glyph_str(const char *t, int gx, int gy, uint32_t c, unsigned op, struct rect r);
+static struct spring icon_hov[MAXICON], icon_sc[MAXICON];     /* hover lift, and a bounce when the program starts */
+static int icon_sel = -1, icon_springs_ready;
+static void icons_springs_init(void) { if (icon_springs_ready) return; icon_springs_ready = 1; for (int j = 0; j < MAXICON; j++) { spring_init(&icon_hov[j], 0, SP_HOVER); spring_init(&icon_sc[j], 1, SP_DOCK); } }
+static int icons_busy(void) { for (int j = 0; j < nicons; j++) if (spring_busy(&icon_hov[j]) || spring_busy(&icon_sc[j])) return 1; return 0; }
+static void icons_step(float dt) { for (int j = 0; j < nicons; j++) { spring_step(&icon_hov[j], dt); spring_step(&icon_sc[j], dt); } }
 static void draw_icons(struct rect r) {
+    icons_springs_init();
     for (int j = 0; j < nicons; j++) {
         struct rect cell = icon_cell(j);
         if (empty(isect(cell, r))) continue;
         ui_set_clip(r.x0, r.y0, r.x1, r.y1);
-        ui_tile(bb, W, H, cell.x0 + 12, cell.y0, 56, icons[j].label);
+        float h = icon_hov[j].p < 0 ? 0 : icon_hov[j].p > 1 ? 1 : icon_hov[j].p, sc = icon_sc[j].p;
+        int sel = j == icon_sel;
+        unsigned glow = (unsigned)(h * 34) + (sel ? 38 : 0);
+        if (glow) ui_rrect_g(bb, W, H, cell.x0 + 1, cell.y0 - 8, 78, 96, 14, 0xffffffu, 0xffffffu, glow);      /* a soft light plate behind it */
+        int size = (int)(56 * sc + 0.5f), cx = cell.x0 + 40, ty = cell.y0 + (56 - size) / 2 - (int)(3 * h + 0.5f);
+        ui_tile(bb, W, H, cx - size / 2, ty, size, icons[j].label);
         char lab[24]; snprintf(lab, sizeof lab, "%.14s", icons[j].label);
         int lw = ui_text_width(UI_REG, 12, lab), lx = cell.x0 + (80 - lw) / 2, ly = cell.y0 + 74;
-        ui_text_a(bb, W, H, lx + 1, ly + 1, lab, UI_REG, 12, 0x000000u, 200);
+        if (sel) ui_rrect_g(bb, W, H, lx - 6, ly - 13, lw + 12, 19, 8, UI_ACCENT, UI_ACCENT, 200);
+        else ui_text_a(bb, W, H, lx + 1, ly + 1, lab, UI_REG, 12, 0x000000u, 200);
         ui_text(bb, W, H, lx, ly, lab, UI_REG, 12, 0xf1f3fau);
         ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     }
@@ -355,8 +367,10 @@ static void draw_window(struct win *w, int top, struct rect r) {
     ui_text_a(B, W, H, w->x + 16, w->y - TITLE + 24, tt, fz > 127 ? UI_BOLD : UI_REG, 13, ui_mix(UI_MUTED, UI_TEXT, fz), op);
     struct rect cb = close_btn(w);
     int ccx = (cb.x0 + cb.x1) / 2, ccy = (cb.y0 + cb.y1) / 2, hot = hover_win == w->id;
-    if (hot) ui_disc(B, W, H, ccx, ccy, BTN / 2, UI_BAD);
-    ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, hot ? 0xffffffu : ui_mix(0x6c748cu, 0xb4bbd0u, fz));
+    float ch = w->clo.p < 0 ? 0 : w->clo.p > 1 ? 1 : w->clo.p;
+    (void)hot;
+    if (ch > 0.02f) ui_rrect_g(B, W, H, ccx - BTN / 2, ccy - BTN / 2, BTN, BTN, BTN / 2, UI_BAD, UI_BAD, (unsigned)(ch * 255));
+    ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, ui_mix(ui_mix(0x6c748cu, 0xb4bbd0u, fz), 0xffffffu, (unsigned)(ch * 255)));
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
 }
 
@@ -597,6 +611,8 @@ static void place_window(struct win *w);
 /* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
 static long long anim_last;
 static int anim_pending(void) {
+    if (icons_busy()) return 1;
+    for (int i = 0; i < nwin; i++) if (wins[i].clo.k != 0 && (spring_busy(&wins[i].clo) || wins[i].clo.t != (hover_win == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].anim || (wins[i].foc.k != 0 && (spring_busy(&wins[i].foc) || wins[i].foc.t != (i == nwin - 1 ? 1.0f : 0.0f)))) return 1;
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) return 1;
     return 0;
@@ -612,6 +628,9 @@ static void anim_tick(void) {
         float tgt = i == nwin - 1 ? 1.0f : 0.0f;
         if (w->foc.k == 0) spring_init(&w->foc, tgt, SP_SNAPPY);        /* windows that never popped in (the panel) just follow the focus */
         if (w->foc.t != tgt) spring_to(&w->foc, tgt);
+        if (w->clo.k == 0) spring_init(&w->clo, 0, SP_HOVER);
+        spring_to(&w->clo, hover_win == w->id ? 1.0f : 0.0f);
+        if (spring_busy(&w->clo)) { spring_step(&w->clo, dt); if (w->anim == 0) compose(inflate_r(close_btn(w), 3)); }
         if (spring_busy(&w->foc)) { spring_step(&w->foc, dt); if (w->anim != 2 && w->anim != 1) compose(inflate_r(outer_of(w), 2)); }
         if (w->anim == 1) {
             if ((w->ready && t - w->anim_t0 >= 30) || t - w->anim_t0 > 350) {
@@ -630,6 +649,7 @@ static void anim_tick(void) {
             compose(rr);
         }
     }
+    if (icons_busy()) { icons_step(dt); for (int j = 0; j < nicons; j++) compose(inflate_r(icon_cell(j), 10)); }
     for (int i = 0; i < MAXGHOST; i++) {
         struct ghost *g = &ghosts[i];
         if (!g->active) continue;
@@ -891,7 +911,11 @@ int main(int argc, char **argv) {
         if (nwl) wls_dispatch_poll(&p[wbase], nwl);
         if (wheel >= 0 && (p[wbase + nwl].revents & POLLIN)) {
             signed char z;
-            if (read(wheel, &z, 1) == 1) wls_wheel(z);
+            if (read(wheel, &z, 1) == 1) {
+                wls_wheel(z);
+                struct win *hc = hover_client ? win_by_id(hover_client) : 0;
+                if (hc && hc->fd >= 0) { struct wl_msg wm = { WL_POINTER, (uint32_t)(mx - hc->x), (uint32_t)(my - hc->y), 3, (uint32_t)(int32_t)z }; (void)!write(hc->fd, &wm, sizeof wm); }   /* legacy clients: c = 3, d = signed clicks */
+            }
         }
         if (p[0].revents == 0 && p[1].revents == 0 && p[2].revents == 0 && p[3].revents == 0) {
             int any = 0;
@@ -994,8 +1018,11 @@ int main(int argc, char **argv) {
                 for (int i = 0; i < nwin; i++) if (in(frame_of(&wins[i]), mx, my)) over = 1;
                 int ic = over ? -1 : icon_at(mx, my);
                 unsigned long long tn = now_ms();
+                int old_sel = icon_sel;
+                icon_sel = ic;
+                if (old_sel != icon_sel) { if (old_sel >= 0) compose(inflate_r(icon_cell(old_sel), 6)); if (icon_sel >= 0) compose(inflate_r(icon_cell(icon_sel), 6)); }
                 if (ic >= 0) {
-                    if (ic == last_icon && tn - last_icon_ms < 500) { launch_cmd(icons[ic].cmd); last_icon = -1; }
+                    if (ic == last_icon && tn - last_icon_ms < 500) { launch_cmd(icons[ic].cmd); last_icon = -1; icon_sc[ic].p = 1.0f; icon_sc[ic].v = 3.2f; }       /* a bounce: it pops out and settles */
                     else { last_icon = ic; last_icon_ms = tn; }
                 }
             }
@@ -1056,6 +1083,8 @@ int main(int argc, char **argv) {
             prev_btn = btn;
             if (!rs_id && !started_resize) wls_pointer(mx, my, btn, pb);
             update_hover();
+            icons_springs_init();
+            { int over = 0; for (int i = 0; i < nwin; i++) if (in(frame_of(&wins[i]), mx, my)) over = 1; int hi = over || drag || rs_id ? -1 : icon_at(mx, my); for (int j = 0; j < nicons; j++) spring_to(&icon_hov[j], j == hi ? 1.0f : 0.0f); }
             if (drag && nwin) {
                 struct win *w = &wins[nwin - 1];
                 struct rect old = outer_of(w);

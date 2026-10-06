@@ -281,6 +281,15 @@ static void draw_bar(void) {
 #define ROWS (napps)
 #define CHIP_W 30
 static int mfd = -1, mh, mshm = -1, hover = -1;
+static struct spring mh_y, mh_a, mh_foot;      /* the menu's hover highlight glides between rows; the footer buttons fade */
+static int menu_busy(void) { return mfd >= 0 && (spring_busy(&mh_y) || spring_busy(&mh_a) || spring_busy(&mh_foot)); }
+static void menu_hover(int hv) {
+    if (hv == hover) return;
+    if (hv >= 0 && hv < napps) { if (hover < 0 || hover >= napps) spring_init(&mh_y, (float)(hv * M_ROW), SP_HOVER); spring_to(&mh_y, (float)(hv * M_ROW)); spring_to(&mh_a, 1); spring_to(&mh_foot, 0); }
+    else if (hv >= napps) { spring_to(&mh_a, 0); spring_to(&mh_foot, 1); }
+    else { spring_to(&mh_a, 0); spring_to(&mh_foot, 0); }
+    hover = hv;
+}
 static uint32_t *mpx, *mcol, *mmask;
 static unsigned long long closed_ms;
 static unsigned long long ms_now(void) {
@@ -304,9 +313,9 @@ static void draw_menu(void) {
     ui_text(mcol, M_W, mh, 20 + ui_text_width(UI_BOLD, 18, "THOS") + 10, 32, "Programs", UI_REG, 12, UI_MUTED);
     ui_icon(mcol, M_W, mh, chip_x(0) + CHIP_W / 2, 22, 0xf0c9, 10, UI_MUTED);
     ui_icon(mcol, M_W, mh, chip_x(1) + CHIP_W / 2, 22, 0xf108, 10, UI_MUTED);
+    if (mh_a.p > 0.02f) ui_rrect_g(mcol, M_W, mh, 8, M_HEAD + (int)(mh_y.p + 0.5f) + 1, M_W - 16, M_ROW - 2, 10, 0x2a3248u, 0x2a3248u, (unsigned)(mh_a.p > 1 ? 255 : mh_a.p * 255));
     for (int r = 0; r < ROWS; r++) {
         int y = M_HEAD + r * M_ROW;
-        if (r == hover) ui_rrect(mcol, M_W, mh, 8, y + 1, M_W - 16, M_ROW - 2, 10, 0x2a3248u);
         ui_rrect_g(mcol, M_W, mh, 16, y + 6, 28, 28, 8, ui_shade(ui_app_color(apps[r].label), 18), ui_shade(ui_app_color(apps[r].label), -18), 255);
         ui_icon(mcol, M_W, mh, 30, y + 20, ui_app_glyph(apps[r].label), 13, 0xffffffu);
         ui_text(mcol, M_W, mh, 56, y + 25, apps[r].label, UI_REG, 14, UI_TEXT);
@@ -316,7 +325,7 @@ static void draw_menu(void) {
     int fy = mh - M_FOOT + 10;
     for (int i = 0; i < 3; i++) {
         int x, w; foot_btn_rect(i, &x, &w);
-        int on = hover == ROWS + i;
+        int on = hover == ROWS + i && mh_foot.p > 0.5f;
         ui_card(mcol, M_W, mh, x, fy, w, 38, 11, on ? (i == 2 ? 0x4a2630u : 0x2a3248u) : 0x1b2130u, on && i == 2 ? 0xb9505eu : 0x34405aU);
         uint32_t ic = i == 0 ? 0xf08b : i == 1 ? IC_REFRESH : IC_POWER;
         const char *lab = i == 0 ? "Quit" : i == 1 ? "Restart" : "Shut down";
@@ -346,6 +355,7 @@ static void menu_close(void) {
 static void menu_open(void) {
     build_apps();
     hover = -1;
+    spring_init(&mh_y, 0, SP_HOVER); spring_init(&mh_a, 0, SP_HOVER); spring_init(&mh_foot, 0, SP_HOVER);
     mh = M_HEAD + ROWS * M_ROW + M_FOOT;
     mfd = sock_connect();
     if (mfd < 0) return;
@@ -431,6 +441,7 @@ int main(void) {
         int animating = dock_busy();
         if (animating) dock_step(dt);
         if (animating || redraw) { redraw = 0; draw_bar(); commit_all(s); }
+        if (menu_busy()) { spring_step(&mh_y, dt); spring_step(&mh_a, dt); spring_step(&mh_foot, dt); draw_menu(); menu_commit(); }
         if (log_pending && !dock_busy()) {                                          /* the layout, for the desktop tests, once everything has settled */
             log_pending = 0;
             printf("panel tasks:");
@@ -439,7 +450,7 @@ int main(void) {
             fflush(stdout);
         }
         struct pollfd pf[2] = { { s, POLLIN, 0 }, { mfd, POLLIN, 0 } };
-        if (poll(pf, 2, dock_busy() ? MO_FRAME_MS : 15000) <= 0) continue;
+        if (poll(pf, 2, dock_busy() || menu_busy() ? MO_FRAME_MS : 15000) <= 0) continue;
         if (mfd >= 0 && pf[1].revents) {                      /* the menu surface: pointer motion, a click in it, or the compositor closed it */
             if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) { menu_close(); continue; }
             if (m.op != WL_POINTER) continue;
@@ -448,8 +459,8 @@ int main(void) {
             int fb = -1;
             if (y >= mh - M_FOOT + 10 && y < mh - M_FOOT + 48) for (int i = 0; i < 3; i++) { int bx, bw; foot_btn_rect(i, &bx, &bw); if (x >= bx && x < bx + bw) fb = i; }
             int hv = r >= 0 ? r : fb >= 0 ? ROWS + fb : -1;
-            if (m.c == 0) { if (hv != hover) { hover = hv; draw_menu(); menu_commit(); } continue; }
-            if (m.c == 2) { if (hover != -1) { hover = -1; draw_menu(); menu_commit(); } continue; }
+            if (m.c == 0) { menu_hover(hv); continue; }
+            if (m.c == 2) { menu_hover(-1); continue; }
             if (m.c != 1) continue;
             if (fb >= 0) {                                    /* Quit desktop / Restart / Shut down */
                 menu_close();

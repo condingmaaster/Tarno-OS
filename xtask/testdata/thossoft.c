@@ -25,13 +25,16 @@
 #define FOOT 30
 #define VIS ((SH - HEAD - FOOT) / ROW)
 #define MAXR 300
+#define LIST_Y (HEAD + 6)
+#define LIST_H (SH - HEAD - FOOT - 12)
 static uint32_t *px;
 static int sock;
 static char *index_buf;
 static size_t index_len;
 static char query[64];
 static struct res { const char *line; size_t len; } res[MAXR];
-static int nres, sel, top;
+static int nres;
+static struct ui_list list;
 static char status[160];
 
 static int load_index(void) {
@@ -61,7 +64,7 @@ static int installed(const char *name) {
     return stat(p, &st) == 0;
 }
 static void search(void) {
-    nres = 0; sel = 0; top = 0;
+    nres = 0;
     if (!index_buf || !query[0]) return;
     size_t ql = strlen(query);
     for (int pass = 0; pass < 2 && nres < MAXR; pass++) {                 /* pass 0: names, pass 1: descriptions */
@@ -94,6 +97,7 @@ static void search(void) {
         }
     }
     snprintf(status, sizeof status, "%d result%s", nres, nres == 1 ? "" : "s");
+    ui_list_reset(&list, nres);
 }
 static void commit(void) { struct wl_msg c = { WL_COMMIT, 0, 0, SW, SH }; (void)!write(sock, &c, sizeof c); }
 static int hover_row = -1;
@@ -121,13 +125,13 @@ static void render(void) {
         ui_text(px, SW, SH, SW / 2 - ui_text_width(UI_REG, 15, "Nothing matches") / 2, HEAD + 120, "Nothing matches", UI_REG, 15, UI_MUTED);
     }
     ui_set_clip(0, HEAD, SW, SH - FOOT);
-    for (int r = 0; r < VIS && top + r < nres; r++) {
-        int i = top + r, y = HEAD + 6 + r * ROW;
+    ui_list_pills(px, SW, SH, &list, 8, LIST_Y, SW - 16, 0x222a40, 0x1b2132, 11);
+    for (int i = 0; i < nres; i++) {
+        int y = LIST_Y + ui_list_row_y(&list, i);
+        if (y + ROW < HEAD || y > SH - FOOT) continue;
         char name[64], ver[40], desc[160], size[16];
         field(&res[i], 0, name, sizeof name); field(&res[i], 1, ver, sizeof ver); field(&res[i], 5, size, sizeof size); field(&res[i], 6, desc, sizeof desc);
         int inst = installed(name);
-        if (i == sel) ui_rrect(px, SW, SH, 8, y, SW - 16, ROW - 4, 11, 0x222a40);
-        else if (i == hover_row) ui_rrect(px, SW, SH, 8, y, SW - 16, ROW - 4, 11, 0x1b2132);
         ui_tile(px, SW, SH, 20, y + 4, 42, name);
         ui_text(px, SW, SH, 76, y + 20, name, UI_BOLD, 14, UI_TEXT);
         char meta[80]; snprintf(meta, sizeof meta, "%s   %ld kB", ver, atol(size) / 1024);
@@ -140,6 +144,7 @@ static void render(void) {
         else { ui_rrect_g(px, SW, SH, bx, by, bw, 28, 14, UI_ACCENT_HI, 0x3f69d6, 255); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_BOLD, 12, "Install")) / 2, by + 19, "Install", UI_BOLD, 12, 0xffffffu); }
         if (inst) ui_icon(px, SW, SH, bx - 16, by + 14, 0xf00c, 12, UI_GOOD);
     }
+    ui_scrollbar(px, SW, SH, &list, SW - 9, LIST_Y);
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     for (int y = SH - FOOT; y < SW * SH / SW && y < SH; y++) for (int x = 0; x < SW; x++) px[y * SW + x] = 0x1b202e;
     for (int x = 0; x < SW; x++) px[(SH - FOOT) * SW + x] = UI_LINE;
@@ -154,22 +159,15 @@ static void in_terminal(const char *cmd) {
 }
 static void act(void) {
     if (!index_buf) { in_terminal("/bin/thos-pkg update"); snprintf(status, sizeof status, "updating the index ... reopen the software centre afterwards"); return; }
-    if (sel >= nres) return;
+    if (list.sel >= nres) return;
     char name[64], cmd[200];
-    field(&res[sel], 0, name, sizeof name);
+    field(&res[list.sel], 0, name, sizeof name);
     for (char *c = name; *c; c++) if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-' || *c == '.' || *c == '+')) return;
     snprintf(cmd, sizeof cmd, "/bin/thos-pkg %s %s", installed(name) ? "remove" : "install", name);
     in_terminal(cmd);
     snprintf(status, sizeof status, "%s %s ...", installed(name) ? "removing" : "installing", name);
 }
-static void move(int to) {
-    if (nres == 0) return;
-    if (to < 0) to = 0;
-    if (to >= nres) to = nres - 1;
-    sel = to;
-    if (sel < top) top = sel;
-    if (sel >= top + VIS) top = sel - VIS + 1;
-}
+static void move(int to) { ui_list_select(&list, to); }
 
 int main(void) {
     int key = 0x5000 + getpid();
@@ -187,6 +185,7 @@ int main(void) {
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "Software", 8);
     (void)!write(sock, &t, sizeof t);
+    ui_list_init(&list, ROW, LIST_H);
     load_index();
     const char *q0 = getenv("SOFT_QUERY");
     if (q0) { snprintf(query, sizeof query, "%s", q0); search(); }
@@ -195,32 +194,37 @@ int main(void) {
     printf("soft ready\n");
     fflush(stdout);
     int last_row = -1;
-    long long last_ms = 0;
-    while (read(sock, &m, sizeof m) == (ssize_t)sizeof m) {
-        if (m.op == WL_CLOSE) break;
+    long long last_click = 0, clk = mo_now_ms();
+    for (;;) {
+        int busy = ui_list_busy(&list);
+        int pr = ui_wait(sock, busy);
+        long long nowt = mo_now_ms();
+        float dt = (float)(nowt - clk) / 1000.0f;
+        clk = nowt;
+        if (busy) { ui_list_step(&list, dt); render(); }
+        if (pr <= 0) continue;
+        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
         if (m.op == WL_POINTER && m.c == 1) {
-            struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-            long long now = ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
+            long long now = mo_now_ms();
             if (!index_buf && (int)m.b > HEAD + 70 && (int)m.b < HEAD + 130) act();
             else if ((int)m.b >= HEAD) {
-                int r = ((int)m.b - HEAD - 6) / ROW, i = top + r;
-                if (r >= 0 && r < VIS && i < nres) {
+                int i = ui_list_at(&list, (int)m.b - LIST_Y);
+                if (i >= 0 && i < nres) {
                     move(i);
-                    if ((int)m.a >= SW - 112 || (i == last_row && now - last_ms < 800)) { act(); last_row = -1; } else { last_row = i; last_ms = now; }
+                    if ((int)m.a >= SW - 112 || (i == last_row && now - last_click < 800 * mo_slomo())) { act(); last_row = -1; } else { last_row = i; last_click = now; }
                 }
             }
             render();
+        } else if (m.op == WL_POINTER && m.c == 3) {
+            ui_list_wheel(&list, (int)(int32_t)m.d);
         } else if (m.op == WL_POINTER) {
-            int h = m.c == 0 && (int)m.b >= HEAD + 6 ? ((int)m.b - HEAD - 6) / ROW : -1;
-            if (h >= 0) h += top;
-            if (h >= nres) h = -1;
-            if (h != hover_row) { hover_row = h; render(); }
+            ui_list_hover(&list, m.c == 0 && (int)m.b >= LIST_Y ? ui_list_at(&list, (int)m.b - LIST_Y) : -1);
         } else if (m.op == WL_KEY && m.b) {
             size_t ql = strlen(query);
-            if (m.a == 0x52) move(sel - 1);
-            else if (m.a == 0x51) move(sel + 1);
-            else if (m.a == 0x4B) move(sel - VIS);
-            else if (m.a == 0x4E) move(sel + VIS);
+            if (m.a == 0x52) move(list.sel - 1);
+            else if (m.a == 0x51) move(list.sel + 1);
+            else if (m.a == 0x4B) move(list.sel - LIST_H / ROW);
+            else if (m.a == 0x4E) move(list.sel + LIST_H / ROW);
             else if (m.a == 0x28) act();
             else if (m.a == 0x29) { query[0] = 0; search(); }
             else if (m.a == 0x2A) { if (ql) { query[ql - 1] = 0; search(); } }

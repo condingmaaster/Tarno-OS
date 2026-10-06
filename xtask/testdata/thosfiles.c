@@ -27,13 +27,16 @@
 #define TOP 52
 #define FOOT 30
 #define ROW 36
-#define VIS ((FH - TOP - FOOT) / ROW)
+#define LIST_Y (TOP + 6)
+#define LIST_H (FH - TOP - FOOT - 12)
 #define MAXE 512
 static uint32_t *px;
 static int sock;
 static char cwd[512] = "/";
 static struct ent { char name[96]; int dir, exec; long long size; } ent[MAXE];
-static int nent, sel, top, side_hover = -1, side_hot = -1;
+static int nent, side_hover = -1, side_hot = -1;
+static struct ui_list list;
+static struct spring side_hl;                  /* the sidebar's hover highlight: a pill that glides between places */
 static char status[140];
 static int armed = -1;                         /* Delete pressed once on this entry */
 static const struct { const char *label, *path; uint32_t icon; } places[] = {
@@ -50,7 +53,7 @@ static int cmp_ent(const void *a, const void *b) {
     return strcasecmp(x->name, y->name);
 }
 static void load(void) {
-    nent = 0; sel = 0; top = 0; armed = -1;
+    nent = 0; armed = -1;
     DIR *d = opendir(cwd);
     if (!d) { snprintf(status, sizeof status, "Cannot read %s", cwd); return; }
     struct dirent *e;
@@ -68,6 +71,7 @@ static void load(void) {
     closedir(d);
     qsort(ent, (size_t)nent, sizeof ent[0], cmp_ent);
     snprintf(status, sizeof status, "%d item%s", nent, nent == 1 ? "" : "s");
+    ui_list_reset(&list, nent);
 }
 static void commit(void) { struct wl_msg c = { WL_COMMIT, 0, 0, FW, FH }; (void)!write(sock, &c, sizeof c); }
 static void size_str(long long v, char *out) {
@@ -91,10 +95,10 @@ static void render(void) {
     for (int y = 0; y < FH; y++) for (int x = 0; x < SIDE; x++) px[y * FW + x] = 0x121620;
     for (int y = 0; y < FH; y++) px[y * FW + SIDE - 1] = UI_LINE;
     ui_text(px, FW, FH, 20, 36, "Places", UI_BOLD, 11, UI_MUTED);
+    if (side_hover >= 0) ui_rrect_g(px, FW, FH, 10, 52 + (int)side_hl.p, SIDE - 20, 32, 9, 0x1c2336, 0x1c2336, 255);
     for (int i = 0; i < NPLACES; i++) {
         int y = 52 + i * 38, here = !strcmp(cwd, places[i].path) || (i == 2 && !strcmp(cwd, "/"));
         if (here) ui_rrect(px, FW, FH, 10, y, SIDE - 20, 32, 9, 0x232b42);
-        else if (i == side_hover) ui_rrect(px, FW, FH, 10, y, SIDE - 20, 32, 9, 0x1a2030);
         ui_icon(px, FW, FH, 32, y + 16, places[i].icon, 14, here ? UI_ACCENT_HI : 0x8e97ae);
         ui_text(px, FW, FH, 52, y + 21, places[i].label, here ? UI_BOLD : UI_REG, 14, here ? UI_TEXT : 0xc2c9dc);
     }
@@ -111,12 +115,13 @@ static void render(void) {
     /* list */
     ui_set_clip(SIDE, TOP, FW, FH - FOOT);
     if (nent == 0) ui_text(px, FW, FH, SIDE + 28, TOP + 56, "This folder is empty", UI_REG, 15, UI_MUTED);
-    for (int r = 0; r < VIS && top + r < nent; r++) {
-        int i = top + r, y = TOP + 6 + r * ROW;
+    ui_list_pills(px, FW, FH, &list, SIDE + 8, LIST_Y, FW - SIDE - 16, 0x26304a, 0x1d2437, 9);
+    for (int i = 0; i < nent; i++) {
+        int y = LIST_Y + ui_list_row_y(&list, i);
+        if (y + ROW < TOP || y > FH - FOOT) continue;
         struct ent *e = &ent[i];
         uint32_t glyph, color;
         kind_of(e, &glyph, &color);
-        if (i == sel) { ui_rrect(px, FW, FH, SIDE + 8, y, FW - SIDE - 16, ROW - 2, 9, 0x26304a); ui_rrect(px, FW, FH, SIDE + 8, y + 7, 3, ROW - 16, 1, UI_ACCENT_HI); }
         ui_rrect_g(px, FW, FH, SIDE + 20, y + 4, 26, 26, 8, ui_shade(color, 12), ui_shade(color, -22), 255);
         ui_icon(px, FW, FH, SIDE + 33, y + 17, glyph, 12, 0xffffffu);
         char nm[80]; snprintf(nm, sizeof nm, "%s", e->name);
@@ -125,6 +130,7 @@ static void render(void) {
         if (!e->dir) { char sz[20]; size_str(e->size, sz); ui_text(px, FW, FH, FW - 26 - ui_text_width(UI_REG, 12, sz), y + 22, sz, UI_REG, 12, UI_MUTED); }
         else ui_icon(px, FW, FH, FW - 30, y + 17, IC_CHEV, 10, 0x5d6782);
     }
+    ui_scrollbar(px, FW, FH, &list, FW - 9, LIST_Y);
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     /* footer */
     for (int y = FH - FOOT; y < FH; y++) for (int x = SIDE; x < FW; x++) px[y * FW + x] = 0x1b202e;
@@ -178,14 +184,7 @@ static void open_entry(struct ent *e) {
     else snprintf(cmd, sizeof cmd, "/busybox less '%s'", full);
     in_terminal(cmd);
 }
-static void select_to(int i) {
-    if (nent == 0) return;
-    if (i < 0) i = 0;
-    if (i >= nent) i = nent - 1;
-    sel = i; armed = -1;
-    if (sel < top) top = sel;
-    if (sel >= top + VIS) top = sel - VIS + 1;
-}
+static void select_to(int i) { armed = -1; ui_list_select(&list, i); }
 
 int main(void) {
     int key = 0x5000 + getpid();
@@ -203,6 +202,8 @@ int main(void) {
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "Files", 5);
     (void)!write(sock, &t, sizeof t);
+    ui_list_init(&list, ROW, LIST_H);
+    spring_init(&side_hl, 0, SP_HOVER);
     char *home = getenv("FILES_START");
     if (home) snprintf(cwd, sizeof cwd, "%s", home);
     load();
@@ -210,12 +211,18 @@ int main(void) {
     printf("files ready\n");
     fflush(stdout);
     int last_row = -1;
-    long long last_ms = 0;
-    while (read(sock, &m, sizeof m) == (ssize_t)sizeof m) {
-        if (m.op == WL_CLOSE) break;
+    long long last_click = 0, clk = mo_now_ms();
+    for (;;) {
+        int busy = ui_list_busy(&list) || spring_busy(&side_hl);
+        int pr = ui_wait(sock, busy);
+        long long nowt = mo_now_ms();
+        float dt = (float)(nowt - clk) / 1000.0f;
+        clk = nowt;
+        if (busy) { ui_list_step(&list, dt); spring_step(&side_hl, dt); render(); }
+        if (pr <= 0) continue;
+        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
         if (m.op == WL_POINTER && m.c == 1) {
-            struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
-            long long now = ts.tv_sec * 1000LL + ts.tv_nsec / 1000000;
+            long long now = mo_now_ms();
             int x = (int)m.a, y = (int)m.b;
             if (x < SIDE) {
                 int i = (y - 52) / 38;
@@ -223,38 +230,45 @@ int main(void) {
             } else if (y < TOP) {
                 if (x >= SIDE + 12 && x < SIDE + 46) go("..");
             } else {
-                int r = (y - TOP - 6) / ROW, i = top + r;
-                if (y >= TOP + 6 && r < VIS && i < nent) {
-                    if (i == last_row && now - last_ms < 800) { select_to(i); open_entry(&ent[i]); last_row = -1; }
-                    else { select_to(i); last_row = i; last_ms = now; }
+                int i = ui_list_at(&list, y - LIST_Y);
+                if (i >= 0 && i < nent) {
+                    if (i == last_row && now - last_click < 800 * mo_slomo()) { select_to(i); open_entry(&ent[i]); last_row = -1; }
+                    else { select_to(i); last_row = i; last_click = now; }
                 }
             }
             render();
+        } else if (m.op == WL_POINTER && m.c == 3) {                          /* wheel */
+            ui_list_wheel(&list, (int)(int32_t)m.d);
         } else if (m.op == WL_POINTER && m.c == 2) {
-            if (side_hover != -1 || side_hot != -1) { side_hover = side_hot = -1; render(); }
-        } else if (m.op == WL_POINTER && m.c == 0) {                          /* motion: highlight the place under the pointer */
-            int h = (int)m.a < SIDE && (int)m.b >= 52 && ((int)m.b - 52) / 38 < NPLACES ? ((int)m.b - 52) / 38 : -1;
-            int hot = (int)m.b < TOP && (int)m.a >= SIDE + 12 && (int)m.a < SIDE + 46 ? 100 : -1;
-            if (h != side_hover || hot != side_hot) { side_hover = h; side_hot = hot; render(); }
+            side_hover = -1; side_hot = -1; ui_list_hover(&list, -1); spring_to(&side_hl, side_hl.p);
+        } else if (m.op == WL_POINTER && m.c == 0) {                          /* motion: highlights glide to what is under the pointer */
+            int x = (int)m.a, y = (int)m.b;
+            int h = x < SIDE && y >= 52 && (y - 52) / 38 < NPLACES ? (y - 52) / 38 : -1;
+            int hot = y < TOP && x >= SIDE + 12 && x < SIDE + 46 ? 100 : -1;
+            if (h >= 0 && side_hover < 0) spring_init(&side_hl, (float)(h * 38), SP_HOVER);
+            if (h >= 0) spring_to(&side_hl, (float)(h * 38));
+            side_hover = h; side_hot = hot;
+            ui_list_hover(&list, x >= SIDE && y >= LIST_Y ? ui_list_at(&list, y - LIST_Y) : -1);
+            render();
         } else if (m.op == WL_KEY && m.b) {
             switch (m.a) {
-                case 0x52: select_to(sel - 1); break;
-                case 0x51: select_to(sel + 1); break;
-                case 0x4B: select_to(sel - VIS); break;
-                case 0x4E: select_to(sel + VIS); break;
+                case 0x52: select_to(list.sel - 1); break;
+                case 0x51: select_to(list.sel + 1); break;
+                case 0x4B: select_to(list.sel - LIST_H / ROW); break;
+                case 0x4E: select_to(list.sel + LIST_H / ROW); break;
                 case 0x4A: select_to(0); break;
                 case 0x4D: select_to(nent - 1); break;
-                case 0x28: if (nent) open_entry(&ent[sel]); break;
+                case 0x28: if (nent) open_entry(&ent[list.sel]); break;
                 case 0x2A: go(".."); break;
                 case 0x4C:                                    /* Delete, twice */
                     if (!nent) break;
-                    if (armed != sel) { armed = sel; snprintf(status, sizeof status, "Press Delete again to remove %.60s", ent[sel].name); }
+                    if (armed != list.sel) { armed = list.sel; snprintf(status, sizeof status, "Press Delete again to remove %.60s", ent[list.sel].name); }
                     else {
                         char full[700];
-                        snprintf(full, sizeof full, "%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", ent[sel].name);
-                        int rc = ent[sel].dir ? rmdir(full) : unlink(full);
-                        snprintf(status, sizeof status, rc == 0 ? "Removed %.60s" : "Could not remove %.60s", ent[sel].name);
-                        int keep = sel;
+                        snprintf(full, sizeof full, "%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", ent[list.sel].name);
+                        int rc = ent[list.sel].dir ? rmdir(full) : unlink(full);
+                        snprintf(status, sizeof status, rc == 0 ? "Removed %.60s" : "Could not remove %.60s", ent[list.sel].name);
+                        int keep = list.sel;
                         load();
                         select_to(keep);
                     }

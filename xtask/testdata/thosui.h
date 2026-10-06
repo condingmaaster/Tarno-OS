@@ -5,6 +5,8 @@
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include <math.h>
+#include <poll.h>
+#include "thosmotion.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -215,4 +217,76 @@ static void ui_tile(uint32_t *buf, int bw, int bh, int x, int y, int size, const
     ui_rrect_g(buf, bw, bh, x, y, size, size, size / 4, ui_shade(c, 22), ui_shade(c, -18), 255);
     ui_gloss(buf, bw, bh, x, y, size, size, size / 4);
     ui_icon(buf, bw, bh, x + size / 2, y + size / 2, ui_app_glyph(label), size * 5 / 12, 0xffffffu);
+}
+
+/* ---- ui_list: a scrolling list whose selection and hover highlights glide between rows, and which scrolls smoothly ----
+   The list does not draw rows itself: the program asks ui_list_row_y() where a row is, draws it there, and draws the pills first
+   (ui_list_pills). Every change of selection, hover or scroll position moves a spring, so the whole thing feels continuous. */
+struct ui_list { int n, row_h, view_h, sel, hover; float tscroll; struct spring scroll, selp, hovp, hova; };
+static void ui_list_init(struct ui_list *l, int row_h, int view_h) {
+    memset(l, 0, sizeof *l);
+    l->row_h = row_h; l->view_h = view_h; l->hover = -1;
+    spring_init(&l->scroll, 0, SP_SOFT); spring_init(&l->selp, 0, SP_SNAPPY); spring_init(&l->hovp, 0, SP_HOVER); spring_init(&l->hova, 0, SP_HOVER);
+}
+static void ui_list_clamp(struct ui_list *l) {
+    float max = (float)(l->n * l->row_h - l->view_h);
+    if (max < 0) max = 0;
+    if (l->tscroll > max) l->tscroll = max;
+    if (l->tscroll < 0) l->tscroll = 0;
+    spring_to(&l->scroll, l->tscroll);
+}
+static void ui_list_reset(struct ui_list *l, int n) {            /* new content: back to the top, selection on the first row, no gliding */
+    l->n = n; l->sel = 0; l->hover = -1; l->tscroll = 0;
+    spring_init(&l->scroll, 0, SP_SOFT); spring_init(&l->selp, 0, SP_SNAPPY); spring_init(&l->hova, 0, SP_HOVER);
+    spring_to(&l->hova, 0);
+}
+static void ui_list_select(struct ui_list *l, int i) {
+    if (l->n == 0) return;
+    if (i < 0) i = 0;
+    if (i >= l->n) i = l->n - 1;
+    l->sel = i;
+    spring_to(&l->selp, (float)(i * l->row_h));
+    if (i * l->row_h < l->tscroll) l->tscroll = (float)(i * l->row_h);
+    if ((i + 1) * l->row_h > l->tscroll + l->view_h) l->tscroll = (float)((i + 1) * l->row_h - l->view_h);
+    ui_list_clamp(l);
+}
+static void ui_list_hover(struct ui_list *l, int i) {
+    if (i < 0 || i >= l->n) { l->hover = -1; spring_to(&l->hova, 0); return; }
+    if (l->hover < 0 && l->hova.p < 0.05f) { spring_init(&l->hovp, (float)(i * l->row_h), SP_HOVER); spring_to(&l->hova, 1); }   /* appears where the pointer is */
+    l->hover = i;
+    spring_to(&l->hovp, (float)(i * l->row_h));
+    spring_to(&l->hova, 1);
+}
+static void ui_list_wheel(struct ui_list *l, int clicks) { l->tscroll -= (float)clicks * l->row_h * 1.6f; ui_list_clamp(l); }
+static int ui_list_busy(const struct ui_list *l) { return spring_busy(&l->scroll) || spring_busy(&l->selp) || spring_busy(&l->hovp) || spring_busy(&l->hova); }
+static void ui_list_step(struct ui_list *l, float dt) { spring_step(&l->scroll, dt); spring_step(&l->selp, dt); spring_step(&l->hovp, dt); spring_step(&l->hova, dt); }
+static int ui_list_at(const struct ui_list *l, int y) { int i = (int)((y + l->scroll.p) / l->row_h); return y < 0 || i < 0 || i >= l->n ? -1 : i; }
+static int ui_list_row_y(const struct ui_list *l, int i) { return (int)(i * l->row_h - l->scroll.p + 0.5f); }
+/* the highlight pills, drawn at list-relative offset (x, y) with width w; call before drawing the rows */
+static void ui_list_pills(uint32_t *buf, int bw, int bh, const struct ui_list *l, int x, int y, int w, uint32_t sel_color, uint32_t hover_color, int radius) {
+    if (l->hova.p > 0.02f) ui_rrect_g(buf, bw, bh, x, y + (int)(l->hovp.p - l->scroll.p + 0.5f), w, l->row_h - 2, radius, hover_color, hover_color, (unsigned)(l->hova.p > 1 ? 255 : l->hova.p * 255));
+    if (l->n) {
+        int py = y + (int)(l->selp.p - l->scroll.p + 0.5f);
+        ui_rrect(buf, bw, bh, x, py, w, l->row_h - 2, radius, sel_color);
+        ui_rrect(buf, bw, bh, x, py + 7, 3, l->row_h - 16, 1, UI_ACCENT_HI);
+    }
+}
+/* a thin scrollbar at x, spanning the list's view (visible only while scrolling) */
+static void ui_scrollbar(uint32_t *buf, int bw, int bh, const struct ui_list *l, int x, int y) {
+    int total = l->n * l->row_h;
+    if (total <= l->view_h) return;
+    float vis = (float)l->view_h / (float)total;
+    float a = spring_busy(&l->scroll) ? 1.0f : 0.0f;
+    static float shown;                                      /* a slow fade so the bar lingers a moment */
+    shown += (a - shown) * (a > shown ? 0.5f : 0.06f);
+    if (shown < 0.03f) return;
+    int th = (int)(l->view_h * vis); if (th < 24) th = 24;
+    int ty = y + (int)((l->view_h - th) * (l->scroll.p / (float)(total - l->view_h)));
+    ui_rrect_g(buf, bw, bh, x, ty, 5, th, 2, 0x8e97aeu, 0x8e97aeu, (unsigned)(shown * 150));
+}
+/* the blocking part of a client's event loop: sleeps until the compositor sends something, but wakes every animation frame while
+   anything is moving. Returns what poll returned (> 0: a message is waiting). */
+static int ui_wait(int sock, int animating) {
+    struct pollfd p = { sock, POLLIN, 0 };
+    return poll(&p, 1, animating ? MO_FRAME_MS : -1);
 }

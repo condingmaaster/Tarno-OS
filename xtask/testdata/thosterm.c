@@ -18,6 +18,7 @@
 #include "thoswl.h"
 #include "thosgfx.h"
 #include "thosui.h"
+#include "thosmotion.h"
 
 #define COLS 80
 #define ROWS 24
@@ -163,6 +164,8 @@ static void feed(unsigned char c) {
 }
 
 static int last_cy, first_paint = 1;
+static struct tween cur_tw;                         /* the cursor breathes: it fades out and in while the terminal is idle */
+static float cur_alpha = 1;
 static void render(void) {
     if (first_paint) { for (int i = 0; i < PW * PH; i++) px[i] = TERM_BG; first_paint = 0; dirty0 = 0; dirty1 = ROWS - 1; }
     mark(last_cy); mark(cy); last_cy = cy;
@@ -182,7 +185,8 @@ static void render(void) {
                 ui_text(px, PW, PH, x0, y0 + 15, u, UI_MONO, FSIZE, fc);
             }
             if (r == cy && c == cx) {                                     /* a soft block cursor */
-                for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) { uint32_t *p = &px[(y0 + j) * PW + x0 + i]; *p = ui_mix(*p, 0x7ba3ffu, 150); }
+                unsigned ca = (unsigned)(150 * cur_alpha);
+                for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) { uint32_t *p = &px[(y0 + j) * PW + x0 + i]; *p = ui_mix(*p, 0x7ba3ffu, ca); }
             }
         }
     struct wl_msg m = { WL_COMMIT, 0, (uint32_t)(PAD + dirty0 * CH), PW, (uint32_t)((dirty1 - dirty0 + 1) * CH) };
@@ -261,21 +265,35 @@ int main(int argc, char **argv) {
     render();
     printf("term ready\n");
     fflush(stdout);
+    long long phase_t = mo_now_ms();
+    int cur_on = 1;
+    tween_start(&cur_tw, 1, 1, 0);
     for (;;) {
         struct pollfd p[2] = { { sock, POLLIN, 0 }, { master, POLLIN, 0 } };
-        if (poll(p, 2, -1) < 0) continue;
-        if (p[1].revents & (POLLIN | POLLHUP)) {
+        int fading = tween_busy(&cur_tw);
+        long long now = mo_now_ms();
+        int wait = fading ? MO_FRAME_MS : (int)(530 - (now - phase_t));
+        if (wait < 1) wait = 1;
+        int pr = poll(p, 2, wait);
+        if (pr < 0) continue;
+        now = mo_now_ms();
+        int typed = 0;
+        if (pr > 0 && (p[1].revents & (POLLIN | POLLHUP))) {
             unsigned char buf[512];
             ssize_t n = read(master, buf, sizeof buf);
             if (n <= 0) break;
             for (ssize_t i = 0; i < n; i++) feed(buf[i]);
-            render();
+            typed = 1;
         }
-        if (p[0].revents & (POLLIN | POLLHUP)) {
+        if (pr > 0 && (p[0].revents & (POLLIN | POLLHUP))) {
             if (read(sock, &m, sizeof m) != (ssize_t)sizeof m) break;
             if (m.op == WL_CLOSE) break;
-            if (m.op == WL_KEY) key(&m);
+            if (m.op == WL_KEY) { key(&m); typed = 1; }
         }
+        if (typed) { cur_on = 1; phase_t = now; tween_start(&cur_tw, cur_alpha, 1, 60); }       /* activity: the cursor is solid */
+        else if (now - phase_t >= 530 && !fading) { cur_on = !cur_on; phase_t = now; tween_start(&cur_tw, cur_alpha, cur_on ? 1.0f : 0.15f, 140); }
+        float na = tween_value(&cur_tw, ease_in_out);
+        if (typed || na != cur_alpha) { cur_alpha = na; mark(cy); render(); }
     }
     kill(child, SIGHUP);
     waitpid(child, 0, 0);
