@@ -1317,6 +1317,22 @@ fn main() {
             let iso = build_iso();
             login_test(&iso);
         }
+        "login-shot" => {
+            // screendumps of the boot splash and the first-run login console (for design review)
+            build_kernel(&["interactive"]);
+            let iso = build_iso();
+            let _ = std::fs::remove_file(workspace_root().join("target/disk.img"));
+            let disk = disk_image();
+            let (mut c, log, sock) = spawn_interactive_qemu("loginshot", &iso, &disk);
+            let t = workspace_root().join("target");
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+            mon(&sock, &format!("screendump {}", t.join("splash.ppm").to_str().unwrap()));
+            wait_for(&log, "THOS first-run setup", 90);
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            mon(&sock, &format!("screendump {}", t.join("login.ppm").to_str().unwrap()));
+            let _ = c.kill();
+            let _ = c.wait();
+        }
         "bootpick" => {
             build_uefi();
         }
