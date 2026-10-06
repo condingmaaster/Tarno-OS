@@ -5445,7 +5445,7 @@ fn kbd_test(iso: &Path) {
         kill(&mut child, "kbd-test", "never reached the shell after login", &log);
     }
     std::thread::sleep(std::time::Duration::from_millis(500));
-    type_line(&sock, "init");
+    type_line(&sock, "/init");
     std::thread::sleep(std::time::Duration::from_millis(1500));
     // BusyBox applet links reached via `/bin/*` hard-links to `/busybox`, plus a
     // per-process cwd: `cd /bin` then a bare `ls` / `pwd` must act on /bin.
@@ -5553,7 +5553,7 @@ fn kbd_test(iso: &Path) {
     let _ = child.wait();
 
     let after = out.split("interactive hold").nth(1).unwrap_or("");
-    let shell_ok = after.contains("thos$ init") && after.contains("parent done");
+    let shell_ok = after.contains("thos$ /init") && after.contains("parent done");
     // bare `ls` after `cd /bin` must list the applet link names.
     let ls_ok = ["busybox", "touch", "grep", "sleep"].iter().all(|n| after.contains(n));
     // `pwd` prints the cwd we chdir'd into.
