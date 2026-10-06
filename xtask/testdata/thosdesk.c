@@ -1137,6 +1137,7 @@ int main(int argc, char **argv) {
         if (fork() == 0) { execl("/thospanel", "thospanel", (char *)0); _exit(127); }
         usleep(500000);
         if (fork() == 0) { execl("/thosterm", "thosterm", verbose ? "-l" : (char *)0, (char *)0); _exit(127); }
+        toast_add(0, "Welcome to THOS|Start opens your programs, Alt+Enter a terminal");
     }
 
     int prev_btn = 0;
@@ -1153,7 +1154,7 @@ int main(int argc, char **argv) {
         anim_tick();
         icons_poll();
         if (winlist_dirty) { winlist_dirty = 0; send_winlist(); }
-        if (pr == 0) { if (now_ms() - last_act > 120000) idle = 1200; continue; }
+        if (pr == 0) { if (!session && now_ms() - last_act > 120000) idle = 1200; continue; }       /* a real session never times out; test runs end after two quiet minutes */
         last_act = now_ms();
         if (nwl) wls_dispatch_poll(&p[wbase], nwl);
         if (wheel >= 0 && (p[wbase + nwl].revents & POLLIN)) {
