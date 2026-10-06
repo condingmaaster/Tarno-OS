@@ -1,4 +1,4 @@
-thosdesk &
+THOS_PLACE=legacy thosdesk &
 sleep 2
 export XDG_RUNTIME_DIR=/run
 export HOME=/tmp

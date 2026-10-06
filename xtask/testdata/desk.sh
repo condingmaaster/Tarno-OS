@@ -1,4 +1,4 @@
-thosdesk &
+THOS_PLACE=legacy thosdesk &
 sleep 1
 thoswin 220 40 40 300 200 &
 sleep 2

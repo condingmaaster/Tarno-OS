@@ -677,6 +677,7 @@ static int work_bottom(void);
 /* a new window opens near the middle of the free area (above the dock), each one a little offset from the last, never off screen */
 static int cascade_n;
 static void place_window(struct win *w) {
+    { static int legacy = -1; if (legacy < 0) { const char *e = getenv("THOS_PLACE"); legacy = e && e[0] == 'l'; } if (legacy) return; }   /* THOS_PLACE=legacy: the fixed cascade the geometry-based tests were written for */
     int off = ((cascade_n++ % 6) - 2) * 30, wb = work_bottom();
     if (w->csd) {
         int x = (W - w->gw) / 2 + off, y = (wb - w->gh) / 2 + off / 2;
