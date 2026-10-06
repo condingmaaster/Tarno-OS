@@ -160,6 +160,8 @@ extern "C" fn kmain() -> ! {
                 paint_smoke_test(fb);
                 kprintln!("THOS: framebuffer painted");
                 fbcon::init(fb); // from here on, kprintln! also lands on screen
+                #[cfg(feature = "interactive")]
+                fbcon::splash_start(); // ... except in the product build: a splash screen covers the log until the login screen
             }
             None => kprintln!("THOS: no framebuffer in response"),
         },
@@ -181,11 +183,13 @@ extern "C" fn kmain() -> ! {
     vmm_bringup();
     gdi_bringup();
     fbcon::resume();
+    fbcon::splash_progress(30);
     #[cfg(feature = "selftest")]
     gdi_paint_check();
 
     let mp = MP_REQUEST.response().expect("Limine MP request unanswered");
     smp::init(mp);
+    fbcon::splash_progress(45);
 
     syscall::init_cpu(0);
 
@@ -214,6 +218,7 @@ extern "C" fn kmain() -> ! {
             let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
             let session = login::establish(&fs);
             process::set_session(&session.name, session.uid);
+            fbcon::theme_shell();
             kprintln!("THOS: session          {} (uid {})", session.name, session.uid);
 
             // The interactive shell is stock BusyBox `sh` (ash).
@@ -1640,10 +1645,13 @@ fn boot_system() {
         fatal_boot("no THOS root filesystem found", "need an ext2 volume labelled THOSROOT on the SATA disk or on a USB stick");
     }
     let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
+    fbcon::splash_progress(70);
     let hives = registry::load_hives(&fs);
     kprintln!("THOS: registry ok      {}/3 hives loaded from disk", hives);
     secsvc::spawn(&fs); // logs and degrades gracefully if /secsvc is absent
+    fbcon::splash_progress(85);
     start_input_devices();
+    fbcon::splash_progress(100);
 }
 
 /// A boot failure the user can act on: say what is wrong, then stop. (This is
@@ -1651,6 +1659,7 @@ fn boot_system() {
 /// mirrors the kernel log — so it must not be a bare `expect` panic.)
 #[allow(dead_code)] // only the normal boot path and the interactive login use it
 fn fatal_boot(what: &str, why: &str) -> ! {
+    fbcon::reveal();
     kprintln!("");
     kprintln!("THOS: cannot continue — {what}");
     kprintln!("THOS:   {why}");
@@ -1789,6 +1798,7 @@ pub(crate) fn exit_qemu(code: ExitCode) {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    fbcon::reveal();
     kprintln!("THOS PANIC: {}", info);
     exit_qemu(ExitCode::Failed);
     hcf();

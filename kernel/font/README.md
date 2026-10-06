@@ -13,3 +13,5 @@ Note on an earlier version of this file: it said the font was "public domain" be
 `console-setup`'s copyright file calls the *converted console fonts* "public domain by
 nature". That sentence only covers Debian's own conversion work; the glyph designs
 come from upstream Terminus, which is OFL-1.1 (see `/usr/share/doc/console-setup/copyright.fonts.gz`).
+
+- thos-logo.bin: wordmark rendered from Lato Bold (OFL).

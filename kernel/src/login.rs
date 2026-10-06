@@ -47,10 +47,10 @@ fn prompt(label: &str, mask: bool) -> String {
 /// First boot: force the operator to choose the admin name + password.
 pub fn first_run_setup(fs: &Ext2) -> Session {
     kprintln!("");
-    kprintln!("  ┌─ THOS first-run setup ─────────────────────────────");
-    kprintln!("  │  No account exists yet. Create the administrator.");
-    kprintln!("  │  (changeable later via settings + reboot)");
-    kprintln!("  └───────────────────────────────────────────────────");
+    kprintln!("  Welcome. THOS first-run setup");
+    kprintln!("  No account exists yet: create the administrator.");
+    kprintln!("  (It can be changed later via settings + reboot.)");
+    kprintln!("");
 
     let name = loop {
         let n = prompt("  admin username: ", false);
@@ -104,6 +104,7 @@ pub fn login(fs: &Ext2) -> Session {
 /// Resolve the session identity: run first-run setup if there is no store,
 /// then authenticate.
 pub fn establish(fs: &Ext2) -> Session {
+    crate::fbcon::theme_login();
     if !cred::exists(fs) {
         first_run_setup(fs);
     }
