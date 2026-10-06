@@ -53,3 +53,13 @@ Danach: Administratorkonto anlegen, anmelden, `desktop` tippen (Compositor + Ter
 ## Desktop automatisch starten
 `thos-autostart on` legt `/tmp/autostart` an; danach startet nach jeder Anmeldung automatisch der Desktop (`desktop`). Beendet man ihn (Startmenü → „Quit desktop" oder Strg+Alt+Q), bleibt die Shell offen — der Rückweg, falls etwas schiefgeht.
 `thos-autostart off` schaltet es wieder aus. Test: `cargo xtask autostart-test` (eigenes Image, nicht in der Suite).
+
+## Stick schreiben und Root-Dateisystem vergrößern (Skript)
+```
+cargo xtask bios-image --interactive            # baut target/thos-bios.img (336 MB, Root 128 MB)
+lsblk                                           # den STICK finden, z. B. /dev/sdb (nicht /dev/sda!)
+sudo tools/make-stick.sh /dev/sdb               # schreibt das Image, erweitert Partition 2 und das ext2 auf den ganzen Stick
+```
+Das Skript weigert sich bei nicht-wechselbaren Datenträgern und bei eingehängten Partitionen und verlangt, dass man den Gerätenamen noch einmal eintippt.
+Benötigt: `dd lsblk sfdisk e2fsck resize2fs partprobe` (Paket `util-linux`, `e2fsprogs`). Das Vorgehen ist mit einer Imagedatei durchgespielt (Partition erweitern, `resize2fs`, `e2fsck` sauber).
+Beim Acer im BIOS (F2) „Boot Mode: Legacy" lassen, mit F12 den Stick wählen.
