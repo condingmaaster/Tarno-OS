@@ -153,7 +153,7 @@ fixture installed in QEMU.
 
 - **`thos-pkg`** (shell script, `/bin/thos-pkg`): install `.deb`, `.rpm`, `.zip`, `.tar.gz/.xz/.bz2`, `.exe` from a file or URL into `/opt/<name>`, with Start-menu entries;
   **Debian archive installs with dependency resolution** (`update`, `search`, `install <name>`, SHA-256 checked against the index, shared prefix `/opt/root`, `LD_LIBRARY_PATH`/`PATH` set for every session).
-  Verified against the real archive (`pkg-repo-test`). Open: package signatures (no GPG), TLS certificate checks (`ssl_client` does not verify), recorded-sandbox transactions, removal of archive packages, `.msi`.
+  Verified against the real archive (`pkg-repo-test`). The package index is **verified**: `InRelease` is checked with `gpgv` against the Debian archive keyring shipped in the image, then Packages.xz and every `.deb` against the signed SHA-256 chain. Open: TLS certificate checks (`ssl_client` does not verify), maintainer scripts, recorded-sandbox transactions, `.msi`.
 - **Linux side:** dynamic glibc programs run (bash, git, gcc, node, java, GTK/NetSurf/foot…), `#!` scripts, `vfork`, `/proc/self/exe`. Debian packages with a few small dependencies work; big GUI stacks need a larger root FS.
 - **Windows side:** 64-bit PE only. Real Rust programs built for `x86_64-pc-windows-gnu` run (std heap, files, environment, threads, channels, panics with `catch_unwind`),
   Winsock over loopback works; the runtime is a set of freestanding C DLLs (`xtask/msvcrtx/`: `msvcrtx`, `kernel32x`, `ntdllx`, `ws2_32`, `api-ms-win-core-synch…`, `bcryptprimitives`, `userenv`) in `C:\Windows\System32`,

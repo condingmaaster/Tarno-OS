@@ -112,10 +112,38 @@ ROOT=$OPT/root
 # packages THOS already provides (the C library and friends) or that are only installer plumbing
 SKIP=" libc6 libc-bin libgcc-s1 gcc-14-base libstdc++6 debconf dpkg perl-base base-files base-passwd install-info libcrypt1 libgomp1 "
 
+GPGV=/usr/bin/gpgv
+KEYRING=/usr/share/keyrings/debian-archive-keyring.pgp
+SUITE_URL=http://deb.debian.org/debian/dists/trixie
+
+# download the signed Release file, check its signature with the Debian archive keyring, and return the SHA-256 it lists for Packages.xz
+fetch_release() {
+    $B wget -q -O /tmp/InRelease "$SUITE_URL/InRelease" || return 1
+    if [ -x $GPGV ] && [ -f $KEYRING ]; then
+        if ! $GPGV --keyring $KEYRING --output /tmp/Release.verified /tmp/InRelease 2>/tmp/gpgv.err; then
+            $B cat /tmp/gpgv.err >&2; $B rm -f /tmp/InRelease /tmp/Release.verified
+            echo "thos-pkg: the signature of the package index is NOT valid - refusing to use it" >&2; return 2
+        fi
+        WANT=$($B awk '$3 == "main/binary-amd64/Packages.xz" && length($1) == 64 { print $1; exit }' /tmp/Release.verified)
+        [ -n "$WANT" ] || { echo "thos-pkg: the signed Release file does not list Packages.xz" >&2; return 2; }
+        $B rm -f /tmp/Release.verified /tmp/InRelease /tmp/gpgv.err
+        echo "package index signature verified (Debian archive key)"
+    else
+        WANT=
+        echo "WARNING: gpgv or the Debian archive keyring is missing - the package index is NOT verified"
+    fi
+}
+
 cmd_update() {
     $B mkdir -p $OPT $DB
+    echo "checking the signed Release file"
+    fetch_release || die "cannot verify the package index"
     echo "downloading the package index (about 10 MB)"
     $B wget -q -O /tmp/Packages.xz "$INDEX_URL" || die "cannot download the index (network?)"
+    if [ -n "$WANT" ]; then
+        got=$($B sha256sum /tmp/Packages.xz | $B cut -d' ' -f1)
+        [ "$got" = "$WANT" ] || { $B rm -f /tmp/Packages.xz; die "Packages.xz does not match the signed Release file"; }
+    fi
     echo "building the local index (a minute or two)"
     $B xzcat /tmp/Packages.xz | $B awk '
         function flush(   d, n, i, p, o, first) {

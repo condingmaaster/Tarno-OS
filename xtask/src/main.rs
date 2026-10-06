@@ -1562,7 +1562,12 @@ fn disk_image() -> PathBuf {
             run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", "set_inode_field tmp mode 040777", img.to_str().unwrap()]));
             run(Command::new("debugfs").args(["-w", "-R", &format!("write {} real2.sh", root.join("xtask/testdata/real2.sh").to_str().unwrap()), img.to_str().unwrap()]));
-            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv", "/usr/bin/vim.tiny", "/usr/bin/truncate", "/usr/bin/cat", "/usr/bin/chmod"] {
+            // the Debian archive keyring: thos-pkg verifies the signed package index with gpgv
+            if std::path::Path::new("/usr/share/keyrings/debian-archive-keyring.pgp").exists() {
+                let _ = Command::new("debugfs").args(["-w", "-R", "mkdir usr/share/keyrings", img.to_str().unwrap()]).output();
+                run(Command::new("debugfs").args(["-w", "-R", "write /usr/share/keyrings/debian-archive-keyring.pgp usr/share/keyrings/debian-archive-keyring.pgp", img.to_str().unwrap()]));
+            }
+            for prog in ["/usr/bin/bash", "/usr/bin/ls", "/usr/bin/grep", "/usr/bin/sed", "/usr/bin/gawk", "/usr/bin/bc", "/usr/bin/jq", "/usr/bin/tar", "/usr/bin/make", "/usr/bin/perl", "/usr/bin/python3", "/usr/bin/git", "/usr/bin/sort", "/usr/bin/wc", "/usr/bin/head", "/usr/bin/tail", "/usr/bin/cut", "/usr/bin/tr", "/usr/bin/sha256sum", "/usr/bin/md5sum", "/usr/bin/seq", "/usr/bin/expr", "/usr/bin/tee", "/usr/bin/find", "/usr/bin/xargs", "/usr/bin/diff", "/usr/bin/cp", "/usr/bin/mv", "/usr/bin/touch", "/usr/bin/stat", "/usr/bin/du", "/usr/bin/date", "/usr/bin/env", "/usr/bin/basename", "/usr/bin/dirname", "/usr/bin/uname", "/usr/bin/printenv", "/usr/bin/vim.tiny", "/usr/bin/truncate", "/usr/bin/cat", "/usr/bin/chmod", "/usr/bin/gpgv"] {
                 if std::path::Path::new(prog).exists() {
                     add_dynamic_program(&img, prog, &mut dirs);
                 }

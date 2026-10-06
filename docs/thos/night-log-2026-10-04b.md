@@ -70,3 +70,4 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - **Kernel-Fehler gefunden/behoben:** `NtWriteFile/NtReadFile` lasen die Länge als 64 Bit (ist `ULONG`), NT-Handles konnten Slot 0 (= NULL) bekommen, `HeapAlloc` ohne Kopf (Rust ruft `HeapSize`/`HeapReAlloc`).
 - Haiku-Fehlersuche in tg3/ehci/hda/ps2: 8 Meldungen, 7 davon falsch (Speicherbarrieren/DMA-Größen waren in Ordnung); eine echte Kleinigkeit (HDA wartete ohne Zeitgrenze) behoben.
 - Offen: 32-Bit-PE (WOW64), `.msi`, GUI-Teile von user32/gdi32, Paketsignaturen, Hover im Startmenü, Icons verschieben.
+- `thos-pkg update` verifiziert jetzt die Signatur von `InRelease` (gpgv + Debian-Archivschlüssel im Image) und die Prüfsummenkette — im Test mit dem echten Archiv bestätigt.
