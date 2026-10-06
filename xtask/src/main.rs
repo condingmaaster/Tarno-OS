@@ -593,8 +593,14 @@ fn main() {
         "install-test" => {
             // booted from a stick (USB) with a blank internal SATA disk: thos-install copies THOS onto it; then the internal disk boots alone
             std::env::set_var("THOS_BOOT_USB", "1");
-            let img = prod_interactive_image(cmd);
+            let mut img = prod_interactive_image(cmd);
             let root = workspace_root();
+            if let Ok(mib) = std::env::var("THOS_INSTALL_GROW") {              // like a real stick: the root partition grown to fill it
+                let grown = root.join("target/install-grown.img");
+                std::fs::copy(&img, &grown).expect("copy the stick image");
+                run(Command::new(root.join("tools/grow-image.sh")).args([grown.to_str().unwrap(), &mib]));
+                img = grown;
+            }
             let target = root.join("target/install-target.img");
             let _ = std::fs::remove_file(&target);
             let size = std::fs::metadata(&img).map(|m| m.len()).unwrap_or(0) + (64 << 20);
@@ -642,11 +648,37 @@ fn main() {
             };
             let _ = child.kill();
             let _ = child.wait();
-            if ok {
-                println!("install-test PASSED: thos-install copied THOS from the stick to the internal disk, which then booted on its own and accepted the same login");
+            // the copy must be a clean ext2 file system (checked from the host: the root partition of the target disk, extracted)
+            let clean = ok && {
+                use std::io::{Read, Seek, SeekFrom, Write};
+                let mut f = std::fs::File::open(&target).expect("open the target disk");
+                let mut mbr = [0u8; 512];
+                f.read_exact(&mut mbr).expect("read the MBR");
+                let e = &mbr[0x1BE + 16..0x1BE + 32];
+                let (start, count) = (u32::from_le_bytes([e[8], e[9], e[10], e[11]]) as u64, u32::from_le_bytes([e[12], e[13], e[14], e[15]]) as u64);
+                let part = root.join("target/install-target-root.img");
+                let mut out = std::fs::File::create(&part).expect("create the partition copy");
+                f.seek(SeekFrom::Start(start * 512)).unwrap();
+                let mut buf = vec![0u8; 1 << 20];
+                let mut left = count * 512;
+                while left > 0 {
+                    let n = (left as usize).min(buf.len());
+                    f.read_exact(&mut buf[..n]).unwrap();
+                    out.write_all(&buf[..n]).unwrap();
+                    left -= n as u64;
+                }
+                drop(out);
+                let chk = Command::new("e2fsck").args(["-fn", part.to_str().unwrap()]).output().expect("run e2fsck");
+                let good = chk.status.success();
+                if !good { eprintln!("{}", String::from_utf8_lossy(&chk.stdout).lines().take(20).collect::<Vec<_>>().join("\n")); }
+                let _ = std::fs::remove_file(&part);
+                good
+            };
+            if ok && clean {
+                println!("install-test PASSED: thos-install copied THOS from the stick to the internal disk (e2fsck clean), which then booted on its own and accepted the same login");
             } else {
                 eprintln!("{}", std::fs::read_to_string(&log2).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
-                eprintln!("install-test FAILED (the installed disk did not boot and log in)");
+                eprintln!("install-test FAILED ({})", if ok { "the copy is not a clean file system" } else { "the installed disk did not boot and log in" });
                 exit(1);
             }
         }
