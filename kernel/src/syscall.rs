@@ -2140,7 +2140,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             sched::yield_now();
             0
         }
-        SYS_FORK => process::fork(frame),
+        SYS_FORK | SYS_VFORK => process::fork(frame),
 
         // glibc's fork() is clone(SIGCHLD | CHILD_{SET,CLEAR}TID, stack=0).
         // A shared-VM clone (threads) isn't supported yet.

@@ -173,8 +173,7 @@ static void buf_release(struct wlc *c, uint32_t id) { wl_ev(c, id, 0, 0); }
 
 static uint32_t swizzle(uint32_t px) {
     /* wl_shm ARGB/XRGB8888 is 0xAARRGGBB; the framebuffer wants the channels at rs/gs/bs */
-    if (rs == 16 && gs == 8 && bs == 0) return px & 0x00FFFFFFu;
-    return ((px >> 16 & 0xFF) << rs) | ((px >> 8 & 0xFF) << gs) | ((px & 0xFF) << bs);
+    return px & 0x00FFFFFFu;                            /* the compositor works in canonical 0x00RRGGBB and swaps channels only when it blits */
 }
 
 static void wls_focus_keyboard(struct wlsurf *s);

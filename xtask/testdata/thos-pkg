@@ -52,6 +52,11 @@ register() {
         done
         [ $n -gt 0 ] && return
     done
+    if [ $n -eq 0 ]; then                                  # deeper trees (MSI "Program Files/Vendor/App/x.exe")
+        for f in $($B find "$dir" -type f -name '*.exe' | $B head -n 8); do
+            echo "${f##*/}|LD_LIBRARY_PATH=$libs $f" >> $APPS; n=$((n+1))
+        done
+    fi
     [ $n -gt 0 ] || echo "thos-pkg: no program found to put in the Start menu (files are in $dir)"
 }
 
@@ -83,6 +88,7 @@ cmd_install() {
     case "$name" in */*|.*) die "bad name: $name" ;; esac
     dir=$OPT/$name
     [ -e "$dir" ] && die "$name is already installed (thos-pkg remove $name)"
+    srcfile=$file; srcname=$name; srcdir=$dir
     $B mkdir -p "$dir"
     case "$base" in
         *.deb) $B dpkg-deb -x "$file" "$dir" ;;
@@ -93,7 +99,21 @@ cmd_install() {
         *.tar.bz2) $B bzcat "$file" | $B tar -x -C "$dir" ;;
         *.tar) $B tar -xf "$file" -C "$dir" ;;
         *.exe) $B cp "$file" "$dir/$base"; $B chmod +x "$dir/$base" ;;
-        *.msi) $B rm -rf "$dir"; [ -n "$tmp" ] && $B rm -f $tmp; die "Windows Installer packages (.msi) are not supported yet" ;;
+        *.msi)
+            # no Windows Installer here: msiextract (from the Debian package msitools) unpacks the files of the package;
+            # installers whose work is done by custom actions (services, registry set-up) are not covered
+            if [ ! -x $ROOT/usr/bin/msiextract ]; then
+                echo "an MSI needs msitools; fetching it from the Debian archive"
+                [ -f $IDX ] || cmd_update || { $B rm -rf "$dir"; die "cannot fetch msitools"; }
+                FIRST=msitools; cmd_install_repo msitools || { $B rm -rf "$srcdir"; die "cannot install msitools"; }
+                name=$srcname; dir=$srcdir; file=$srcfile
+            fi
+            # the package tables are in Windows code page 1252: glibc needs its extra conversion modules for that
+            if [ ! -f $ROOT/usr/lib/x86_64-linux-gnu/gconv/CP1252.so ]; then
+                FIRST=libc-gconv-modules-extra; cmd_install_repo libc-gconv-modules-extra || echo "thos-pkg: warning: no code page modules"
+                name=$srcname; dir=$srcdir; file=$srcfile
+            fi
+            ( cd "$dir" && GCONV_PATH=$ROOT/usr/lib/x86_64-linux-gnu/gconv $ROOT/usr/bin/msiextract -C "$dir" "$srcfile" ) ;;
         *) $B rm -rf "$dir"; [ -n "$tmp" ] && $B rm -f $tmp; die "unknown package type: $base" ;;
     esac
     status=$?
@@ -179,23 +199,23 @@ cmd_search() {
 idx_line() { $B grep -m1 "^$1|" $IDX; }
 
 install_one() {
-    name=$1
-    line=$(idx_line "$name")
-    [ -n "$line" ] || { echo "thos-pkg: $name is not in the archive index"; return 1; }
-    file=$(echo "$line" | $B cut -d'|' -f3); sha=$(echo "$line" | $B cut -d'|' -f4); size=$(echo "$line" | $B cut -d'|' -f6)
-    echo "  $name ($((size / 1024)) kB)"
-    $B wget -q -O /tmp/pkg-$$.deb "$MIRROR/$file" || { $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: download of $name failed"; return 1; }
+    pn=$1
+    pl=$(idx_line "$pn")
+    [ -n "$pl" ] || { echo "thos-pkg: $pn is not in the archive index"; return 1; }
+    pf=$(echo "$pl" | $B cut -d'|' -f3); ps=$(echo "$pl" | $B cut -d'|' -f4); pz=$(echo "$pl" | $B cut -d'|' -f6)
+    echo "  $pn ($((pz / 1024)) kB)"
+    $B wget -q -O /tmp/pkg-$$.deb "$MIRROR/$pf" || { $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: download of $pn failed"; return 1; }
     got=$($B sha256sum /tmp/pkg-$$.deb | $B cut -d' ' -f1)
-    if [ "$got" != "$sha" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $name does not match the index"; return 1; fi
+    if [ "$got" != "$ps" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $pn does not match the index"; return 1; fi
     $B mkdir -p $ROOT $DB
     $B dpkg-deb -c /tmp/pkg-$$.deb | $B awk '{ print $NF }' | $B sed 's|^\./||' > /tmp/pkg-$$.list
     if ! $B dpkg-deb -x /tmp/pkg-$$.deb $ROOT; then
         # whatever was unpacked before the failure is removed again (usually: the disk is full)
         $B sort -r /tmp/pkg-$$.list | while read -r f; do [ -n "$f" ] || continue; if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi; done
         $B rm -f /tmp/pkg-$$.deb /tmp/pkg-$$.list
-        echo "thos-pkg: unpacking $name failed (is the disk full? 'df' shows the free space)"; return 1
+        echo "thos-pkg: unpacking $pn failed (is the disk full? 'df' shows the free space)"; return 1
     fi
-    $B mv /tmp/pkg-$$.list $DB/$name.list
+    $B mv /tmp/pkg-$$.list $DB/$pn.list
     $B rm -f /tmp/pkg-$$.deb
 }
 
@@ -208,9 +228,9 @@ cmd_install_repo() {
         seen="$seen$cur "
         case "$SKIP" in *" $cur "*) continue ;; esac
         [ -f $DB/$cur.list ] && continue
-        line=$(idx_line "$cur")
-        if [ -z "$line" ]; then echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
-        deps=$(echo "$line" | $B cut -d'|' -f5)
+        rline=$(idx_line "$cur")
+        if [ -z "$rline" ]; then echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
+        deps=$(echo "$rline" | $B cut -d'|' -f5)
         install_one "$cur" || return 1
         todo="$todo $deps"
     done

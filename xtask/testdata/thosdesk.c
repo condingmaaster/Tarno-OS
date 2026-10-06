@@ -23,14 +23,15 @@
 #include <unistd.h>
 #include "thoswl.h"
 #include "thosgfx.h"
+#include "thosui.h"
 
 #define MAXWIN 16
 #define BORDER 1
-#define TITLE 30
-#define BTN 20
-#define SH 16           /* reach of the soft window shadow */
-#define SH_OFF 6        /* the shadow sits a little below the window */
-#define CORNER 10       /* window corner radius */
+#define TITLE 38
+#define BTN 28
+#define SH 26           /* reach of the soft window shadow */
+#define SH_OFF 9        /* the shadow sits a little below the window */
+#define CORNER 12       /* window corner radius */
 
 struct bitfield { uint32_t offset, length, msb_right; };
 struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset, yoffset, bpp, grayscale;
@@ -52,7 +53,13 @@ static unsigned long long last_icon_ms;
 static int drag, dx0, dy0;                       /* a window move in progress (titlebar, or asked for by the client) */
 static int rs_id, rs_dir, rs_x0, rs_y0, rs_w0, rs_h0;   /* an edge/corner resize in progress */
 
-static uint32_t rgb(int r, int g, int b) { return ((uint32_t)r << rs) | ((uint32_t)g << gs) | ((uint32_t)b << bs); }
+static uint32_t rgb(int r, int g, int b) { return ((uint32_t)r << 16) | ((uint32_t)g << 8) | (uint32_t)b; }            /* canonical 0x00RRGGBB, like the clients' pixels */
+static int fb_swap;                                                                                               /* the framebuffer wants another channel order */
+static inline uint32_t fbpx(uint32_t c) { return ((c >> 16 & 255) << rs) | ((c >> 8 & 255) << gs) | ((c & 255) << bs); }
+static void blit_row(uint32_t *dst, const uint32_t *src, int n) {
+    if (!fb_swap) { memcpy(dst, src, (size_t)n * 4); return; }
+    for (int i = 0; i < n; i++) dst[i] = fbpx(src[i]);
+}
 
 struct rect { int x0, y0, x1, y1; };     /* half-open */
 static int in(struct rect r, int x, int y);
@@ -77,7 +84,7 @@ static struct rect outer_of(struct win *w) {
     if (!w->deco) return f;
     return (struct rect){ f.x0 - SH, f.y0 - SH + SH_OFF, f.x1 + SH, f.y1 + SH + SH_OFF };
 }
-static struct rect close_btn(struct win *w) { if (!w->deco) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - BTN - 6, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
+static struct rect close_btn(struct win *w) { if (!w->deco) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - BTN - 8, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
 
 /* ---- theme: everything below is integer-only and table driven, to stay cheap on old hardware ---- */
 static uint8_t cov_tab[CORNER][CORNER];   /* coverage of a rounded corner, [row][col] counted from the outer corner */
@@ -109,18 +116,21 @@ static void theme_init(void) {
                 }
             cov_tab[j][i] = (uint8_t)(in_s * 255 / 16);
         }
-    for (int d = 0; d < SH; d++) sh_tab[d] = (uint8_t)(150 * (SH - d) * (SH - d) / (SH * SH));
+    for (int d = 0; d < SH; d++) sh_tab[d] = (uint8_t)(190 * (SH - d) * (SH - d) * (SH - d) / (SH * SH * SH) + 20 * (SH - d) / SH);
     wall = malloc((size_t)W * H * 4);
     if (!wall) return;
-    int cx = W * 70 / 100, cy = H * 30 / 100;
+    int cx = W * 72 / 100, cy = H * 28 / 100, dx2 = W * 18 / 100, dy2 = H * 82 / 100;          /* two soft glows over a deep slate ground */
     for (int y = 0; y < H; y++)
         for (int x = 0; x < W; x++) {
-            int t = (x * 256 / W + y * 256 / H) / 2;                    /* diagonal gradient */
-            int dx = x - cx, dy = y - cy, glow = 46 - (dx * dx + dy * dy) / 5000;
-            if (glow < 0) glow = 0;
-            int r = 16 + t * 26 / 256 + glow * 6 / 10, g = 22 + t * 44 / 256 + glow * 9 / 10, b = 54 + t * 84 / 256 + glow;
-            int n = ((x * 7 + y * 13) & 3) - 1;                          /* a little dither against banding */
-            wall[(size_t)y * W + x] = rgb(r + n < 0 ? 0 : r + n, g + n < 0 ? 0 : g + n, b + n < 0 ? 0 : b + n > 255 ? 255 : b + n);
+            int t = (x * 256 / W + y * 256 / H) / 2;
+            int dx = x - cx, dy = y - cy, ex = x - dx2, ey = y - dy2, k1 = W * H / 9 + 1, k2 = W * H / 12 + 1;
+            int g1 = (int)(78LL * k1 / (k1 + ((long long)dx * dx + (long long)dy * dy))), g2 = (int)(56LL * k2 / (k2 + ((long long)ex * ex + (long long)ey * ey)));
+            if (g1 < 0) g1 = 0;
+            if (g2 < 0) g2 = 0;
+            int r = 13 + t * 10 / 256 + g1 * 4 / 10 + g2 * 5 / 10, g = 16 + t * 14 / 256 + g1 * 6 / 10 + g2 * 2 / 10, b = 28 + t * 30 / 256 + g1 * 11 / 10 + g2 * 8 / 10;
+            int n = ((x * 7 + y * 13) & 3) - 1;                                                  /* a little dither against banding */
+            r += n; g += n; b += n;
+            wall[(size_t)y * W + x] = rgb(r < 0 ? 0 : r > 255 ? 255 : r, g < 0 ? 0 : g > 255 ? 255 : g, b < 0 ? 0 : b > 255 ? 255 : b);
         }
 }
 
@@ -142,7 +152,7 @@ static void draw_cursor(void) {
         for (int i = 0; i < CUR_W; i++) {
             char c = cursor_art[j][i];
             if (c == ' ' || mx + i >= W) continue;
-            *(uint32_t *)(fbmap + (size_t)(my + j) * pitch + (size_t)(mx + i) * 4) = c == '#' ? rgb(0, 0, 0) : rgb(255, 255, 255);
+            *(uint32_t *)(fbmap + (size_t)(my + j) * pitch + (size_t)(mx + i) * 4) = c == '#' ? fbpx(0x000000u) : fbpx(0xffffffu);
         }
     }
 }
@@ -168,8 +178,8 @@ static void draw_shadow(struct win *w, int top, struct rect r) {
 
 /* one titlebar row's colour: a vertical gradient, brighter when focused */
 static uint32_t title_color(int row, int top) {
-    int r0 = top ? 72 : 52, g0 = top ? 78 : 55, b0 = top ? 98 : 68, r1 = top ? 48 : 40, g1 = top ? 52 : 42, b1 = top ? 68 : 52;
-    return rgb(r0 + (r1 - r0) * row / TITLE, g0 + (g1 - g0) * row / TITLE, b0 + (b1 - b0) * row / TITLE);
+    if (!top) return rgb(27, 31, 43);
+    return ui_mix(0x272d41u, 0x1f2435u, (unsigned)(row * 255 / TITLE));
 }
 
 /* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
@@ -191,40 +201,16 @@ static int icon_at(int x, int y) {
 }
 static void put_glyph_str(const char *t, int gx, int gy, uint32_t c, unsigned op, struct rect r);
 static void draw_icons(struct rect r) {
-    static const uint8_t pal[6][3] = { { 70, 130, 200 }, { 200, 100, 80 }, { 90, 170, 110 }, { 170, 120, 200 }, { 210, 160, 70 }, { 80, 170, 180 } };
     for (int j = 0; j < nicons; j++) {
         struct rect cell = icon_cell(j);
         if (empty(isect(cell, r))) continue;
-        unsigned h = 0;
-        for (const char *p = icons[j].label; *p; p++) h = h * 31 + (unsigned char)*p;
-        const uint8_t *pc = pal[h % 6];
-        int bx = cell.x0 + 12, by = cell.y0, bs = 56;
-        for (int y = 0; y < bs; y++)
-            for (int x = 0; x < bs; x++) {
-                int px = bx + x, py = by + y;
-                if (!in(r, px, py)) continue;
-                int cx = x < 8 ? 8 - x : (bs - 1 - x < 8 ? 8 - (bs - 1 - x) : 0), cy = y < 8 ? 8 - y : (bs - 1 - y < 8 ? 8 - (bs - 1 - y) : 0);
-                if (cx * cx + cy * cy > 64) continue;
-                int k = 40 + (bs - y) * 60 / bs;           /* lighter at the top */
-                uint32_t col = rgb(pc[0] * k / 100 > 255 ? 255 : pc[0] * k / 100, pc[1] * k / 100 > 255 ? 255 : pc[1] * k / 100, pc[2] * k / 100 > 255 ? 255 : pc[2] * k / 100);
-                bb[(size_t)py * W + px] = col;
-            }
-        /* the initial, scaled 3x */
-        unsigned char ch = (unsigned char)icons[j].label[0];
-        if (ch >= 'a' && ch <= 'z') ch -= 32;
-        for (int gy = 0; gy < 16 && gfx_font; gy++)
-            for (int gx = 0; gx < 8; gx++)
-                if (gfx_font[ch * 16 + gy] & (0x80 >> gx))
-                    for (int sy = 0; sy < 3; sy++)
-                        for (int sx = 0; sx < 3; sx++) {
-                            int px = bx + 16 + gx * 3 + sx, py = by + 4 + gy * 3 + sy;
-                            if (in(r, px, py)) bb[(size_t)py * W + px] = rgb(255, 255, 255);
-                        }
-        char lab[11];
-        snprintf(lab, sizeof lab, "%s", icons[j].label);
-        int lx = cell.x0 + (80 - 8 * (int)strlen(lab)) / 2, ly = cell.y0 + 62;
-        put_glyph_str(lab, lx + 1, ly + 1, rgb(0, 0, 0), 256, r);
-        put_glyph_str(lab, lx, ly, rgb(255, 255, 255), 256, r);
+        ui_set_clip(r.x0, r.y0, r.x1, r.y1);
+        ui_tile(bb, W, H, cell.x0 + 12, cell.y0, 56, icons[j].label);
+        char lab[24]; snprintf(lab, sizeof lab, "%.14s", icons[j].label);
+        int lw = ui_text_width(UI_REG, 12, lab), lx = cell.x0 + (80 - lw) / 2, ly = cell.y0 + 74;
+        ui_text_a(bb, W, H, lx + 1, ly + 1, lab, UI_REG, 12, 0x000000u, 200);
+        ui_text(bb, W, H, lx, ly, lab, UI_REG, 12, 0xf1f3fau);
+        ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     }
 }
 static void load_icons(void) {
@@ -276,7 +262,7 @@ static void draw_window(struct win *w, int top, struct rect r) {
     if (empty(v)) return;
     unsigned op = 256 - (unsigned)w->fade * 256 / 256;      /* fade-in: 0..256 */
     if (op > 256) op = 256;
-    uint32_t border = top ? rgb(96, 104, 130) : rgb(70, 74, 90);
+    uint32_t border = top ? rgb(66, 76, 108) : rgb(44, 50, 68);
     for (int y = v.y0; y < v.y1; y++) {
         int row = y - f.y0, rows = f.y1 - f.y0;
         uint32_t *d = &bb[(size_t)y * W];
@@ -323,27 +309,18 @@ static void draw_window(struct win *w, int top, struct rect r) {
         }
     }
     if (!w->deco) return;
-    /* title, centred, with a 1 px shadow for legibility */
-    int len = (int)strlen(w->title), gx = w->x + (w->w - 8 * len) / 2, gy = w->y - TITLE + (TITLE - 16) / 2;
-    if (gx < w->x + 8) gx = w->x + 8;
-    put_glyph_str(w->title, gx + 1, gy + 1, rgb(10, 12, 18), op, r);
-    put_glyph_str(w->title, gx, gy, top ? rgb(238, 240, 247) : rgb(150, 155, 170), op, r);
-    /* close button: a red disc, with a cross when the pointer is on it */
+    /* title (left, Lato) and the close button; the clip keeps this inside the repaint rectangle */
+    ui_set_clip(v.x0, v.y0, v.x1, v.y1);
+    uint32_t *B = bb;
+    int tw = w->w - 90;
+    char tt[80]; snprintf(tt, sizeof tt, "%s", w->title);
+    while (tt[0] && ui_text_width(UI_REG, 13, tt) > tw && strlen(tt) > 3) tt[strlen(tt) - 1] = 0;
+    ui_text_a(B, W, H, w->x + 16, w->y - TITLE + 24, tt, top ? UI_BOLD : UI_REG, 13, top ? UI_TEXT : UI_MUTED, op);
     struct rect cb = close_btn(w);
-    int ccx = (cb.x0 + cb.x1) / 2, ccy = (cb.y0 + cb.y1) / 2, rad = 7, hot = hover_win == w->id;
-    uint32_t disc = hot ? rgb(255, 98, 104) : (top ? rgb(226, 72, 78) : rgb(120, 84, 88));
-    struct rect cv = isect(cb, r);
-    for (int y = cv.y0; y < cv.y1; y++)
-        for (int x = cv.x0; x < cv.x1; x++) {
-            int dx = x - ccx, dy = y - ccy, d2 = dx * dx + dy * dy;
-            int in2 = (rad - 1) * (rad - 1), out2 = (rad + 1) * (rad + 1);
-            if (d2 >= out2) continue;
-            unsigned a = d2 <= in2 ? 256 : (unsigned)(out2 - d2) * 256 / (unsigned)(out2 - in2);
-            uint32_t c = disc;
-            if (hot && (dx == dy || dx == -dy) && dx >= -3 && dx <= 3) c = rgb(255, 255, 255);
-            uint32_t *p = &bb[(size_t)y * W + x];
-            *p = lerp_px(*p, c, a * op >> 8);
-        }
+    int ccx = (cb.x0 + cb.x1) / 2, ccy = (cb.y0 + cb.y1) / 2, hot = hover_win == w->id;
+    if (hot) ui_disc(B, W, H, ccx, ccy, BTN / 2, UI_BAD);
+    ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, hot ? 0xffffffu : (top ? 0xb4bbd0u : 0x6c748cu));
+    ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
 }
 
 /* Repaint everything inside `r` (screen coordinates), bottom to top, then blit it. */
@@ -359,7 +336,7 @@ static void compose(struct rect r) {
         draw_window(w, top, r);
     }
     for (int y = r.y0; y < r.y1; y++)
-        memcpy(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4, &bb[(size_t)y * W + r.x0], (size_t)(r.x1 - r.x0) * 4);
+        blit_row((uint32_t *)(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4), &bb[(size_t)y * W + r.x0], r.x1 - r.x0);
     draw_cursor();
 }
 
@@ -640,7 +617,8 @@ static void on_new_client(int ls) {
     *w = (struct win){ c, next_id++, 100 + 80 * (k % 6), 80 + 60 * (k % 6), (int)m.a, (int)m.b, p };
     w->deco = !(m.d & 1);
     w->menu = (m.d & 2) != 0;
-    w->taskbar = (m.d & 4) != 0;   /* the panel: told about the open windows */      /* a start-menu surface: closed by a click anywhere outside it */
+    w->taskbar = (m.d & 4) != 0;   /* the panel: told about the open windows */
+    w->alpha = (m.d & 8) != 0;     /* premultiplied ARGB pixels (the floating dock, the Start menu) */      /* a start-menu surface: closed by a click anywhere outside it */
     if (!w->deco) { w->x = 0; w->y = 0; }
     struct wl_msg r = { WL_CREATED, (uint32_t)w->id, (uint32_t)W, (uint32_t)H, 0 };
     (void)!write(c, &r, sizeof r);
@@ -665,6 +643,8 @@ int main(int argc, char **argv) {
     char fix[80];
     if (ioctl(fb, 0x4600, &v) != 0 || v.bpp != 32 || ioctl(fb, 0x4602, fix) != 0) { puts("desk FAIL: fbdev ioctls"); return 1; }
     W = v.xres; H = v.yres; rs = v.red.offset; gs = v.green.offset; bs = v.blue.offset;
+    fb_swap = !(rs == 16 && gs == 8 && bs == 0);
+    ui_init();
     pitch = *(uint32_t *)(fix + 48);
     fbmap = mmap(0, (size_t)pitch * H, PROT_READ | PROT_WRITE, MAP_SHARED, fb, 0);
     bb = calloc((size_t)W * H, 4);

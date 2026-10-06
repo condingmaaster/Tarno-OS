@@ -818,6 +818,12 @@ fn main() {
                 exit(1);
             }
         }
+        "pkg-msi-test" => {
+            // needs the internet: an MSI is downloaded, msitools comes from the Debian archive, msiextract unpacks the files
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "pkgmsi", "/busybox sh /pkg-msi.sh", "pkg-msi-done", 1500);
+            for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(25).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
@@ -1678,6 +1684,21 @@ fn disk_image() -> PathBuf {
             if Command::new("gcc").args(["-O1", "-pthread", "-o", mt.to_str().unwrap(), root.join("xtask/testdata/mapstest.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} mapstest", mt.to_str().unwrap()), img.to_str().unwrap()]));
             }
+            // UI fonts (Lato text, Font Awesome symbols) and FreeType with its dependencies
+            for d in ["usr/share/fonts", "usr/share/fonts/thos"] {
+                let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
+            }
+            for (src, dst) in [("/usr/share/fonts/truetype/lato/Lato-Regular.ttf", "Lato-Regular.ttf"), ("/usr/share/fonts/truetype/lato/Lato-Bold.ttf", "Lato-Bold.ttf"), ("/usr/share/fonts/truetype/font-awesome/fontawesome-webfont.ttf", "icons.ttf")] {
+                if std::path::Path::new(src).exists() {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {src} usr/share/fonts/thos/{dst}"), img.to_str().unwrap()]));
+                }
+            }
+            {
+                let mut fdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                if std::path::Path::new("/usr/lib/x86_64-linux-gnu/libfreetype.so.6").exists() {
+                    add_dynamic_program(&img, "/usr/lib/x86_64-linux-gnu/libfreetype.so.6", &mut fdirs);
+                }
+            }
             // image viewer (PNG/JPEG through libpng and libjpeg, which go into the image with their dependencies)
             let tv = root.join("target/thosview");
             if Command::new("gcc").args(["-O1", "-o", tv.to_str().unwrap(), root.join("xtask/testdata/thosview.c").to_str().unwrap(), "-lpng", "-ljpeg"]).status().map(|s| s.success()).unwrap_or(false) {
@@ -1949,7 +1970,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2065,8 +2086,13 @@ fn disk_image() -> PathBuf {
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
                 }
                 let out = root.join(format!("target/{prog}"));
+                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft"].contains(&prog);       // these draw with the UI toolkit (FreeType)
+                let mut gargs: Vec<String> = vec!["-O1".into(), "-o".into(), out.to_str().unwrap().into(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap().into()];
+                if ui {
+                    gargs.extend(["-I/usr/include/freetype2".to_string(), "-lfreetype".to_string(), "-lm".to_string()]);
+                }
                 let ok = Command::new("gcc")
-                    .args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()])
+                    .args(&gargs)
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false);
@@ -7380,26 +7406,26 @@ fn desk_menu_test(img: &Path) {
             mon(sock, "mouse_button 0");
             std::thread::sleep(ms(700));
         };
-        // the menu lists 7 programs (Terminal, Files, Software, Text editor, Foot terminal, Win32 demo, System info) plus 3 power rows
-        let row_y = |i: i32| 800 - 32 - 24 - (7 + 3) * 28 + 14 + 28 * i;
-        goto(38, 784);                       // Start
+        // the menu: 7 programs, rows 40 px apart starting at y = 422 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
+        let row_y = |i: i32| 422 + 40 * i;
+        goto(34, 778);                       // Start
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
-        goto(262, row_y(0));                 // "D" toggle of the Terminal row: pin to the desktop
+        goto(319, row_y(0));                 // desktop chip of the Terminal row: pin to the desktop
         click(&tsock);
         std::thread::sleep(ms(1500));        // the compositor re-reads /desktop.conf
         goto(700, 300);                      // a click on empty desktop closes the menu
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
-        goto(38, 784);                       // Start again, then the Terminal row itself
+        goto(34, 778);                       // Start again, then the Terminal row itself
         click(&tsock);
-        goto(238, row_y(3));                 // "T" toggle of the Text editor row (fourth): pin to the taskbar
+        goto(283, row_y(3));                 // dock chip of the Text editor row (fourth): pin to the dock
         click(&tsock);
-        goto(262, row_y(5));                 // "D" toggle of the Win32 demo row (sixth)
+        goto(319, row_y(5));                 // desktop chip of the Win32 demo row (sixth)
         click(&tsock);
         std::thread::sleep(ms(1500));
         mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
-        goto(80, row_y(0));
+        goto(90, row_y(0));
         click(&tsock);
         if wait_for(&tlog, "term ready", 40) {
             std::thread::sleep(ms(1500));
@@ -7411,10 +7437,11 @@ fn desk_menu_test(img: &Path) {
         let (w, h, d) = read_ppm(&shots[n])?;
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
-    let menu_open = px(0, 150, 520).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // menu body 0x262634
-    let icon = px(1, 48, 30).is_some_and(|c| (c.0 as i32 - 18).abs() + (c.1 as i32 - 25).abs() + (c.2 as i32 - 58).abs() > 60); // not wallpaper: an icon
+    let accent = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| (c.0 as i32 - 0x5b).abs() + (c.1 as i32 - 0x8d).abs() + (c.2 as i32 - 0xef).abs() < 60);
+    let menu_open = accent(px(0, 283, 422));                       // the Terminal row's dock chip is lit while the menu is open
+    let icon = px(1, 48, 40).is_some_and(|c| (c.0 as i32 - 16).abs() + (c.1 as i32 - 20).abs() + (c.2 as i32 - 40).abs() > 90); // a desktop icon tile, not wallpaper
     let icon_shot = px(1, 48, 50);
-    let menu_closed = px(1, 150, 520).is_some_and(|c| !(c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70));
+    let menu_closed = !accent(px(1, 283, 422));
     let term = out.contains("term ready");
     if menu_open && icon && menu_closed && term {
         println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");
