@@ -17,6 +17,7 @@
 #include "thoswl.h"
 #include "thosgfx.h"
 #include "thosui.h"
+#include "thosnotify.h"
 
 #define SW 760
 #define SH 520
@@ -145,6 +146,10 @@ static void job_read(void) {                       /* output (a line at a time) 
     if (WIFEXITED(st) && WEXITSTATUS(st) == 0) snprintf(status, sizeof status, "%s %s", job_name, job_remove ? "removed" : "installed — find it in the Start menu");
     else snprintf(status, sizeof status, "%s %s failed: %s", job_remove ? "removing" : "installing", job_name, job_line);
     job_ok_shown = 1;
+    char tn[120];
+    int ok = strstr(status, "failed") == 0;
+    snprintf(tn, sizeof tn, "%s|%s", ok ? (job_remove ? "Program removed" : "Program installed") : (job_remove ? "Removing failed" : "Installing failed"), ok ? job_name : job_line);
+    thos_notify(ok ? 1 : 3, tn);
 }
 static void render(void) {
     for (int i = 0; i < SW * SH; i++) px[i] = UI_SURFACE;

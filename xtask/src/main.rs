@@ -886,6 +886,33 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-toast-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/desktoast-serial.log"), root.join("target/desktoast-mon.sock"));
+            let shots = [root.join("target/desktoast1.ppm"), root.join("target/desktoast2.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "toast sent", 200) { return; }
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                std::thread::sleep(ms(10000));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "desktoast", "/busybox sh /desk-toast.sh", "desk ok:", 200);
+            let bright = |n: usize| read_ppm(&shots[n]).map_or(0, |(w, _, d)| { let mut c = 0; for y in 20..76usize { for x in (w - 340)..(w - 20) { let o = (y * w + x) * 3; if d.get(o + 2).is_some_and(|b| *b > 200) || d.get(o + 1).is_some_and(|g| *g > 180) { c += 1; } } } c });
+            let (shown, gone) = (bright(0), bright(1));
+            if out.contains("toast sent") && shown > 100 && gone < shown / 4 {
+                println!("desk-toast-test PASSED: a notification slid in at the top right ({shown} bright pixels) and left again ({gone})");
+            } else {
+                eprintln!("  bright pixels with toast {shown}, later {gone}");
+                for l in out.lines().filter(|l| l.contains("toast") || l.contains("desk")) { eprintln!("  {l}"); }
+                eprintln!("desk-toast-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2091,7 +2118,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2200,7 +2227,7 @@ fn disk_image() -> PathBuf {
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings", "thosnotify"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
@@ -5475,7 +5502,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

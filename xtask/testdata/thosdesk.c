@@ -224,6 +224,7 @@ static uint32_t title_color(int row, unsigned f) {                     /* f: foc
 /* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
 static unsigned long long now_ms(void);
 static void compose(struct rect r);
+static struct rect uni(struct rect a, struct rect b);
 #define MAXICON 16
 #define ICON_X 20
 #define ICON_Y 20
@@ -452,6 +453,66 @@ static void draw_snap_at(const uint32_t *snap, struct rect o, float ax, float ay
 struct ghost { uint32_t *snap; struct rect r; float ax, ay; struct spring sc; struct tween opq; int active; };
 #define MAXGHOST 8
 static struct ghost ghosts[MAXGHOST];
+/* ---- notifications: glass toasts at the top right; they spring in from the edge, stay a few seconds, fade out ---- */
+#define MAXTOAST 4
+#define TOAST_W 340
+#define TOAST_H 64
+struct toast { int on, kind; char title[44], body[84]; long long t0; struct spring x; struct tween op; int leaving; };
+static struct toast toasts[MAXTOAST];
+static struct rect toast_rect(int i) { return rect_xywh((int)toasts[i].x.p, 16 + i * (TOAST_H + 12), TOAST_W, TOAST_H); }
+static void toast_add(int kind, const char *text) {
+    int i = 0;
+    while (i < MAXTOAST && toasts[i].on) i++;
+    if (i == MAXTOAST) { compose(inflate_r(toast_rect(0), 10)); memmove(&toasts[0], &toasts[1], sizeof toasts[0] * (MAXTOAST - 1)); i = MAXTOAST - 1; }
+    struct toast *t = &toasts[i];
+    memset(t, 0, sizeof *t);
+    const char *bar = strchr(text, '|');
+    if (bar) { snprintf(t->title, sizeof t->title, "%.*s", (int)(bar - text), text); snprintf(t->body, sizeof t->body, "%s", bar + 1); }
+    else snprintf(t->title, sizeof t->title, "%s", text);
+    t->on = 1; t->kind = kind; t->t0 = mo_now_ms();
+    spring_init(&t->x, (float)W, SP_POP);
+    spring_to(&t->x, (float)(W - TOAST_W - 16));
+    tween_start(&t->op, 0, 1, MO_BASE);
+}
+static int toasts_busy(void) { for (int i = 0; i < MAXTOAST; i++) if (toasts[i].on) return 1; return 0; }
+static void toasts_step(float dt) {
+    long long now = mo_now_ms();
+    for (int i = 0; i < MAXTOAST; i++) {
+        struct toast *t = &toasts[i];
+        if (!t->on) continue;
+        struct rect old = inflate_r(toast_rect(i), 14);
+        if (!t->leaving && now - t->t0 > 5000) { t->leaving = 1; spring_to(&t->x, (float)(W + 20)); tween_start(&t->op, 1, 0, MO_BASE); }
+        spring_step(&t->x, dt);
+        compose(uni(old, inflate_r(toast_rect(i), 14)));
+        if (t->leaving && !tween_busy(&t->op) && t->x.p > W - 40) { t->on = 0; compose(old); }
+    }
+}
+static void draw_toasts(struct rect r) {
+    for (int i = 0; i < MAXTOAST; i++) {
+        struct toast *t = &toasts[i];
+        if (!t->on) continue;
+        struct rect tr = toast_rect(i);
+        if (empty(isect(inflate_r(tr, 14), r))) continue;
+        float o = tween_value(&t->op, ease_out);
+        unsigned a = (unsigned)(o * 255);
+        ui_set_clip(r.x0, r.y0, r.x1, r.y1);
+        for (int k = 3; k >= 1; k--) ui_rrect_g(bb, W, H, tr.x0 - k * 3, tr.y0 - k * 3 + 6, TOAST_W + k * 6, TOAST_H + k * 6, 16 + k * 2, 0x000000u, 0x000000u, a * 20 / 255);   /* shadow */
+        ui_rrect_g(bb, W, H, tr.x0, tr.y0, TOAST_W, TOAST_H, 16, 0x3a4260u, 0x2a3148u, a * 200 / 255);                   /* rim light */
+        ui_rrect_g(bb, W, H, tr.x0 + 1, tr.y0 + 1, TOAST_W - 2, TOAST_H - 2, 15, 0x1c2132u, 0x141824u, a * 232 / 255);
+        uint32_t col = t->kind == 1 ? UI_GOOD : t->kind == 2 ? UI_WARN : t->kind == 3 ? UI_BAD : UI_ACCENT;
+        ui_disc(bb, W, H, tr.x0 + 34, tr.y0 + TOAST_H / 2, 18, ui_mix(0x1c2132u, col, a * 90 / 255));
+        ui_icon(bb, W, H, tr.x0 + 34, tr.y0 + TOAST_H / 2, t->kind == 1 ? 0xf00c : t->kind == 2 ? 0xf071 : t->kind == 3 ? 0xf00d : IC_INFO, 15, ui_mix(0x1c2132u, col, a));
+        int ty = t->body[0] ? tr.y0 + 28 : tr.y0 + 38;
+        char tt[44]; snprintf(tt, sizeof tt, "%s", t->title);
+        ui_text_a(bb, W, H, tr.x0 + 64, ty, tt, UI_BOLD, 14, UI_TEXT, a);
+        if (t->body[0]) {
+            char bd[84]; snprintf(bd, sizeof bd, "%s", t->body);
+            while (ui_text_width(UI_REG, 12, bd) > TOAST_W - 80 && strlen(bd) > 4) bd[strlen(bd) - 1] = 0;
+            ui_text_a(bb, W, H, tr.x0 + 64, tr.y0 + 48, bd, UI_REG, 12, UI_MUTED, a);
+        }
+        ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+    }
+}
 static void draw_ghosts(struct rect r) {
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) draw_snap_at(ghosts[i].snap, ghosts[i].r, ghosts[i].ax, ghosts[i].ay, ghosts[i].sc.p, tween_value(&ghosts[i].opq, ease_in), r);
 }
@@ -493,6 +554,7 @@ static void compose(struct rect r) {
         draw_window(w, top, r);
     }
     draw_ghosts(r);
+    draw_toasts(r);
     for (int y = r.y0; y < r.y1; y++)
         blit_row((uint32_t *)(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4), &bb[(size_t)y * W + r.x0], r.x1 - r.x0);
     draw_cursor();
@@ -620,6 +682,7 @@ static void place_window(struct win *w);
 /* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
 static long long anim_last;
 static int anim_pending(void) {
+    if (toasts_busy()) return 1;
     if (icons_busy()) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].clo.k != 0 && (spring_busy(&wins[i].clo) || wins[i].clo.t != (hover_win == wins[i].id ? 1.0f : 0.0f))) return 1;
@@ -662,6 +725,7 @@ static void anim_tick(void) {
             compose(rr);
         }
     }
+    toasts_step(dt);
     if (icons_busy()) { icons_step(dt); for (int j = 0; j < nicons; j++) compose(inflate_r(icon_cell(j), 10)); }
     for (int i = 0; i < MAXGHOST; i++) {
         struct ghost *g = &ghosts[i];
@@ -843,6 +907,19 @@ static void on_new_client(int ls) {
         struct wl_msg h = { WL_CREATED, 0, (uint32_t)W, (uint32_t)H, 0 };
         (void)!write(c, &h, sizeof h);
         first = read(c, &m, sizeof m);
+    }
+    if (first == (ssize_t)sizeof m && m.op == WL_TOAST) {            /* a notification: WL_TOAST chunks (12 characters each), the last one flagged */
+        char text[112] = { 0 };
+        int len = 0, kind = (int)(m.a & 0xff);
+        for (int guard = 0; guard < 10; guard++) {
+            if (len + 12 < (int)sizeof text) { memcpy(text + len, &m.b, 12); len += 12; }
+            if (m.a & 0x100) break;
+            if (read(c, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_TOAST) break;
+        }
+        text[sizeof text - 1] = 0;
+        toast_add(kind, text);
+        close(c);
+        return;
     }
     if (first == (ssize_t)sizeof m && m.op == WL_QUIT) { puts("desk: quit requested"); fflush(stdout); quit = 1; close(c); return; }
     if (first != (ssize_t)sizeof m || nwin >= MAXWIN || m.op != WL_CREATE || m.a == 0 || m.b == 0 || m.a > 2000 || m.b > 2000) { close(c); return; }
