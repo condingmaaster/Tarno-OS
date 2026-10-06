@@ -161,7 +161,11 @@ pub fn suspend() {
 pub fn resume() {
     if let Some(c) = CON.lock().as_mut() {
         c.active = true;
-        c.redraw_all(); // anything printed while suspended is in the model only
+        if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
+            paint_splash(c); // the splash is not part of the text model: paint it again on the freshly mapped framebuffer
+        } else {
+            c.redraw_all(); // anything printed while suspended is in the model only
+        }
     }
 }
 
@@ -696,6 +700,14 @@ impl Con {
 pub fn splash_start() {
     let mut g = CON.lock();
     let Some(c) = g.as_mut() else { return };
+    paint_splash(c);
+    QUIET.store(true, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// How far the splash progress bar is (so a redraw after a framebuffer remap restores it).
+static SPLASH_PCT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+fn paint_splash(c: &mut Con) {
     let (w, h) = (c.width, c.height);
     let (gx, gy) = (w / 2, h * 2 / 5);
     for y in 0..h {
@@ -727,16 +739,10 @@ pub fn splash_start() {
         c.px(bx + x, by + 1, 0x0030_3A55);
         c.px(bx + x, by + 2, 0x0030_3A55);
     }
-    QUIET.store(true, core::sync::atomic::Ordering::Relaxed);
+    paint_progress(c, SPLASH_PCT.load(core::sync::atomic::Ordering::Relaxed));
 }
 
-/// Advance the splash progress bar to `pct` percent.
-pub fn splash_progress(pct: u32) {
-    if !QUIET.load(core::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    let mut g = CON.lock();
-    let Some(c) = g.as_mut() else { return };
+fn paint_progress(c: &mut Con, pct: u32) {
     let (w, h) = (c.width, c.height);
     let (lh, bw) = (u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize, 280usize);
     let (bx, by) = (w / 2 - 140, (h * 2 / 5).saturating_sub(lh / 2) + lh + 48);
@@ -748,6 +754,17 @@ pub fn splash_progress(pct: u32) {
             c.px(bx + x, by + dy, col);
         }
     }
+}
+
+/// Advance the splash progress bar to `pct` percent.
+pub fn splash_progress(pct: u32) {
+    if !QUIET.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    SPLASH_PCT.store(pct, core::sync::atomic::Ordering::Relaxed);
+    let mut g = CON.lock();
+    let Some(c) = g.as_mut() else { return };
+    paint_progress(c, pct);
 }
 
 /// The login screen: the wordmark on top, a narrow centred text column below it, in the THOS colours.

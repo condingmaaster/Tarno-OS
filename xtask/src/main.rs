@@ -1677,8 +1677,10 @@ fn main() {
             let disk = disk_image();
             let (mut c, log, sock) = spawn_interactive_qemu("loginshot", &iso, &disk);
             let t = workspace_root().join("target");
-            std::thread::sleep(std::time::Duration::from_millis(1200));
-            mon(&sock, &format!("screendump {}", t.join("splash.ppm").to_str().unwrap()));
+            for (i, ms) in [1500u64, 1500, 1500, 1500].iter().enumerate() {                // a few frames of the splash while it fills up
+                std::thread::sleep(std::time::Duration::from_millis(*ms));
+                mon(&sock, &format!("screendump {}", t.join(format!("splash{i}.ppm")).to_str().unwrap()));
+            }
             wait_for(&log, "THOS first-run setup", 90);
             std::thread::sleep(std::time::Duration::from_millis(1500));
             mon(&sock, &format!("screendump {}", t.join("login.ppm").to_str().unwrap()));
