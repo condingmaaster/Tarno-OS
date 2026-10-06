@@ -20,6 +20,7 @@
 #include "thoswl.h"
 #include "thosgfx.h"
 #include "thosui.h"
+#include "thosmotion.h"
 
 #define PH 64                                  /* the panel surface: floating glass pills with a margin of wallpaper around them */
 static int PW = 1024;
@@ -29,7 +30,6 @@ static int PW = 1024;
 struct ent { char label[24]; char cmd[160]; };
 static struct ent bar[MAXB], dsk[MAXD], apps[MAXA];
 static int nbar, ndsk, napps;
-static int bx0[MAXB], bx1[MAXB];
 #define PANEL_USER "/tmp/panel.conf"
 #define DESK_USER "/tmp/desktop.conf"
 struct tbw { uint32_t id; int focused, x0, x1; char title[13]; };
@@ -122,64 +122,149 @@ static void build_apps(void) {
     }
 }
 
-/* ---- the dock: three floating glass pills (Start, apps and windows, clock) ---- */
+/* ---- the dock: three floating glass pills (Start, apps and windows, clock) ----
+   The middle pill is a row of items on springs: launchers, a separator, one button per open window. A new item grows in, a closed
+   one shrinks away, and the pill stretches or contracts with the sum of their widths, so it overshoots and settles like a spring. */
 static uint32_t *px;          /* premultiplied ARGB for the compositor */
 static uint32_t *col, *mask;  /* the colours drawn over black, and the shape of the pills */
 static char clock_hm[8], clock_day[24];
-static int hov = -1;          /* what the pointer is over: 0..nbar-1 launcher, 100+i window button, 200 Start */
+static int hov_start;         /* the pointer is over the Start pill */
+enum { K_LAUNCH = 0, K_SEP = 1, K_WIN = 2 };
+#define MAXI 40
+struct dk { int kind, key, focused, present, x0, x1; char label[16]; struct spring w, pres, hov, foc; };
+static struct dk items[MAXI];
+static int nitems;
+static struct spring start_hov;
+static int dock_avail(void) { return PW - 2 * DOCK_X - 118 - 112 - 2 * 14 - 20; }
+static struct dk *item_new(int kind, int key, const char *label, int at) {
+    if (nitems >= MAXI) return 0;
+    memmove(&items[at + 1], &items[at], (size_t)(nitems - at) * sizeof items[0]);
+    struct dk *d = &items[at];
+    memset(d, 0, sizeof *d);
+    d->kind = kind; d->key = key; d->present = 1;
+    snprintf(d->label, sizeof d->label, "%s", label);
+    spring_init(&d->w, 0, SP_DOCK); spring_init(&d->pres, 0, SP_SNAPPY); spring_init(&d->hov, 0, SP_HOVER); spring_init(&d->foc, 0, SP_SNAPPY);
+    nitems++;
+    return d;
+}
+static int launcher_key(const char *label) { int h = 7; for (const char *p = label; *p; p++) h = h * 31 + (unsigned char)*p; return h & 0x7fffffff; }
+/* the width a window button wants */
+static float win_want(const struct dk *d) { char t[16]; snprintf(t, sizeof t, "%.12s", d->label[0] ? d->label : "Window"); return (float)(14 + 24 + 8 + ui_text_width(d->focused ? UI_BOLD : UI_REG, 12, t) + 14 + 6); }
+/* bring the items in line with the pinned launchers (bar[]) and the window list (tbs[]) and set every spring's target */
+static void dock_sync(void) {
+    for (int i = 0; i < nitems; i++) items[i].present = items[i].kind == K_SEP;
+    for (int i = 0; i < nbar; i++) {                                         /* launchers, in pin order, before the separator */
+        int key = launcher_key(bar[i].label), at = -1, last = -1;
+        for (int j = 0; j < nitems; j++) { if (items[j].kind == K_LAUNCH) last = j; if (items[j].kind == K_LAUNCH && items[j].key == key) at = j; }
+        if (at < 0) { struct dk *d = item_new(K_LAUNCH, key, bar[i].label, last + 1); (void)d; for (int j = 0; j < nitems; j++) if (items[j].kind == K_LAUNCH && items[j].key == key) at = j; }
+        if (at >= 0) items[at].present = 1;
+    }
+    int has_sep = 0;
+    for (int j = 0; j < nitems; j++) if (items[j].kind == K_SEP) has_sep = 1;
+    if (!has_sep) { int at = 0; for (int j = 0; j < nitems; j++) if (items[j].kind == K_LAUNCH) at = j + 1; item_new(K_SEP, 0, "", at); for (int j = 0; j < nitems; j++) if (items[j].kind == K_SEP) items[j].present = 1; }
+    for (int i = 0; i < ntb; i++) {                                           /* windows, in creation order, at the end */
+        int at = -1;
+        for (int j = 0; j < nitems; j++) if (items[j].kind == K_WIN && items[j].key == (int)tbs[i].id) at = j;
+        if (at < 0) { item_new(K_WIN, (int)tbs[i].id, tbs[i].title, nitems); at = nitems - 1; }
+        items[at].present = 1; items[at].focused = tbs[i].focused;
+        snprintf(items[at].label, sizeof items[at].label, "%s", tbs[i].title);
+    }
+    /* targets; when the windows would not fit, their buttons share the room that is left */
+    float fixed = 0, want = 0; int nw = 0;
+    for (int j = 0; j < nitems; j++) {
+        struct dk *d = &items[j];
+        if (d->kind == K_LAUNCH && d->present) fixed += 46;
+        if (d->kind == K_WIN && d->present) { want += win_want(d); nw++; }
+    }
+    if (nw) fixed += 12;
+    float room = (float)dock_avail() - fixed, scale = want > room && want > 0 ? (room > 40 * nw ? room / want : (40.0f * nw) / want) : 1.0f;
+    for (int j = 0; j < nitems; j++) {
+        struct dk *d = &items[j];
+        float w = d->kind == K_LAUNCH ? 46 : d->kind == K_SEP ? (nw ? 12 : 0) : win_want(d) * scale;
+        if (!d->present) w = 0;
+        spring_to(&d->w, w);
+        spring_to(&d->pres, d->present ? 1.0f : 0.0f);
+        spring_to(&d->foc, d->focused ? 1.0f : 0.0f);
+    }
+}
+static int item_busy(const struct dk *d) { return spring_busy(&d->w) || spring_busy(&d->pres) || spring_busy(&d->hov) || spring_busy(&d->foc); }
+static int dock_busy(void) {
+    if (spring_busy(&start_hov)) return 1;
+    for (int j = 0; j < nitems; j++) if (item_busy(&items[j])) return 1;
+    return 0;
+}
+static void dock_step(float dt) {
+    spring_step(&start_hov, dt);
+    for (int j = 0; j < nitems; j++) {
+        struct dk *d = &items[j];
+        spring_step(&d->w, dt); spring_step(&d->pres, dt); spring_step(&d->hov, dt); spring_step(&d->foc, dt);
+        if (d->w.p < 0) d->w.p = 0;
+    }
+    for (int j = nitems - 1; j >= 0; j--)                                     /* gone for good once shrunk away */
+        if (!items[j].present && items[j].w.p < 0.6f && items[j].pres.p < 0.03f && !item_busy(&items[j])) { memmove(&items[j], &items[j + 1], (size_t)(nitems - j - 1) * sizeof items[0]); nitems--; }
+}
 static void pill(int x, int w) {                                    /* one glass capsule: rim light on top, a tinted body, a gloss sheen */
+    if (w < 8) return;
     ui_rrect(mask, PW, PH, x, DOCK_Y, w, DOCK_H, 17, 0xffffffu);
     ui_rrect_g(col, PW, PH, x, DOCK_Y, w, DOCK_H, 17, 0x5b678c, 0x2a3148, 255);                       /* rim */
     ui_rrect_g(col, PW, PH, x + 1, DOCK_Y + 1, w - 2, DOCK_H - 2, 16, 0x262d44, 0x151a2a, 255);
     ui_rrect_ga(col, PW, PH, x + 2, DOCK_Y + 2, w - 4, DOCK_H / 2 - 2, 15, 0xffffffu, 0xffffffu, 34, 4);   /* sheen */
 }
-static int pill_w_apps(void) {
-    int w = 14 + nbar * 46;
-    if (ntb) { w += 16; for (int i = 0; i < ntb; i++) { char t[16]; snprintf(t, sizeof t, "%.12s", tbs[i].title[0] ? tbs[i].title : "Window"); w += 14 + 24 + 8 + ui_text_width(tbs[i].focused ? UI_BOLD : UI_REG, 12, t) + 14 + 6; } }
-    return w < 60 ? 60 : w;
-}
+static unsigned fadeto(float a) { return a <= 0 ? 0 : a >= 1 ? 255 : (unsigned)(a * 255); }
 static void draw_bar(void) {
     for (int i = 0; i < PW * PH; i++) col[i] = mask[i] = 0;
     int sy = DOCK_Y + (DOCK_H - 36) / 2;
     /* left: Start */
     int lw = 118;
     pill(DOCK_X, lw);
-    start_x0 = DOCK_X; start_x1 = DOCK_X + lw;
-    if (hov == 200) ui_rrect(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u);
-    ui_rrect_g(col, PW, PH, DOCK_X + 6, sy, 36, 36, 12, UI_ACCENT_HI, 0x3560d4, 255);
-    ui_gloss(col, PW, PH, DOCK_X + 6, sy, 36, 36, 12);
-    ui_icon(col, PW, PH, DOCK_X + 24, sy + 18, 0xf00a, 16, 0xffffffu);
+    if (start_hov.p > 0.02f) ui_rrect_g(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u, 0x2e3858u, fadeto(start_hov.p));
+    float lift = start_hov.p * 1.0f;
+    ui_rrect_g(col, PW, PH, DOCK_X + 6, sy - (int)(lift + 0.5f), 36, 36, 12, UI_ACCENT_HI, 0x3560d4, 255);
+    ui_gloss(col, PW, PH, DOCK_X + 6, sy - (int)(lift + 0.5f), 36, 36, 12);
+    ui_icon(col, PW, PH, DOCK_X + 24, sy + 18 - (int)(lift + 0.5f), 0xf00a, 16, 0xffffffu);
     ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
     /* right: clock */
     int rw = 112, rx = PW - DOCK_X - rw;
     pill(rx, rw);
     ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
     ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_REG, 11, clock_day)) / 2, DOCK_Y + 38, clock_day, UI_REG, 11, UI_MUTED);
-    /* centre: pinned apps and open windows */
-    int aw = pill_w_apps(), ax = (PW - aw) / 2;
+    /* centre: the items on springs */
+    float sum = 0;
+    for (int j = 0; j < nitems; j++) sum += items[j].w.p;
+    int aw = (int)(sum + 20.5f), ax = (PW - aw) / 2;
     if (ax < DOCK_X + lw + 14) ax = DOCK_X + lw + 14;
-    if (ax + aw > rx - 14) aw = rx - 14 - ax;
-    pill(ax, aw);
-    int x = ax + 10;
-    for (int i = 0; i < nbar; i++) {
-        bx0[i] = x - 2; bx1[i] = x + 40;
-        if (hov == i) ui_rrect(col, PW, PH, x - 4, sy - 4, 44, 44, 14, 0x2e3858u);
-        ui_tile(col, PW, PH, x, sy, 36, bar[i].label);
-        x += 46;
-    }
-    if (ntb) { for (int y = DOCK_Y + 13; y < DOCK_Y + DOCK_H - 13; y++) col[y * PW + x - 2] = 0x3d4766u; x += 12; }
-    for (int i = 0; i < ntb; i++) {
-        char t[16]; snprintf(t, sizeof t, "%.12s", tbs[i].title[0] ? tbs[i].title : "Window");
-        int tw = ui_text_width(tbs[i].focused ? UI_BOLD : UI_REG, 12, t), w = 14 + 24 + 8 + tw + 14;
-        if (x + w > ax + aw - 8) { tbs[i].x0 = tbs[i].x1 = 0; continue; }
-        tbs[i].x0 = x; tbs[i].x1 = x + w;
-        int by = DOCK_Y + 5, bh = DOCK_H - 10;
-        if (tbs[i].focused) { ui_rrect_g(col, PW, PH, x, by, w, bh, 12, 0x34405f, 0x232c45, 255); ui_gloss(col, PW, PH, x, by, w, bh, 12); ui_rrect(col, PW, PH, x + w / 2 - 12, by + bh - 3, 24, 3, 1, UI_ACCENT_HI); }
-        else ui_rrect(col, PW, PH, x, by, w, bh, 12, hov == 100 + i ? 0x2a3350u : 0x1c2234u);
-        ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 8, ui_shade(ui_app_color(tbs[i].title), 18), ui_shade(ui_app_color(tbs[i].title), -20), 255);
-        ui_icon(col, PW, PH, x + 20, by + bh / 2, ui_app_glyph(tbs[i].title), 11, 0xffffffu);
-        ui_text(col, PW, PH, x + 40, by + bh / 2 + 4, t, tbs[i].focused ? UI_BOLD : UI_REG, 12, tbs[i].focused ? UI_TEXT : 0xb4bbd0u);
-        x += w + 6;
+    if (nitems && aw >= 20) pill(ax, aw);
+    float xf = (float)ax + 10;
+    for (int j = 0; j < nitems; j++) {
+        struct dk *d = &items[j];
+        int x = (int)(xf + 0.5f), w = (int)(d->w.p + 0.5f);
+        d->x0 = x; d->x1 = x + w;
+        xf += d->w.p;
+        if (w < 2) continue;
+        float pr = d->pres.p < 0 ? 0 : d->pres.p > 1.2f ? 1.2f : d->pres.p;
+        if (d->kind == K_SEP) {
+            for (int y = DOCK_Y + 13; y < DOCK_Y + DOCK_H - 13; y++) col[y * PW + x + w / 2] = ui_mix(col[y * PW + x + w / 2], 0x4a5578u, fadeto(pr));
+        } else if (d->kind == K_LAUNCH) {
+            float h = d->hov.p < 0 ? 0 : d->hov.p;
+            int size = (int)((36 + 6 * h) * (0.55f + 0.45f * (pr > 1 ? 1 : pr)) + 0.5f), cx = x + w / 2;
+            int ty = sy + (36 - size) / 2 - (int)(7 * h + 0.5f);
+            if (h > 0.02f) ui_rrect_g(col, PW, PH, cx - 22, sy - 4, 44, 44, 14, 0x2e3858u, 0x2e3858u, fadeto(h));
+            ui_set_clip(x, 0, x + w, PH);
+            ui_tile(col, PW, PH, cx - size / 2, ty, size, d->label);
+            ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+        } else {
+            int by = DOCK_Y + 5, bh = DOCK_H - 10;
+            float f = d->foc.p < 0 ? 0 : d->foc.p > 1 ? 1 : d->foc.p, h = d->hov.p < 0 ? 0 : d->hov.p > 1 ? 1 : d->hov.p;
+            ui_set_clip(x, 0, x + w - 6 > x ? x + w - 6 : x + 1, PH);
+            uint32_t bg0 = ui_mix(ui_mix(0x1c2234u, 0x2a3350u, fadeto(h)), 0x34405fu, fadeto(f)), bg1 = ui_mix(ui_mix(0x1c2234u, 0x2a3350u, fadeto(h)), 0x232c45u, fadeto(f));
+            ui_rrect_g(col, PW, PH, x, by, w - 6, bh, 12, bg0, bg1, 255);
+            if (f > 0.02f) { ui_gloss(col, PW, PH, x, by, w - 6, bh, 12); int iw = (int)(24 * f); ui_rrect(col, PW, PH, x + (w - 6) / 2 - iw / 2, by + bh - 3, iw > 1 ? iw : 1, 3, 1, UI_ACCENT_HI); }
+            char t[16]; snprintf(t, sizeof t, "%.12s", d->label[0] ? d->label : "Window");
+            ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 8, ui_shade(ui_app_color(d->label), 18), ui_shade(ui_app_color(d->label), -20), 255);
+            ui_icon(col, PW, PH, x + 20, by + bh / 2, ui_app_glyph(d->label), 11, 0xffffffu);
+            ui_text(col, PW, PH, x + 40, by + bh / 2 + 4, t, f > 0.5f ? UI_BOLD : UI_REG, 12, ui_mix(0xb4bbd0u, UI_TEXT, fadeto(f)));
+            ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+        }
     }
     for (int i = 0; i < PW * PH; i++) {                                 /* glass: premultiplied ARGB at GLASS/255 opacity */
         unsigned a = (mask[i] & 255) * GLASS / 255;
@@ -332,18 +417,29 @@ int main(void) {
     commit_all(s);
     printf("panel ready\n");
     fflush(stdout);
-    int shown = -1;
+    int shown = -1, redraw = 0, log_pending = 0;
+    long long last_ms = mo_now_ms();
+    spring_init(&start_hov, 0, SP_HOVER);
+    dock_sync();
     for (;;) {
         time_t now = time(0);
         int minute = (int)(now / 60);
-        if (minute != shown) {                                  /* redraw when the minute changes */
-            shown = minute;
-            update_clock();
-            draw_bar();
-            commit_all(s);
+        if (minute != shown) { shown = minute; update_clock(); redraw = 1; }        /* the clock changes once a minute */
+        long long nowm = mo_now_ms();
+        float dt = (float)(nowm - last_ms) / 1000.0f;
+        last_ms = nowm;
+        int animating = dock_busy();
+        if (animating) dock_step(dt);
+        if (animating || redraw) { redraw = 0; draw_bar(); commit_all(s); }
+        if (log_pending && !dock_busy()) {                                          /* the layout, for the desktop tests, once everything has settled */
+            log_pending = 0;
+            printf("panel tasks:");
+            for (int j = 0; j < nitems; j++) if (items[j].kind == K_WIN && items[j].present) printf(" %s%s=%d-%d", items[j].label, items[j].focused ? "*" : "", items[j].x0, items[j].x1);
+            printf("\n");
+            fflush(stdout);
         }
         struct pollfd pf[2] = { { s, POLLIN, 0 }, { mfd, POLLIN, 0 } };
-        if (poll(pf, 2, 15000) <= 0) continue;
+        if (poll(pf, 2, dock_busy() ? MO_FRAME_MS : 15000) <= 0) continue;
         if (mfd >= 0 && pf[1].revents) {                      /* the menu surface: pointer motion, a click in it, or the compositor closed it */
             if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) { menu_close(); continue; }
             if (m.op != WL_POINTER) continue;
@@ -374,8 +470,8 @@ int main(void) {
                 else toggle_pin(dsk, &ndsk, MAXD, DESK_USER, &apps[r]);
                 draw_menu();
                 menu_commit();
-                draw_bar();
-                commit_all(s);
+                dock_sync();
+                redraw = 1;
                 continue;
             }
             char cmd[160];
@@ -387,35 +483,27 @@ int main(void) {
         if (!(pf[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
         if (read(s, &m, sizeof m) != (ssize_t)sizeof m) break;
         if (m.op == WL_CLOSE) break;
-        if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; draw_bar(); commit_all(s); } continue; }
+        if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; dock_sync(); log_pending = 1; } continue; }
         if (m.op == WL_WIN) {
             if (ntb_new < MAXT) {
                 tbs_new[ntb_new].id = m.a & 0x7fffffffu; tbs_new[ntb_new].focused = (m.a >> 31) & 1;
                 memcpy(tbs_new[ntb_new].title, &m.b, 12); tbs_new[ntb_new].title[12] = 0;
                 ntb_new++;
             }
-            if (--ntb_expect <= 0) {
-                memcpy(tbs, tbs_new, sizeof tbs); ntb = ntb_new;
-                draw_bar();
-                commit_all(s);
-                printf("panel tasks:");                           /* the layout, for the desktop tests: title[*]=x0-x1 (* = focused) */
-                for (int i = 0; i < ntb; i++) printf(" %s%s=%d-%d", tbs[i].title, tbs[i].focused ? "*" : "", tbs[i].x0, tbs[i].x1);
-                printf("\n");
-                fflush(stdout);
-            }
+            if (--ntb_expect <= 0) { memcpy(tbs, tbs_new, sizeof tbs); ntb = ntb_new; dock_sync(); log_pending = 1; }
             continue;
         }
-        if (m.op == WL_POINTER && (m.c == 0 || m.c == 2)) {              /* motion over the dock: light up what is under the pointer */
-            int h = -1;
+        if (m.op == WL_POINTER && (m.c == 0 || m.c == 2)) {              /* motion over the dock: the item under the pointer rises */
+            int over = -1, over_start = 0;
             if (m.c == 0) {
                 int x = (int)m.a, y = (int)m.b;
                 if (y >= DOCK_Y && y < DOCK_Y + DOCK_H) {
-                    if (x >= start_x0 && x < start_x1) h = 200;
-                    for (int i = 0; i < nbar; i++) if (x >= bx0[i] && x < bx1[i]) h = i;
-                    for (int i = 0; i < ntb; i++) if (tbs[i].x1 && x >= tbs[i].x0 && x < tbs[i].x1) h = 100 + i;
+                    if (x >= start_x0 && x < start_x1) over_start = 1;
+                    for (int j = 0; j < nitems; j++) if (items[j].kind != K_SEP && items[j].present && x >= items[j].x0 && x < items[j].x1) over = j;
                 }
             }
-            if (h != hov) { hov = h; draw_bar(); commit_all(s); }
+            spring_to(&start_hov, over_start ? 1.0f : 0.0f);
+            for (int j = 0; j < nitems; j++) spring_to(&items[j].hov, j == over ? 1.0f : 0.0f);
             continue;
         }
         if (m.op == WL_POINTER && m.c == 1) {
@@ -424,10 +512,13 @@ int main(void) {
                 else if (ms_now() - closed_ms > 400) menu_open();    /* (a click outside the menu has just closed it) */
                 continue;
             }
-            for (int i = 0; i < nbar; i++)
-                if ((int)m.a >= bx0[i] && (int)m.a < bx1[i]) { launch(bar[i].cmd); break; }
-            for (int i = 0; i < ntb; i++)
-                if (tbs[i].x1 && (int)m.a >= tbs[i].x0 && (int)m.a < tbs[i].x1) { struct wl_msg r = { WL_RAISE, tbs[i].id, 0, 0, 0 }; (void)!write(s, &r, sizeof r); break; }
+            for (int j = 0; j < nitems; j++) {
+                struct dk *d = &items[j];
+                if (d->kind == K_SEP || !d->present || (int)m.a < d->x0 || (int)m.a >= d->x1) continue;
+                if (d->kind == K_LAUNCH) { int i = find(bar, nbar, d->label); if (i >= 0) launch(bar[i].cmd); }
+                else { struct wl_msg r = { WL_RAISE, (uint32_t)d->key, 0, 0, 0 }; (void)!write(s, &r, sizeof r); }
+                break;
+            }
         }
     }
     return 0;

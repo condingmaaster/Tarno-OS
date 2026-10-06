@@ -949,6 +949,13 @@ fn main() {
             let ok = shots.iter().all(|p| p.exists()) && out.contains("desk ok");
             if ok { println!("desk-showcase-test: screenshots in target/showcase-1.ppm and -2.ppm"); } else { eprintln!("desk-showcase-test FAILED"); exit(1); }
         }
+        "video-dock" => {
+            let img = prod_interactive_image(cmd);
+            match record_video(&img, "videodock", "/busybox sh /desk-video-dock.sh", "panel ready", 105, 20) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-dock FAILED (no frames or ffmpeg failed)"); exit(1); }
+            }
+        }
         "desk-menu-test" => {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
@@ -2004,7 +2011,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -7525,6 +7532,68 @@ fn pointer_click(sock: &Path) {
     std::thread::sleep(ms(250));
     mon(sock, "mouse_button 0");
     std::thread::sleep(ms(700));
+}
+
+/// Film a desktop scene: the animation clock runs in slow motion (the script sets THOS_SLOMO), screenshots are taken as fast as QEMU
+/// delivers them, and ffmpeg assembles them with the real time between shots divided by the slow-down, so the video plays at true speed.
+fn record_video(img: &Path, tag: &str, script: &str, ready: &str, seconds: u64, slomo: u32) -> Option<PathBuf> {
+    use std::io::Write;
+    let root = workspace_root();
+    let dir = root.join(format!("target/video-{tag}"));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).ok()?;
+    let (log, sock) = (root.join(format!("target/{tag}-serial.log")), root.join(format!("target/{tag}-mon.sock")));
+    for f in [&log, &sock] {
+        let _ = std::fs::remove_file(f);
+    }
+    let (tlog, tsock, tdir, tready) = (log.clone(), sock.clone(), dir.clone(), ready.to_string());
+    let cap = std::thread::spawn(move || -> Vec<(u128, PathBuf)> {
+        let mut frames = Vec::new();
+        if !wait_for(&tlog, &tready, 300) {
+            return frames;
+        }
+        let t0 = std::time::Instant::now();
+        let mut n = 0;
+        while t0.elapsed().as_secs() < seconds {
+            let ppm = tdir.join(format!("f{n:05}.ppm"));
+            let at = t0.elapsed().as_millis();
+            if std::fs::read_to_string(&tlog).map(|t| t.contains("desk ok:")).unwrap_or(false) {
+                break;
+            }
+            let tsock2 = tsock.clone();
+            let ppm2 = ppm.clone();
+            if std::panic::catch_unwind(move || mon(&tsock2, &format!("screendump {}", ppm2.to_str().unwrap()))).is_err() {
+                break;                                          // QEMU is gone
+            }
+            if ppm.exists() {
+                let png = ppm.with_extension("png");
+                let ok = std::process::Command::new("pnmtopng").arg(&ppm).stdout(std::fs::File::create(&png).ok().unwrap()).status().map(|s| s.success()).unwrap_or(false);
+                let _ = std::fs::remove_file(&ppm);
+                if ok {
+                    frames.push((at, png));
+                    n += 1;
+                }
+            }
+        }
+        frames
+    });
+    let _ = boot_and_run(img, tag, script, "desk ok:", 400);
+    let frames = cap.join().ok()?;
+    if frames.len() < 4 {
+        return None;
+    }
+    let list = dir.join("list.txt");
+    let mut f = std::fs::File::create(&list).ok()?;
+    for w in frames.windows(2) {
+        let dur = (w[1].0 - w[0].0) as f64 / 1000.0 / slomo as f64;
+        writeln!(f, "file '{}'\nduration {:.4}", w[0].1.display(), dur).ok()?;
+    }
+    writeln!(f, "file '{}'", frames.last().unwrap().1.display()).ok()?;
+    let out = root.join(format!("target/video-{tag}.mp4"));
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list.to_str().unwrap(), "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "20", "-preset", "fast", out.to_str().unwrap()])
+        .status().map(|s| s.success()).unwrap_or(false);
+    ok.then_some(out)
 }
 
 /// `cargo xtask desk-tasklist-test`: two windows open; the panel lists both as buttons (the newest lit);
