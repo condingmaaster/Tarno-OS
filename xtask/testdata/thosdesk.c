@@ -41,7 +41,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
 struct rect { int x0, y0, x1, y1; };     /* half-open */
 struct wlsurf;
 struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar;
-    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo; struct tween opq; uint32_t *snap; struct rect snap_r; };
+    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo, mxs; struct tween opq; uint32_t *snap; struct rect snap_r; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -87,12 +87,14 @@ static struct rect outer_of(struct win *w) {
     if (!w->deco) return f;
     return (struct rect){ f.x0 - SH, f.y0 - SH + SH_OFF, f.x1 + SH, f.y1 + SH + SH_OFF };
 }
+static struct rect max_btn(struct win *w) { if (!w->deco || !w->wl || w->csd) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - 2 * BTN - 12, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
 static struct rect close_btn(struct win *w) { if (!w->deco) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - BTN - 8, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
 
 /* ---- theme: everything below is integer-only and table driven, to stay cheap on old hardware ---- */
 static uint8_t cov_tab[CORNER][CORNER];   /* coverage of a rounded corner, [row][col] counted from the outer corner */
 static uint8_t sh_tab[SH];                /* shadow opacity by distance from the window */
 static uint32_t *wall;                    /* the wallpaper, rendered once */
+static int hover_max = -1;                /* id of the window whose maximize button the pointer is on */
 static int hover_win = -1;                /* id of the window whose close button the pointer is on */
 
 /* channel-order independent: scale all three colour bytes by k/256 */
@@ -370,6 +372,13 @@ static void draw_window(struct win *w, int top, struct rect r) {
     float ch = w->clo.p < 0 ? 0 : w->clo.p > 1 ? 1 : w->clo.p;
     (void)hot;
     if (ch > 0.02f) ui_rrect_g(B, W, H, ccx - BTN / 2, ccy - BTN / 2, BTN, BTN, BTN / 2, UI_BAD, UI_BAD, (unsigned)(ch * 255));
+    struct rect mb = max_btn(w);
+    if (mb.x1 > mb.x0) {
+        int mcx = (mb.x0 + mb.x1) / 2, mcy = (mb.y0 + mb.y1) / 2;
+        float mh = w->mxs.p < 0 ? 0 : w->mxs.p > 1 ? 1 : w->mxs.p;
+        if (mh > 0.02f) ui_rrect_g(B, W, H, mcx - BTN / 2, mcy - BTN / 2, BTN, BTN, BTN / 2, 0x3a4258u, 0x3a4258u, (unsigned)(mh * 255));
+        ui_icon(B, W, H, mcx, mcy, w->maxed ? 0xf066 : 0xf065, 11, ui_mix(ui_mix(0x6c748cu, 0xb4bbd0u, fz), 0xffffffu, (unsigned)(mh * 255)));
+    }
     ui_icon(B, W, H, ccx, ccy, IC_CLOSE, 12, ui_mix(ui_mix(0x6c748cu, 0xb4bbd0u, fz), 0xffffffu, (unsigned)(ch * 255)));
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
 }
@@ -612,6 +621,7 @@ static void place_window(struct win *w);
 static long long anim_last;
 static int anim_pending(void) {
     if (icons_busy()) return 1;
+    for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].clo.k != 0 && (spring_busy(&wins[i].clo) || wins[i].clo.t != (hover_win == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].anim || (wins[i].foc.k != 0 && (spring_busy(&wins[i].foc) || wins[i].foc.t != (i == nwin - 1 ? 1.0f : 0.0f)))) return 1;
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) return 1;
@@ -628,6 +638,9 @@ static void anim_tick(void) {
         float tgt = i == nwin - 1 ? 1.0f : 0.0f;
         if (w->foc.k == 0) spring_init(&w->foc, tgt, SP_SNAPPY);        /* windows that never popped in (the panel) just follow the focus */
         if (w->foc.t != tgt) spring_to(&w->foc, tgt);
+        if (w->mxs.k == 0) spring_init(&w->mxs, 0, SP_HOVER);
+        spring_to(&w->mxs, hover_max == w->id ? 1.0f : 0.0f);
+        if (spring_busy(&w->mxs)) { spring_step(&w->mxs, dt); if (w->anim == 0) compose(inflate_r(max_btn(w), 3)); }
         if (w->clo.k == 0) spring_init(&w->clo, 0, SP_HOVER);
         spring_to(&w->clo, hover_win == w->id ? 1.0f : 0.0f);
         if (spring_busy(&w->clo)) { spring_step(&w->clo, dt); if (w->anim == 0) compose(inflate_r(close_btn(w), 3)); }
@@ -738,12 +751,14 @@ static void desk_set_maximized(int winid, int on) {
 }
 /* the close button under the pointer lights up */
 static void update_hover(void) {
-    int nh = -1;
+    int nh = -1, nm = -1;
     for (int i = nwin - 1; i >= 0; i--) {
         if (!in(frame_of(&wins[i]), mx, my)) continue;
         if (in(close_btn(&wins[i]), mx, my)) nh = wins[i].id;
+        if (in(max_btn(&wins[i]), mx, my)) nm = wins[i].id;
         break;
     }
+    hover_max = nm;
     if (nh == hover_win) return;
     int old = hover_win;
     hover_win = nh;
@@ -1036,7 +1051,8 @@ int main(int argc, char **argv) {
                 for (int i = nwin - 1; i >= 0; i--) {
                     struct win *w = &wins[i];
                     if (!in(frame_of(w), mx, my)) continue;
-                    if (in(close_btn(w), mx, my)) {
+                    if (in(max_btn(w), mx, my)) { toggle_maximize(w); click_id = 0; }
+                    else if (in(close_btn(w), mx, my)) {
                         struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
                         if (w->wl) wls_request_close(w->wl);
                         else {
