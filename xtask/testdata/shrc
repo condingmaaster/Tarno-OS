@@ -1,0 +1,5 @@
+# sourced by every interactive shell (ENV=/shrc): start the desktop once per login when /tmp/autostart exists
+if [ -f /tmp/autostart ] && [ -z "$THOS_AUTOSTARTED" ]; then
+    export THOS_AUTOSTARTED=1
+    desktop
+fi

@@ -229,6 +229,7 @@ extern "C" fn kmain() -> ! {
                     "LD_LIBRARY_PATH=/opt/root/usr/lib/x86_64-linux-gnu:/opt/root/lib/x86_64-linux-gnu:/opt/root/usr/lib",
                     "TERMINFO_DIRS=/usr/share/terminfo:/opt/root/lib/terminfo:/opt/root/usr/share/terminfo",
                     "HOME=/",
+                    "ENV=/shrc",
                     "PWD=/",
                     "TERM=dumb",
                     "PS1=thos$ ",

@@ -49,3 +49,7 @@ Danach: Administratorkonto anlegen, anmelden, `desktop` tippen (Compositor + Ter
 - Standard: 128 MiB Root-Dateisystem. Für `thos-pkg install` empfiehlt sich mehr Platz: `THOS_FS_MIB=2048 cargo xtask bios-image --interactive` (Image dann ~2,1 GB; der Stick muss entsprechend groß sein).
 - Mit Webbrowser (NetSurf/GTK 3, https, Download-Dialog): `THOS_NETSURF=1 THOS_FS_MIB=512 cargo xtask bios-image --interactive` — im Startmenü erscheint dann „Web browser". Ob und wohin NetSurf Downloads speichert, ist **noch nicht getestet** (HOME ist `/tmp`); heruntergeladene Pakete lassen sich im Dateimanager per Doppelklick installieren, oder gleich mit `thos-pkg install <URL>`.
 - Mehr RAM im Test: `THOS_MEM=7800M cargo xtask <test>` (der Acer hat 7,6 GiB; 7,7 GiB nutzbar werden erkannt).
+
+## Desktop automatisch starten
+`thos-autostart on` legt `/tmp/autostart` an; danach startet nach jeder Anmeldung automatisch der Desktop (`desktop`). Beendet man ihn (Startmenü → „Quit desktop" oder Strg+Alt+Q), bleibt die Shell offen — der Rückweg, falls etwas schiefgeht.
+`thos-autostart off` schaltet es wieder aus. Test: `cargo xtask autostart-test` (eigenes Image, nicht in der Suite).

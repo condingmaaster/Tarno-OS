@@ -790,6 +790,22 @@ fn main() {
                 exit(1);
             }
         }
+        "autostart-test" => {
+            // not in the suite: it needs its own image (with /tmp/autostart); the cached base image is dropped before and after
+            let base = workspace_root().join("target/disk.img");
+            let _ = std::fs::remove_file(&base);
+            std::env::set_var("THOS_AUTOSTART", "1");
+            let img = prod_interactive_image(cmd);
+            let _ = std::fs::remove_file(&base);
+            let out = boot_and_run(&img, "autostart", "echo nothing", "desk: ready", 150);
+            if out.contains("desk: ready") && out.contains("panel ready") {
+                println!("autostart-test PASSED: with /tmp/autostart present the desktop (compositor and panel) starts by itself after login");
+            } else {
+                for l in out.lines().filter(|l| l.contains("desk") || l.contains("panel") || l.contains("thos$")) { eprintln!("  {l}"); }
+                eprintln!("autostart-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
@@ -1860,6 +1876,14 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} shrc", root.join("xtask/testdata/shrc").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-autostart", root.join("xtask/testdata/thos-autostart").to_str().unwrap()), img.to_str().unwrap()]));
+                if std::env::var("THOS_AUTOSTART").is_ok() {
+                    run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()));
+                    let marker = root.join("target/autostart-marker");
+                    std::fs::write(&marker, b"on\n").unwrap();
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
+                }
                 for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
@@ -2129,7 +2153,7 @@ fn disk_image() -> PathBuf {
             img.to_str().unwrap(),
         ]));
     }
-    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl")] {
+    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart")] {
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
     }
     // links_count = the root `/busybox` entry + every `/bin/*` link.
