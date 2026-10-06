@@ -951,14 +951,44 @@ fn main() {
         }
         "video-windows" => {
             let img = prod_interactive_image(cmd);
-            match record_video(&img, "videowin", "/busybox sh /desk-video-windows.sh", "panel ready", 105, 20) {
+            match record_video(&img, "videowin", "/busybox sh /desk-video-windows.sh", "panel ready", 105, 20, None) {
                 Some(p) => println!("video: {}", p.display()),
                 None => { eprintln!("video-windows FAILED (no frames or ffmpeg failed)"); exit(1); }
             }
         }
+        "video-menu" => {
+            let img = prod_interactive_image(cmd);
+            let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
+                let wait = |s: u64| std::thread::sleep(std::time::Duration::from_secs(s));
+                let mut cur = (640, 400);
+                wait(6);
+                pointer_to(&sock, &mut cur, 36, 768);
+                wait(8);
+                pointer_click(&sock);
+                wait(12);
+                for i in 0..4 {                                      // glide down the list
+                    pointer_to(&sock, &mut cur, 150, 414 + 40 * i);
+                    wait(5);
+                }
+                pointer_to(&sock, &mut cur, 150, 454);              // Files
+                wait(3);
+                pointer_click(&sock);
+                wait(16);
+                if let Some((wx, wy)) = log_window(&log, "780x500", 0) {
+                    pointer_to(&sock, &mut cur, wx + 780 + 1 - 8 - 14, wy - 19);   // the close button
+                    wait(6);
+                    pointer_click(&sock);
+                }
+                wait(10);
+            });
+            match record_video(&img, "videomenu", "/busybox sh /desk-video-menu.sh", "panel ready", 100, 20, Some(act)) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-menu FAILED"); exit(1); }
+            }
+        }
         "video-dock" => {
             let img = prod_interactive_image(cmd);
-            match record_video(&img, "videodock", "/busybox sh /desk-video-dock.sh", "panel ready", 105, 20) {
+            match record_video(&img, "videodock", "/busybox sh /desk-video-dock.sh", "panel ready", 105, 20, None) {
                 Some(p) => println!("video: {}", p.display()),
                 None => { eprintln!("video-dock FAILED (no frames or ffmpeg failed)"); exit(1); }
             }
@@ -2018,7 +2048,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -7543,7 +7573,7 @@ fn pointer_click(sock: &Path) {
 
 /// Film a desktop scene: the animation clock runs in slow motion (the script sets THOS_SLOMO), screenshots are taken as fast as QEMU
 /// delivers them, and ffmpeg assembles them with the real time between shots divided by the slow-down, so the video plays at true speed.
-fn record_video(img: &Path, tag: &str, script: &str, ready: &str, seconds: u64, slomo: u32) -> Option<PathBuf> {
+fn record_video(img: &Path, tag: &str, script: &str, ready: &str, seconds: u64, slomo: u32, actions: Option<Box<dyn FnOnce(PathBuf, PathBuf) + Send>>) -> Option<PathBuf> {
     use std::io::Write;
     let root = workspace_root();
     let dir = root.join(format!("target/video-{tag}"));
@@ -7584,6 +7614,14 @@ fn record_video(img: &Path, tag: &str, script: &str, ready: &str, seconds: u64, 
         }
         frames
     });
+    if let Some(act) = actions {
+        let (alog, asock, aready) = (log.clone(), sock.clone(), ready.to_string());
+        std::thread::spawn(move || {
+            if wait_for(&alog, &aready, 300) {
+                act(alog, asock);
+            }
+        });
+    }
     let _ = boot_and_run(img, tag, script, "desk ok:", 400);
     let frames = cap.join().ok()?;
     if frames.len() < 4 {
