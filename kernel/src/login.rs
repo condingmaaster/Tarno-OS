@@ -89,6 +89,8 @@ pub fn login(fs: &Ext2) -> Session {
         let password = prompt("password: ", true);
         if stored.verify(&name, &password) {
             kprintln!("  welcome, {name}.\n");
+            kprintln!("  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),");
+            kprintln!("       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.\n");
             return Session { name, uid: ADMIN_UID };
         }
         kprintln!("  login incorrect");
