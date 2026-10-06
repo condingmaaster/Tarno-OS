@@ -111,7 +111,7 @@ static void render(void) {
     ui_text(px, EW, EH, 46, 27, base(), UI_BOLD, 14, UI_TEXT);
     if (modified) ui_disc(px, EW, EH, 46 + ui_text_width(UI_BOLD, 14, base()) + 12, 21, 3, UI_WARN);
     int bx = EW - 104, by = 8;
-    if (modified) { ui_rrect_g(px, EW, EH, bx, by, 88, 28, 14, UI_ACCENT_HI, 0x3f69d6, 255); ui_text(px, EW, EH, bx + 44 - ui_text_width(UI_BOLD, 12, "Save") / 2, by + 19, "Save", UI_BOLD, 12, 0xffffffu); }
+    if (modified) { ui_rrect_g(px, EW, EH, bx, by, 88, 28, 14, UI_ACCENT_HI, UI_ACCENT_LO, 255); ui_text(px, EW, EH, bx + 44 - ui_text_width(UI_BOLD, 12, "Save") / 2, by + 19, "Save", UI_BOLD, 12, 0xffffffu); }
     else { ui_card(px, EW, EH, bx, by, 88, 28, 14, 0x1d2333, 0x2d3448); ui_text(px, EW, EH, bx + 44 - ui_text_width(UI_REG, 12, "Saved") / 2, by + 19, "Saved", UI_REG, 12, UI_MUTED); }
     /* the text area */
     ui_set_clip(0, HEAD, EW, EH - STATUS);
@@ -214,6 +214,7 @@ int main(int argc, char **argv) {
         if (busy) { spring_step(&scroll, dt); redraw = 1; }
         if (!(pf.revents & POLLIN)) { if (redraw) render(); continue; }
         if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_KEY && m.b) edit_key(&m);
         else if (m.op == WL_POINTER && m.c == 3) { top_t -= (float)(int32_t)m.d * 3; if (top_t > nl - 1) top_t = (float)(nl - 1); if (top_t < 0) top_t = 0; spring_to(&scroll, top_t); }
         else if (m.op == WL_POINTER && m.c == 1) {

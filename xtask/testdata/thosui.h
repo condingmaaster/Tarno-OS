@@ -21,8 +21,12 @@
 #define UI_LINE      0x2d3448u
 #define UI_TEXT      0xe8ebf4u
 #define UI_MUTED     0x8e97aeu
-#define UI_ACCENT    0x5b8defu
-#define UI_ACCENT_HI 0x7ba3ffu
+/* the accent colour is a setting (Settings > Appearance: ~/.thos-theme, else /etc/thos-theme): every client reads it at start and again on WL_THEME */
+static uint32_t ui_accent = 0x5b8defu, ui_accent_hi = 0x7ba3ffu, ui_accent_lo = 0x3f69d6u;
+static int ui_wall_theme;                                 /* wallpaper preset 0..3, used by the compositor and the settings preview */
+#define UI_ACCENT    ui_accent
+#define UI_ACCENT_HI ui_accent_hi
+#define UI_ACCENT_LO ui_accent_lo
 #define UI_GOOD      0x4cc38au
 #define UI_WARN      0xf0b24bu
 #define UI_BAD       0xe5534bu
@@ -58,8 +62,27 @@ static int ui_ready;
 #define IC_HOME 0xf015
 #define IC_GLOBE 0xac01
 
+static inline uint32_t ui_mix(uint32_t d, uint32_t s, unsigned a);
+static void ui_theme_load(void) {
+    static char path[200];
+    const char *h = getenv("HOME");
+    if (h && h[0] == '/' && h[1]) { snprintf(path, sizeof path, "%s/.thos-theme", h); }
+    else path[0] = 0;
+    FILE *f = path[0] ? fopen(path, "r") : 0;
+    if (!f) f = fopen("/etc/thos-theme", "r");                 /* the machine-wide default */
+    if (!f) return;
+    char l[80];
+    while (fgets(l, sizeof l, f)) {
+        if (!strncmp(l, "accent=", 7)) {
+            unsigned v = (unsigned)strtoul(l + 7, 0, 16) & 0xffffffu;
+            ui_accent = v; ui_accent_hi = ui_mix(v, 0xffffffu, 52); ui_accent_lo = ui_mix(v, 0x000000u, 62);
+        } else if (!strncmp(l, "wallpaper=", 10)) ui_wall_theme = atoi(l + 10) & 3;
+    }
+    fclose(f);
+}
 static int ui_init(void) {
     if (ui_ready) return 0;
+    ui_theme_load();
     if (FT_Init_FreeType(&ui_ft)) return -1;
     const char *f[4] = { "/usr/share/fonts/thos/Lato-Regular.ttf", "/usr/share/fonts/thos/Lato-Bold.ttf", "/usr/share/fonts/thos/icons.ttf", "/usr/share/fonts/thos/Hack-Regular.ttf" };
     for (int i = 0; i < 4; i++) if (FT_New_Face(ui_ft, f[i], 0, &ui_face[i])) { ui_face[i] = 0; if (i < 2) return -1; }

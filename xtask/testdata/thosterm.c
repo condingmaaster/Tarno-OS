@@ -186,7 +186,7 @@ static void render(void) {
             }
             if (r == cy && c == cx) {                                     /* a soft block cursor */
                 unsigned ca = (unsigned)(150 * cur_alpha);
-                for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) { uint32_t *p = &px[(y0 + j) * PW + x0 + i]; *p = ui_mix(*p, 0x7ba3ffu, ca); }
+                for (int j = 0; j < CH; j++) for (int i = 0; i < CW; i++) { uint32_t *p = &px[(y0 + j) * PW + x0 + i]; *p = ui_mix(*p, UI_ACCENT_HI, ca); }
             }
         }
     struct wl_msg m = { WL_COMMIT, 0, (uint32_t)(PAD + dirty0 * CH), PW, (uint32_t)((dirty1 - dirty0 + 1) * CH) };

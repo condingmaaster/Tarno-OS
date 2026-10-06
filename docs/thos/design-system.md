@@ -23,6 +23,9 @@ Eine Quelle für Aussehen und Bewegung der ganzen Oberfläche. Wer ein neues Pro
 | `UI_GOOD` / `UI_WARN` / `UI_BAD` | `#4cc38a` / `#f0b24b` / `#e5534b` | Zustände |
 Programm-Kacheln bekommen ihre Farbe aus dem Namen (`ui_app_color`) und ihr Symbol aus `ui_app_glyph`.
 
+## Aussehen einstellen
+Die Akzentfarbe und der Hintergrund stehen in `~/.thos-theme` (`accent=RRGGBB`, `wallpaper=0..3`), Vorgabe `/etc/thos-theme`. Alle Programme lesen sie beim Start (`ui_theme_load`) und neu bei der Nachricht `WL_THEME`; die Einstellungen schreiben die Datei und melden es dem Compositor, der den Hintergrund neu zeichnet und die Nachricht an alle Clients verteilt. Darum nie eine Akzentfarbe fest einbauen: `UI_ACCENT`, `UI_ACCENT_HI`, `UI_ACCENT_LO` verwenden.
+
 ## Schrift
 Lato (Regular/Bold) für Oberfläche, Hack für Terminal, Font Awesome 4 für Symbole. Größen: 11 (Nebentext), 12–13 (Listen, Knöpfe), 14 (Fließtext), 15–18 (Überschriften).
 
@@ -74,6 +77,6 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Hintergrund | – | – | ✔ |
 | Benachrichtigungen (Toasts) | Info, Fertig, Warnung, Fehler; bis zu 4 gestapelt | gleiten per Feder (SP_POP) von rechts ein, stehen 5 s, blenden aus; `thosnotify.h` oder Befehl `thosnotify 'Titel|Text'` | ✔ (Klick zum Schließen –) |
 | Start-Bildschirm / Anmeldung | Splash mit Wortmarke + Fortschrittsbalken, danach Anmeldekonsole im THOS-Farbschema (Logo, zentrierte Spalte, keine Log-Zeilen) | Balken füllt sich an Startmeilensteinen | ◐ (grafische Anmeldung im Desktop –) |
-| Einstellungen (About, Network, Storage, Display) | Seitenleiste Hover/Auswahl, Karten mit Werten, Nutzungsbalken (`ui_bar`) | Platten gleiten, Seite blendet und rutscht 14 px ein (MO_BASE), Werte live alle 2 s | ◐ (Aussehen/Akzent, Ton, Konten fehlen) |
+| Einstellungen (About, Network, Storage, Display) | Seitenleiste Hover/Auswahl, Karten mit Werten, Nutzungsbalken (`ui_bar`) | Platten gleiten, Seite blendet und rutscht 14 px ein (MO_BASE), Werte live alle 2 s | ◐ (Aussehen ✔: Akzentfarbe und 4 Hintergründe, sofort überall; Ton, Konten fehlen) |
 
 Neue Elemente kommen zuerst hier als Zeile hinein; erst wenn Zustände und Bewegung beschrieben sind, wird gebaut.

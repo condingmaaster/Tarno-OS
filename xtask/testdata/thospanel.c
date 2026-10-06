@@ -226,7 +226,7 @@ static void draw_bar(void) {
     if (start_hov.p > 0.02f) ui_rrect_g(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u, 0x2e3858u, fadeto(start_hov.p));
     float lift = start_hov.p * 1.0f;
     int ss = (int)(36 * (1.0f - 0.16f * (start_dip.p > 1 ? 1 : start_dip.p)) + 0.5f), so = (36 - ss) / 2;
-    ui_rrect_g(col, PW, PH, DOCK_X + 6 + so, sy - (int)(lift + 0.5f) + so, ss, ss, 12, UI_ACCENT_HI, 0x3560d4, 255);
+    ui_rrect_g(col, PW, PH, DOCK_X + 6 + so, sy - (int)(lift + 0.5f) + so, ss, ss, 12, UI_ACCENT_HI, UI_ACCENT_LO, 255);
     ui_gloss(col, PW, PH, DOCK_X + 6 + so, sy - (int)(lift + 0.5f) + so, ss, ss, 12);
     ui_icon(col, PW, PH, DOCK_X + 24, sy + 18 - (int)(lift + 0.5f), 0xf00a, 16, 0xffffffu);
     ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
@@ -504,6 +504,7 @@ int main(void) {
         if (!(pf[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
         if (read(s, &m, sizeof m) != (ssize_t)sizeof m) break;
         if (m.op == WL_CLOSE) break;
+        if (m.op == WL_THEME) { ui_theme_load(); redraw = 1; continue; }       /* the dock repaints with the new accent; the menu picks it up when it opens */
         if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; dock_sync(); log_pending = 1; } continue; }
         if (m.op == WL_WIN) {
             if (ntb_new < MAXT) {

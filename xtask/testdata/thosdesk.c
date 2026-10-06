@@ -117,6 +117,32 @@ static inline uint32_t lerp_px(uint32_t d, uint32_t s, unsigned a) {
 }
 
 static uint32_t rgb(int r, int g, int b);
+static void compose(struct rect r);
+/* wallpaper presets: ground colour, gradient, two glows, a light band (per channel weights in tenths) */
+static const struct { int base[3], grad[3], g1[3], g2[3], band[3]; } wp_theme[4] = {
+    { { 13, 16, 28 }, { 10, 14, 30 }, { 4, 6, 11 }, { 5, 2, 8 }, { 5, 7, 12 } },        /* Aurora: deep blue with violet */
+    { { 22, 14, 26 }, { 20, 10, 16 }, { 12, 6, 5 }, { 9, 3, 10 }, { 12, 7, 6 } },       /* Dusk: violet and warm orange */
+    { { 10, 20, 20 }, { 8, 18, 16 }, { 3, 11, 8 }, { 2, 8, 6 }, { 4, 10, 9 } },         /* Forest: teal and green */
+    { { 17, 18, 21 }, { 12, 12, 14 }, { 6, 6, 7 }, { 4, 4, 5 }, { 6, 6, 7 } },          /* Graphite: neutral grey */
+};
+static void wall_render(void) {
+    const typeof(wp_theme[0]) *T = &wp_theme[ui_wall_theme & 3];
+    int cx = W * 72 / 100, cy = H * 28 / 100, dx2 = W * 18 / 100, dy2 = H * 82 / 100;          /* two soft glows over a deep slate ground */
+    for (int y = 0; y < H; y++)
+        for (int x = 0; x < W; x++) {
+            int t = (x * 256 / W + y * 256 / H) / 2;
+            int dx = x - cx, dy = y - cy, ex = x - dx2, ey = y - dy2, k1 = W * H / 9 + 1, k2 = W * H / 12 + 1;
+            int g1 = (int)(78LL * k1 / (k1 + ((long long)dx * dx + (long long)dy * dy))), g2 = (int)(56LL * k2 / (k2 + ((long long)ex * ex + (long long)ey * ey)));
+            if (g1 < 0) g1 = 0;
+            if (g2 < 0) g2 = 0;
+            int r = T->base[0] + t * T->grad[0] / 256 + g1 * T->g1[0] / 10 + g2 * T->g2[0] / 10, g = T->base[1] + t * T->grad[1] / 256 + g1 * T->g1[1] / 10 + g2 * T->g2[1] / 10, b = T->base[2] + t * T->grad[2] / 256 + g1 * T->g1[2] / 10 + g2 * T->g2[2] / 10;
+            int n = ((x * 7 + y * 13) & 3) - 1;                                                  /* a little dither against banding */
+            { int d = x - y * 7 / 10 - W * 40 / 100, k = (W / 9) * (W / 9) + 1; int v = (int)(24LL * k / (k + (long long)d * d)); r += v * T->band[0] / 10; g += v * T->band[1] / 10; b += v * T->band[2] / 10; }   /* a soft diagonal light band */
+            r += n; g += n; b += n;
+            wall[(size_t)y * W + x] = rgb(r < 0 ? 0 : r > 255 ? 255 : r, g < 0 ? 0 : g > 255 ? 255 : g, b < 0 ? 0 : b > 255 ? 255 : b);
+        }
+}
+
 static void theme_init(void) {
     for (int j = 0; j < CORNER; j++)
         for (int i = 0; i < CORNER; i++) {
@@ -131,20 +157,8 @@ static void theme_init(void) {
     for (int d = 0; d < SH; d++) { int t = (SH - d) * 256 / SH; int sm = (t * t * (3 * 256 - 2 * t)) >> 16; sh_tab[d] = (uint8_t)(112 * sm / 256); }          /* smoothstep falloff */
     wall = malloc((size_t)W * H * 4);
     if (!wall) return;
-    int cx = W * 72 / 100, cy = H * 28 / 100, dx2 = W * 18 / 100, dy2 = H * 82 / 100;          /* two soft glows over a deep slate ground */
-    for (int y = 0; y < H; y++)
-        for (int x = 0; x < W; x++) {
-            int t = (x * 256 / W + y * 256 / H) / 2;
-            int dx = x - cx, dy = y - cy, ex = x - dx2, ey = y - dy2, k1 = W * H / 9 + 1, k2 = W * H / 12 + 1;
-            int g1 = (int)(78LL * k1 / (k1 + ((long long)dx * dx + (long long)dy * dy))), g2 = (int)(56LL * k2 / (k2 + ((long long)ex * ex + (long long)ey * ey)));
-            if (g1 < 0) g1 = 0;
-            if (g2 < 0) g2 = 0;
-            int r = 13 + t * 10 / 256 + g1 * 4 / 10 + g2 * 5 / 10, g = 16 + t * 14 / 256 + g1 * 6 / 10 + g2 * 2 / 10, b = 28 + t * 30 / 256 + g1 * 11 / 10 + g2 * 8 / 10;
-            int n = ((x * 7 + y * 13) & 3) - 1;                                                  /* a little dither against banding */
-            { int d = x - y * 7 / 10 - W * 40 / 100, k = (W / 9) * (W / 9) + 1; int v = (int)(24LL * k / (k + (long long)d * d)); r += v * 5 / 10; g += v * 7 / 10; b += v * 12 / 10; }   /* a soft diagonal light band */
-            r += n; g += n; b += n;
-            wall[(size_t)y * W + x] = rgb(r < 0 ? 0 : r > 255 ? 255 : r, g < 0 ? 0 : g > 255 ? 255 : g, b < 0 ? 0 : b > 255 ? 255 : b);
-        }
+    ui_theme_load();
+    wall_render();
 }
 
 static void fill(struct rect r, uint32_t c) {
@@ -750,6 +764,12 @@ static void on_client(int i) {
         wins[i].title[16] = 0;
         winlist_dirty = 1;
         compose(frame_of(&wins[i]));
+    } else if (m.op == WL_THEME) {                       /* the theme file changed: new wallpaper here, a reload everywhere else */
+        ui_theme_load();
+        wall_render();
+        compose((struct rect){ 0, 0, W, H });
+        struct wl_msg tm = { WL_THEME, 0, 0, 0, 0 };
+        for (int k = 0; k < nwin; k++) if (!wins[k].is_wl && !wins[k].hwnd && wins[k].fd >= 0) (void)!write(wins[k].fd, &tm, sizeof tm);
     } else if (m.op == WL_CURSOR) {                     /* the shape the pointer takes over this window */
         wins[i].cursor = (int)(m.a & 3);
         update_cursor();

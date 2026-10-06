@@ -158,13 +158,13 @@ static void render(void) {
     for (int x = 0; x < SW; x++) px[(HEAD - 1) * SW + x] = UI_LINE;
     ui_text(px, SW, SH, 20, 28, "Software", UI_BOLD, 17, UI_TEXT);
     ui_text(px, SW, SH, 20 + ui_text_width(UI_BOLD, 17, "Software") + 10, 28, "Debian archive", UI_REG, 12, UI_MUTED);
-    ui_card(px, SW, SH, 16, 38, SW - 32, 32, 10, 0x131722, query[0] ? 0x4a639e : 0x2d3448);
+    ui_card(px, SW, SH, 16, 38, SW - 32, 32, 10, 0x131722, query[0] ? ui_mix(0x2d3448u, UI_ACCENT, 130) : 0x2d3448);
     ui_icon(px, SW, SH, 34, 54, IC_SEARCH, 13, UI_MUTED);
     char q[90]; snprintf(q, sizeof q, "%s%s", query, "|");
     if (query[0]) ui_text(px, SW, SH, 52, 59, q, UI_REG, 14, UI_TEXT);
     else ui_text(px, SW, SH, 52, 59, index_buf ? "Search programs by name or description" : "No package index yet", UI_REG, 14, 0x657090);
     if (!index_buf) {
-        ui_rrect_g(px, SW, SH, SW / 2 - 130, HEAD + 80, 260, 44, 12, UI_ACCENT_HI, 0x3f69d6, 255);
+        ui_rrect_g(px, SW, SH, SW / 2 - 130, HEAD + 80, 260, 44, 12, UI_ACCENT_HI, UI_ACCENT_LO, 255);
         ui_icon(px, SW, SH, SW / 2 - 100, HEAD + 102, IC_REFRESH, 15, 0xffffffu);
         ui_text(px, SW, SH, SW / 2 - 78, HEAD + 108, "Download the package list", UI_BOLD, 14, 0xffffffu);
         ui_text(px, SW, SH, SW / 2 - ui_text_width(UI_REG, 13, "Needs the network. Takes a few minutes the first time.") / 2, HEAD + 150, "Needs the network. Takes a few minutes the first time.", UI_REG, 13, UI_MUTED);
@@ -191,7 +191,7 @@ static void render(void) {
         ui_text(px, SW, SH, 76, y + 40, dd, UI_REG, 12, 0xa8b0c8);
         int bx = SW - 112, by = y + 11, bw = 88;                                          /* the action pill */
         if (job_fd >= 0 && !strcmp(name, job_name)) {                                  /* busy: an indeterminate bar slides inside the pill */
-            ui_card(px, SW, SH, bx - 8, by, bw + 8, 28, 14, 0x1d2333, 0x4a639e);
+            ui_card(px, SW, SH, bx - 8, by, bw + 8, 28, 14, 0x1d2333, ui_mix(0x2d3448u, UI_ACCENT, 130));
             float ph = (float)((mo_now_ms() - job_t0) % 1200) / 1200.0f;
             int segw = 28, bxx = bx + (int)((bw - 24) * ph);
             ui_set_clip(bx - 2, by + 2, bx + bw - 6, by + 26);
@@ -200,7 +200,7 @@ static void render(void) {
             const char *bt = job_remove ? "Removing" : "Installing";
             ui_text(px, SW, SH, bx - 8 + (bw + 8 - ui_text_width(UI_REG, 12, bt)) / 2, by + 18, bt, UI_REG, 12, UI_TEXT);
         } else if (inst) { ui_card(px, SW, SH, bx, by, bw, 28, 14, 0x1d2333, 0x3a4560); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_REG, 12, "Remove")) / 2, by + 19, "Remove", UI_REG, 12, 0xff9aa6); }
-        else { ui_rrect_g(px, SW, SH, bx, by, bw, 28, 14, UI_ACCENT_HI, 0x3f69d6, 255); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_BOLD, 12, "Install")) / 2, by + 19, "Install", UI_BOLD, 12, 0xffffffu); }
+        else { ui_rrect_g(px, SW, SH, bx, by, bw, 28, 14, UI_ACCENT_HI, UI_ACCENT_LO, 255); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_BOLD, 12, "Install")) / 2, by + 19, "Install", UI_BOLD, 12, 0xffffffu); }
         if (inst) ui_icon(px, SW, SH, bx - 16, by + 14, 0xf00c, 12, UI_GOOD);
     }
     ui_scrollbar(px, SW, SH, &list, SW - 9, LIST_Y);
@@ -272,6 +272,7 @@ int main(void) {
         if (!pr && pf[0].revents & (POLLHUP | POLLERR)) break;
         if (pr <= 0) continue;
         if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_POINTER && m.c == 1) {
             long long now = mo_now_ms();
             if (!index_buf && (int)m.b > HEAD + 70 && (int)m.b < HEAD + 130) act();

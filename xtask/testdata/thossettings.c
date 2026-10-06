@@ -26,9 +26,9 @@ static int sock, scr_w, scr_h;
 static struct ui_list list;
 static struct tween page_t;
 static int page, hover_row = -1;
-static const char *names[] = { "About", "Network", "Storage", "Display" };
-static const uint32_t icons[] = { IC_INFO, 0xf0ac, IC_ARCHIVE, IC_DESKTOP };
-#define NPAGES 4
+static const char *names[] = { "About", "Network", "Storage", "Display", "Appearance" };
+static const uint32_t icons[] = { IC_INFO, 0xf0ac, IC_ARCHIVE, IC_DESKTOP, 0xf1fc };
+#define NPAGES 5
 
 static int slurp(const char *path, char *buf, size_t cap) {
     FILE *f = fopen(path, "r");
@@ -123,6 +123,51 @@ static void page_display(int x, int y, int w) {
     row(x, y + 2 + ROWH, w, "Colour", "32 bit, software drawn", 1);
 }
 
+/* ---- appearance: accent swatches and wallpaper presets; a click writes ~/.thos-theme and tells the compositor (WL_THEME) ---- */
+static const uint32_t swatch[6] = { 0x5b8def, 0x8b5cf6, 0x14b8a6, 0x22c55e, 0xf59e0b, 0xec4899 };
+static const char *swatch_name[6] = { "Blue", "Violet", "Teal", "Green", "Amber", "Pink" };
+static const uint32_t wp_a[4] = { 0x1a2146, 0x3a2038, 0x123a3a, 0x24262c }, wp_b[4] = { 0x3b4a8c, 0x9a5a4a, 0x2f8a78, 0x4a4e5a };
+static const char *wp_name[4] = { "Aurora", "Dusk", "Forest", "Graphite" };
+static int cur_swatch(void) { for (int i = 0; i < 6; i++) if (swatch[i] == (ui_accent & 0xffffff)) return i; return -1; }
+static void apply_theme(uint32_t accent, int wall) {
+    const char *h = getenv("HOME");
+    char path[220];
+    snprintf(path, sizeof path, "%s/.thos-theme", h && h[0] == '/' && h[1] ? h : "/tmp");
+    FILE *f = fopen(path, "w");
+    if (f) { fprintf(f, "accent=%06x\nwallpaper=%d\n", accent & 0xffffff, wall); fclose(f); }
+    ui_theme_load();
+    uint32_t m[5] = { WL_THEME, 0, 0, 0, 0 };
+    (void)!write(sock, m, sizeof m);
+}
+static int sw_x(int i, int x) { return x + 18 + i * 56; }
+static void page_appear(int x, int y, int w) {
+    ui_text(px, WW, WH, x, y + 28, "Appearance", UI_BOLD, 22, UI_TEXT);
+    y += 48;
+    ui_card(px, WW, WH, x, y, w, 120, 14, 0x1b2030, 0x262d40);
+    ui_text(px, WW, WH, x + 18, y + 30, "Accent colour", UI_BOLD, 14, UI_TEXT);
+    ui_text(px, WW, WH, x + 18, y + 48, swatch_name[cur_swatch() < 0 ? 0 : cur_swatch()], UI_REG, 12, UI_MUTED);
+    for (int i = 0; i < 6; i++) {
+        int cx = sw_x(i, x) + 18, cy = y + 84;
+        if (i == cur_swatch()) ui_disc(px, WW, WH, cx, cy, 20, 0xe8ebf4);
+        ui_disc(px, WW, WH, cx, cy, i == cur_swatch() ? 17 : 16, swatch[i]);
+        if (i == cur_swatch()) ui_icon(px, WW, WH, cx, cy, 0xf00c, 13, 0xffffffu);
+    }
+    y += 140;
+    ui_card(px, WW, WH, x, y, w, 150, 14, 0x1b2030, 0x262d40);
+    ui_text(px, WW, WH, x + 18, y + 30, "Wallpaper", UI_BOLD, 14, UI_TEXT);
+    for (int i = 0; i < 4; i++) {
+        int tx = x + 18 + i * 116, ty = y + 44;
+        if (i == ui_wall_theme) ui_rrect(px, WW, WH, tx - 3, ty - 3, 116, 74, 12, UI_ACCENT_HI);
+        ui_rrect_g(px, WW, WH, tx, ty, 110, 68, 10, wp_a[i], wp_b[i], 255);
+        ui_text(px, WW, WH, tx + 55 - ui_text_width(UI_REG, 12, wp_name[i]) / 2, ty + 88, wp_name[i], i == ui_wall_theme ? UI_BOLD : UI_REG, 12, i == ui_wall_theme ? UI_TEXT : UI_MUTED);
+    }
+}
+static void appear_click(int mxp, int myp) {
+    int x = SIDE + 28, y = 14 + 48;
+    for (int i = 0; i < 6; i++) { int cx = sw_x(i, x) + 18, cy = y + 84; if ((mxp - cx) * (mxp - cx) + (myp - cy) * (myp - cy) <= 22 * 22) { apply_theme(swatch[i], ui_wall_theme); return; } }
+    y += 140;
+    for (int i = 0; i < 4; i++) { int tx = x + 18 + i * 116, ty = y + 44; if (mxp >= tx && mxp < tx + 110 && myp >= ty && myp < ty + 68) { apply_theme(ui_accent, i); return; } }
+}
 static void render(void) {
     for (int i = 0; i < WW * WH; i++) px[i] = UI_SURFACE;
     for (int y = 0; y < WH; y++) for (int x = 0; x < SIDE; x++) px[y * WW + x] = 0x131722;
@@ -137,7 +182,7 @@ static void render(void) {
     float t = tween_busy(&page_t) ? tween_value(&page_t, ease_out) : 1.0f;
     int cx = SIDE + 28, cw = WW - SIDE - 56, cy = 14 + (int)((1.0f - t) * 14);
     ui_set_clip(SIDE + 1, 0, WW, WH);
-    switch (page) { case 0: page_about(cx, cy, cw); break; case 1: page_net(cx, cy, cw); break; case 2: page_storage(cx, cy, cw); break; default: page_display(cx, cy, cw); }
+    switch (page) { case 0: page_about(cx, cy, cw); break; case 1: page_net(cx, cy, cw); break; case 2: page_storage(cx, cy, cw); break; case 3: page_display(cx, cy, cw); break; default: page_appear(cx, cy, cw); }
     if (t < 1.0f) ui_rrect_g(px, WW, WH, SIDE + 1, 0, WW - SIDE - 1, WH, 0, UI_SURFACE, UI_SURFACE, (unsigned)((1.0f - t) * 255));      /* the old page fades into the new one */
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     struct wl_msg c = { WL_COMMIT, 0, 0, WW, WH };
@@ -185,9 +230,11 @@ int main(void) {
         else if (now - last_data > 2000) { last_data = now; render(); }        /* live values */
         if (pr <= 0) continue;
         if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_POINTER && m.c == 1) {
             int i = (int)m.a < SIDE ? ui_list_at(&list, (int)m.b - 62) : -1;
             if (i >= 0) goto_page(i);
+            else if ((int)m.a > SIDE && page == 4) appear_click((int)m.a, (int)m.b);
             render();
         } else if (m.op == WL_POINTER && m.c != 3) {
             int rw = m.c == 0 && (int)m.a < SIDE && (int)m.b >= 62 ? ui_list_at(&list, (int)m.b - 62) : -1;

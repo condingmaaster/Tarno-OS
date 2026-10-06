@@ -1088,6 +1088,43 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-theme-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/desktheme-serial.log"), root.join("target/desktheme-mon.sock"));
+            let shots = [root.join("target/desktheme1.ppm"), root.join("target/desktheme2.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "settings ready", 200) { return; }
+                std::thread::sleep(ms(2000));
+                let (wx, wy) = log_window(&tlog, "760x500", 0).unwrap_or((200, 100));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                let mut cur = (640, 400);
+                pointer_to(&tsock, &mut cur, wx + 544, wy + 146);              // the pink swatch
+                std::thread::sleep(ms(400));
+                pointer_click(&tsock);
+                pointer_to(&tsock, &mut cur, wx + 417, wy + 280);              // the Dusk wallpaper
+                std::thread::sleep(ms(400));
+                pointer_click(&tsock);
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "desktheme", "/busybox sh /desk-theme.sh", "desk ok:", 200);
+            let px = |n: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> { let (w, h, d) = read_ppm(&shots[n])?; (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2])) };
+            let (a, b) = (px(0, 60, 700), px(1, 60, 700));
+            let wall_changed = match (a, b) { (Some(a), Some(b)) => (a.0 as i32 - b.0 as i32).abs() + (a.2 as i32 - b.2 as i32).abs() > 10, _ => false };
+            let saved = out.lines().any(|l| l.trim() == "theme-accent=accent=ec4899") && out.lines().any(|l| l.trim() == "theme-wall=wallpaper=1");
+            if wall_changed && saved {
+                println!("desk-theme-test PASSED: the accent and wallpaper chosen in Settings were saved to ~/.thos-theme and the compositor repainted the wallpaper ({a:?} -> {b:?})");
+            } else {
+                eprintln!("  wallpaper {a:?} -> {b:?}, saved {saved}");
+                for l in out.lines().filter(|l| l.contains("theme") || l.contains("settings")) { eprintln!("  {l}"); }
+                eprintln!("desk-theme-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2348,7 +2385,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5733,7 +5770,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

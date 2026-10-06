@@ -245,6 +245,7 @@ int main(void) {
         if (busy) { ui_list_step(&list, dt); spring_step(&side_hl, dt); render(); }
         if (pr <= 0) continue;
         if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_POINTER && m.c == 1) {
             long long now = mo_now_ms();
             int x = (int)m.a, y = (int)m.b;
