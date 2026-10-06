@@ -32,7 +32,7 @@ static struct ent bar[MAXB], dsk[MAXD], apps[MAXA];
 static int nbar, ndsk, napps;
 #define PANEL_USER "/tmp/panel.conf"
 #define DESK_USER "/tmp/desktop.conf"
-struct tbw { uint32_t id; int focused, x0, x1; char title[13]; };
+struct tbw { uint32_t id; int focused, minimized, x0, x1; char title[13]; };
 #define MAXT 12
 static struct tbw tbs[MAXT], tbs_new[MAXT];
 static int ntb, ntb_new, ntb_expect;
@@ -132,7 +132,7 @@ static char clock_hm[8], clock_day[24];
 static int hov_start;         /* the pointer is over the Start pill */
 enum { K_LAUNCH = 0, K_SEP = 1, K_WIN = 2 };
 #define MAXI 40
-struct dk { int kind, key, focused, present, x0, x1; char label[16]; struct spring w, pres, hov, foc, dip; };
+struct dk { int kind, key, focused, minimized, present, x0, x1; char label[16]; struct spring w, pres, hov, foc, dip; };
 static struct dk items[MAXI];
 static int nitems;
 static struct spring start_hov, start_dip;                /* dip: the press feedback, 1 at the moment of the click and springing back to 0 */
@@ -167,7 +167,7 @@ static void dock_sync(void) {
         int at = -1;
         for (int j = 0; j < nitems; j++) if (items[j].kind == K_WIN && items[j].key == (int)tbs[i].id) at = j;
         if (at < 0) { item_new(K_WIN, (int)tbs[i].id, tbs[i].title, nitems); at = nitems - 1; }
-        items[at].present = 1; items[at].focused = tbs[i].focused;
+        items[at].present = 1; items[at].focused = tbs[i].focused; items[at].minimized = tbs[i].minimized;
         snprintf(items[at].label, sizeof items[at].label, "%s", tbs[i].title);
     }
     /* targets; when the windows would not fit, their buttons share the room that is left */
@@ -267,7 +267,8 @@ static void draw_bar(void) {
             char t[16]; snprintf(t, sizeof t, "%.12s", d->label[0] ? d->label : "Window");
             ui_rrect_g(col, PW, PH, x + 8, by + (bh - 24) / 2, 24, 24, 8, ui_shade(ui_app_color(d->label), 18), ui_shade(ui_app_color(d->label), -20), 255);
             ui_icon(col, PW, PH, x + 20, by + bh / 2, ui_app_glyph(d->label), 11, 0xffffffu);
-            ui_text(col, PW, PH, x + 40, by + bh / 2 + 4, t, f > 0.5f ? UI_BOLD : UI_REG, 12, ui_mix(0xb4bbd0u, UI_TEXT, fadeto(f)));
+            ui_text(col, PW, PH, x + 40, by + bh / 2 + 4, t, f > 0.5f ? UI_BOLD : UI_REG, 12, d->minimized ? 0x7a829cu : ui_mix(0xb4bbd0u, UI_TEXT, fadeto(f)));
+            if (d->minimized) ui_disc(col, PW, PH, x + (w - 6) / 2, by + bh - 4, 2, 0x7a829cu);
             ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
         }
     }
@@ -450,7 +451,7 @@ int main(void) {
         if (log_pending && !dock_busy()) {                                          /* the layout, for the desktop tests, once everything has settled */
             log_pending = 0;
             printf("panel tasks:");
-            for (int j = 0; j < nitems; j++) if (items[j].kind == K_WIN && items[j].present) printf(" %s%s=%d-%d", items[j].label, items[j].focused ? "*" : "", items[j].x0, items[j].x1);
+            for (int j = 0; j < nitems; j++) if (items[j].kind == K_WIN && items[j].present) printf(" %s%s%s=%d-%d", items[j].label, items[j].focused ? "*" : "", items[j].minimized ? "~" : "", items[j].x0, items[j].x1);
             printf("\n");
             fflush(stdout);
         }
@@ -502,7 +503,7 @@ int main(void) {
         if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; dock_sync(); log_pending = 1; } continue; }
         if (m.op == WL_WIN) {
             if (ntb_new < MAXT) {
-                tbs_new[ntb_new].id = m.a & 0x7fffffffu; tbs_new[ntb_new].focused = (m.a >> 31) & 1;
+                tbs_new[ntb_new].id = m.a & 0x3fffffffu; tbs_new[ntb_new].focused = (m.a >> 31) & 1; tbs_new[ntb_new].minimized = (m.a >> 30) & 1;
                 memcpy(tbs_new[ntb_new].title, &m.b, 12); tbs_new[ntb_new].title[12] = 0;
                 ntb_new++;
             }
@@ -535,7 +536,7 @@ int main(void) {
                 if (d->kind == K_SEP || !d->present || (int)m.a < d->x0 || (int)m.a >= d->x1) continue;
                 d->dip.p = 1; spring_to(&d->dip, 0);
                 if (d->kind == K_LAUNCH) { int i = find(bar, nbar, d->label); if (i >= 0) launch(bar[i].cmd); }
-                else { struct wl_msg r = { WL_RAISE, (uint32_t)d->key, 0, 0, 0 }; (void)!write(s, &r, sizeof r); }
+                else { struct wl_msg r = { WL_RAISE, (uint32_t)d->key, d->focused && !d->minimized ? 1u : 0u, 0, 0 }; (void)!write(s, &r, sizeof r); }
                 break;
             }
         }

@@ -958,6 +958,48 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-minimize-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskmin-serial.log"), root.join("target/deskmin-mon.sock"));
+            let shots = [root.join("target/deskmin1.ppm"), root.join("target/deskmin2.ppm"), root.join("target/deskmin0.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1], &shots[2]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "win 3 ready", 200) { return; }
+                std::thread::sleep(ms(2500));
+                let Some((wx, wy)) = log_window(&tlog, "300x200", 1) else { return };
+                mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+                let mut cur = (640, 400);
+                pointer_to(&tsock, &mut cur, wx + 300 - 53, wy - 19);          // Beta's minimize button
+                std::thread::sleep(ms(600));
+                pointer_click(&tsock);
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                let tasks = log_tasks(&tlog);
+                if let Some((_, _, x0, x1)) = tasks.iter().find(|t| t.0.starts_with("Beta")) {
+                    pointer_to(&tsock, &mut cur, (x0 + x1) / 2, 768);          // its dock button brings it back
+                    std::thread::sleep(ms(400));
+                    pointer_click(&tsock);
+                    std::thread::sleep(ms(2500));
+                    mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+                }
+            });
+            let out = boot_and_run(&img, "deskmin", "/busybox sh /desk-tasklist.sh", "desk ok:", 200);
+            let (wx, wy) = log_window(&log, "300x200", 1).unwrap_or((0, 0));
+            let px = |n: usize, x: i32, y: i32| -> Option<(u8, u8, u8)> { let (w, h, d) = read_ppm(&shots[n])?; let (x, y) = (x as usize, y as usize); (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2])) };
+            let green = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| (c.0 as i32 - 60).abs() + (c.1 as i32 - 200).abs() + (c.2 as i32 - 60).abs() < 40);
+            let (before, hidden, back) = (green(px(2, wx + 250, wy + 150)), !green(px(0, wx + 250, wy + 150)), green(px(1, wx + 250, wy + 150)));
+            let flagged = out.lines().any(|l| l.contains("panel tasks:") && l.contains("Beta~"));
+            if before && hidden && back && flagged {
+                println!("desk-minimize-test PASSED: the minimize button hid the window (the dock keeps its button, marked), the dock button brought it back");
+            } else {
+                eprintln!("  visible before {before}, hidden after minimize {hidden}, back after restore {back}, dock marked it {flagged}");
+                eprintln!("desk-minimize-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -5572,7 +5614,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-cursor-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-cursor-test", "desk-minimize-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

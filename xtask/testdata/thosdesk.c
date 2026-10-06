@@ -41,7 +41,7 @@ struct var_screeninfo { uint32_t xres, yres, xres_virtual, yres_virtual, xoffset
 struct rect { int x0, y0, x1, y1; };     /* half-open */
 struct wlsurf;
 struct win { int fd, id, x, y, w, h; uint32_t *px; char title[17]; int deco; unsigned hwnd; struct wlsurf *wl; int is_wl; int fade; int alpha; int maxed, rx, ry, rw, rh, cfg_w, cfg_h; int csd, gx, gy, gw, gh, popup, menu, taskbar;
-    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo, mxs; int cursor; struct tween opq; uint32_t *snap; struct rect snap_r; };
+    int anim, ready; long long anim_t0; float ax, ay; struct spring sc, foc, clo, mxs, mns; int cursor, minimized; struct tween opq; uint32_t *snap; struct rect snap_r; };
 static int wsfd = -1;
 static struct win wins[MAXWIN];          /* [0] = bottom ... [n-1] = top (focused) */
 static int nwin, next_id = 1;
@@ -79,7 +79,7 @@ static struct rect isect(struct rect a, struct rect b) {
     return r;
 }
 static int empty(struct rect r) { return r.x1 <= r.x0 || r.y1 <= r.y0; }
-static struct rect frame_of(struct win *w) { if (!w->deco) return rect_xywh(w->x, w->y, w->w, w->h); return rect_xywh(w->x - BORDER, w->y - TITLE, w->w + 2 * BORDER, w->h + TITLE + BORDER); }
+static struct rect frame_of(struct win *w) { if (w->minimized) return (struct rect){ 0, 0, 0, 0 }; if (!w->deco) return rect_xywh(w->x, w->y, w->w, w->h); return rect_xywh(w->x - BORDER, w->y - TITLE, w->w + 2 * BORDER, w->h + TITLE + BORDER); }
 static struct rect content_of(struct win *w) { return rect_xywh(w->x, w->y, w->w, w->h); }
 /* everything a window can touch on screen: its frame plus the soft shadow around it */
 static struct rect outer_of(struct win *w) {
@@ -88,12 +88,19 @@ static struct rect outer_of(struct win *w) {
     return (struct rect){ f.x0 - SH, f.y0 - SH + SH_OFF, f.x1 + SH, f.y1 + SH + SH_OFF };
 }
 static struct rect max_btn(struct win *w) { if (!w->deco || !w->wl || w->csd) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - 2 * BTN - 12, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
+static struct rect min_btn(struct win *w) {
+    if (!w->deco || w->taskbar || w->menu || w->popup || w->minimized) return rect_xywh(0, 0, 0, 0);
+    struct rect m = max_btn(w);
+    int x0 = (m.x1 > m.x0 ? m.x0 : w->x + w->w + BORDER - BTN - 8) - BTN - 4;
+    return rect_xywh(x0, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN);
+}
 static struct rect close_btn(struct win *w) { if (!w->deco) return rect_xywh(0, 0, 0, 0); return rect_xywh(w->x + w->w + BORDER - BTN - 8, w->y - TITLE + (TITLE - BTN) / 2, BTN, BTN); }
 
 /* ---- theme: everything below is integer-only and table driven, to stay cheap on old hardware ---- */
 static uint8_t cov_tab[CORNER][CORNER];   /* coverage of a rounded corner, [row][col] counted from the outer corner */
 static uint8_t sh_tab[SH];                /* shadow opacity by distance from the window */
 static uint32_t *wall;                    /* the wallpaper, rendered once */
+static int hover_min = -1;                /* id of the window whose minimize button the pointer is on */
 static int hover_max = -1;                /* id of the window whose maximize button the pointer is on */
 static int hover_win = -1;                /* id of the window whose close button the pointer is on */
 
@@ -440,6 +447,13 @@ static void draw_window(struct win *w, int top, struct rect r) {
     float ch = w->clo.p < 0 ? 0 : w->clo.p > 1 ? 1 : w->clo.p;
     (void)hot;
     if (ch > 0.02f) ui_rrect_g(B, W, H, ccx - BTN / 2, ccy - BTN / 2, BTN, BTN, BTN / 2, UI_BAD, UI_BAD, (unsigned)(ch * 255));
+    struct rect nb = min_btn(w);
+    if (nb.x1 > nb.x0) {
+        int ncx = (nb.x0 + nb.x1) / 2, ncy = (nb.y0 + nb.y1) / 2;
+        float nh = w->mns.p < 0 ? 0 : w->mns.p > 1 ? 1 : w->mns.p;
+        if (nh > 0.02f) ui_rrect_g(B, W, H, ncx - BTN / 2, ncy - BTN / 2, BTN, BTN, BTN / 2, 0x3a4258u, 0x3a4258u, (unsigned)(nh * 255));
+        ui_icon(B, W, H, ncx, ncy, 0xf068, 11, ui_mix(ui_mix(0x6c748cu, 0xb4bbd0u, fz), 0xffffffu, (unsigned)(nh * 255)));
+    }
     struct rect mb = max_btn(w);
     if (mb.x1 > mb.x0) {
         int mcx = (mb.x0 + mb.x1) / 2, mcy = (mb.y0 + mb.y1) / 2;
@@ -584,20 +598,21 @@ static void draw_ghosts(struct rect r) {
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) draw_snap_at(ghosts[i].snap, ghosts[i].r, ghosts[i].ax, ghosts[i].ay, ghosts[i].sc.p, tween_value(&ghosts[i].opq, ease_in), r);
 }
 /* the window is about to be removed: keep a fading copy of it */
-static void ghost_from(struct win *w) {
-    if (w->anim == 1 || (!w->deco && !w->menu && !w->popup) || w->taskbar) return;
+static int ghost_from(struct win *w) {
+    if (w->anim == 1 || (!w->deco && !w->menu && !w->popup) || w->taskbar) return -1;
     int slot = -1;
     for (int i = 0; i < MAXGHOST; i++) if (!ghosts[i].active) { slot = i; break; }
-    if (slot < 0) return;
+    if (slot < 0) return -1;
     float s0 = w->anim == 2 ? w->sc.p : 1.0f;
     if (w->anim != 2 || !w->snap) snap_build(w);
-    if (!w->snap) return;
+    if (!w->snap) return -1;
     struct ghost *g = &ghosts[slot];
     g->snap = w->snap; w->snap = 0; g->r = w->snap_r; g->ax = w->ax; g->ay = w->ay; g->active = 1;
     int quick = w->menu || w->popup;
     spring_init(&g->sc, s0, SP_SNAPPY);
     spring_to(&g->sc, quick ? 0.97f : 0.94f);
     tween_start(&g->opq, 1.0f, 0.0f, quick ? 110 : MO_FAST + 20);
+    return slot;
 }
 static void win_anim_start(struct win *w) {                           /* called when a window is created: it stays hidden until its first content arrived */
     w->anim = 1; w->anim_t0 = mo_now_ms(); w->ax = 0.5f; w->ay = 0.5f;
@@ -615,6 +630,7 @@ static void compose(struct rect r) {
     for (int i = 0; i < nwin; i++) {
         struct win *w = &wins[i];
         int top = i == nwin - 1;
+        if (w->minimized) continue;
         if (w->anim == 1) continue;                                     /* not shown yet */
         if (w->anim == 2) { draw_snap_at(w->snap, w->snap_r, w->ax, w->ay, w->sc.p, tween_value(&w->opq, ease_out), r); continue; }
         if (w->deco) draw_shadow(w, top, r);
@@ -667,7 +683,7 @@ static struct rect uni(struct rect a, struct rect b);
 static int is_listed(struct win *w) { return w->deco && !w->menu && !w->popup && !w->taskbar; }
 static void send_winlist(void) {
     int p = -1, n = 0, top = -1, idx[MAXWIN];
-    for (int i = 0; i < nwin; i++) { if (wins[i].taskbar) p = i; if (is_listed(&wins[i])) { idx[n++] = i; top = i; } }
+    for (int i = 0; i < nwin; i++) { if (wins[i].taskbar) p = i; if (is_listed(&wins[i])) { idx[n++] = i; if (!wins[i].minimized) top = i; } }
     if (p < 0) return;
     for (int a = 1; a < n; a++)                       /* creation order (ids ascend), so the buttons keep their places */
         for (int b = a; b > 0 && wins[idx[b]].id < wins[idx[b - 1]].id; b--) { int t = idx[b]; idx[b] = idx[b - 1]; idx[b - 1] = t; }
@@ -675,7 +691,7 @@ static void send_winlist(void) {
     (void)!write(wins[p].fd, &bm, sizeof bm);
     for (int k = 0; k < n; k++) {
         int i = idx[k];
-        struct wl_msg m = { WL_WIN, (uint32_t)wins[i].id | (i == top ? 0x80000000u : 0), 0, 0, 0 };
+        struct wl_msg m = { WL_WIN, (uint32_t)wins[i].id | (i == top ? 0x80000000u : 0) | (wins[i].minimized ? 0x40000000u : 0), 0, 0, 0 };
         char t[12] = { 0 };
         memcpy(t, wins[i].title, 12);
         memcpy(&m.b, t, 12);
@@ -694,6 +710,37 @@ static void update_cursor(void) {                   /* the shape under the point
 }
 struct wlsurf;
 static void wls_focus_keyboard(struct wlsurf *s);
+/* minimize: the window shrinks toward the dock and fades (a ghost anchored at the dock), then stays hidden; it keeps its slot in the task list */
+static void minimize_win(int i) {
+    struct win *w = &wins[i];
+    if (!w->deco || w->minimized || w->anim == 1) return;
+    struct rect old = outer_of(w);
+    int slot = ghost_from(w);
+    if (slot >= 0) {
+        struct ghost *g = &ghosts[slot];
+        g->ax = (float)(W / 2 - g->r.x0) / (float)(g->r.x1 - g->r.x0);
+        g->ay = (float)(H - 28 - g->r.y0) / (float)(g->r.y1 - g->r.y0);
+        spring_init(&g->sc, 1.0f, SP_SOFT);
+        spring_to(&g->sc, 0.12f);
+        tween_start(&g->opq, 1.0f, 0.0f, 300);
+    }
+    w->minimized = 1;
+    struct win t = wins[i];
+    memmove(&wins[1], &wins[0], (size_t)i * sizeof t);
+    wins[0] = t;
+    compose(old);
+    if (nwin && wins[nwin - 1].wl && !wins[nwin - 1].minimized) wls_focus_keyboard(wins[nwin - 1].wl);
+    winlist_dirty = 1;
+}
+static void restore_win(struct win *w) {
+    w->minimized = 0;
+    win_anim_start(w);
+    w->ready = 1;
+    spring_init(&w->sc, 0.14f, SP_POP);
+    struct rect o = outer_of(w);
+    w->ax = (float)(W / 2 - o.x0) / (float)(o.x1 - o.x0);
+    w->ay = (float)(H - 28 - o.y0) / (float)(o.y1 - o.y0);
+}
 static void on_client(int i) {
     struct wl_msg m;
     ssize_t n = read(wins[i].fd, &m, sizeof m);
@@ -708,8 +755,10 @@ static void on_client(int i) {
         update_cursor();
     } else if (m.op == WL_RAISE) {                      /* the panel's task list asks for a window */
         struct win *t = win_by_id((int)m.a);
-        if (t && is_listed(t)) {
+        if (t && is_listed(t) && m.b == 1 && !t->minimized && t == &wins[nwin - 1]) minimize_win((int)(t - wins));      /* the focused window's own button minimizes it */
+        else if (t && is_listed(t)) {
             int ot = wins[nwin - 1].id, ti = (int)(t - wins);
+            if (t->minimized) restore_win(t);
             if (ti != nwin - 1) raise_win(ti);
             struct win *o = win_by_id(ot);
             if (o) compose(outer_of(o));
@@ -762,6 +811,7 @@ static long long anim_last;
 static int anim_pending(void) {
     if (toasts_busy() || cur_kind == 3) return 1;
     if (icons_busy()) return 1;
+    for (int i = 0; i < nwin; i++) if (wins[i].mns.k != 0 && (spring_busy(&wins[i].mns) || wins[i].mns.t != (hover_min == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].clo.k != 0 && (spring_busy(&wins[i].clo) || wins[i].clo.t != (hover_win == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].anim || (wins[i].foc.k != 0 && (spring_busy(&wins[i].foc) || wins[i].foc.t != (i == nwin - 1 ? 1.0f : 0.0f)))) return 1;
@@ -779,6 +829,9 @@ static void anim_tick(void) {
         float tgt = i == nwin - 1 ? 1.0f : 0.0f;
         if (w->foc.k == 0) spring_init(&w->foc, tgt, SP_SNAPPY);        /* windows that never popped in (the panel) just follow the focus */
         if (w->foc.t != tgt) spring_to(&w->foc, tgt);
+        if (w->mns.k == 0) spring_init(&w->mns, 0, SP_HOVER);
+        spring_to(&w->mns, hover_min == w->id ? 1.0f : 0.0f);
+        if (spring_busy(&w->mns)) { spring_step(&w->mns, dt); if (w->anim == 0 && !w->minimized) compose(inflate_r(min_btn(w), 3)); }
         if (w->mxs.k == 0) spring_init(&w->mxs, 0, SP_HOVER);
         spring_to(&w->mxs, hover_max == w->id ? 1.0f : 0.0f);
         if (spring_busy(&w->mxs)) { spring_step(&w->mxs, dt); if (w->anim == 0) compose(inflate_r(max_btn(w), 3)); }
@@ -894,14 +947,15 @@ static void desk_set_maximized(int winid, int on) {
 }
 /* the close button under the pointer lights up */
 static void update_hover(void) {
-    int nh = -1, nm = -1;
+    int nh = -1, nm = -1, nn = -1;
     for (int i = nwin - 1; i >= 0; i--) {
         if (!in(frame_of(&wins[i]), mx, my)) continue;
         if (in(close_btn(&wins[i]), mx, my)) nh = wins[i].id;
         if (in(max_btn(&wins[i]), mx, my)) nm = wins[i].id;
+        if (in(min_btn(&wins[i]), mx, my)) nn = wins[i].id;
         break;
     }
-    hover_max = nm;
+    hover_max = nm; hover_min = nn;
     if (nh == hover_win) return;
     int old = hover_win;
     hover_win = nh;
@@ -1208,7 +1262,8 @@ int main(int argc, char **argv) {
                 for (int i = nwin - 1; i >= 0; i--) {
                     struct win *w = &wins[i];
                     if (!in(frame_of(w), mx, my)) continue;
-                    if (in(max_btn(w), mx, my)) { toggle_maximize(w); click_id = 0; }
+                    if (in(min_btn(w), mx, my)) { minimize_win(i); click_id = 0; }
+                    else if (in(max_btn(w), mx, my)) { toggle_maximize(w); click_id = 0; }
                     else if (in(close_btn(w), mx, my)) {
                         struct wl_msg c = { WL_CLOSE, 0, 0, 0, 0 };
                         if (w->wl) wls_request_close(w->wl);

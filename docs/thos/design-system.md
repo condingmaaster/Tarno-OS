@@ -62,7 +62,7 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Leiste (3 Glas-Pillen) | normal, Hover, Fokus, Druck | Pille federt mit der Summe der Breiten; Knöpfe wachsen und schrumpfen | ✔ (Druck-Zustand –) |
 | Starter / Fensterknopf | Hover, Fokus, vorhanden/weg | Hebung + Vergrößerung (Feder), Fokus blendet, Einblenden beim Öffnen | ✔ |
 | Startmenü | offen/zu, Zeile Hover, Chips an/aus, Fußknöpfe | wächst aus der Start-Pille (Skalierung + Einblenden), Hover-Platte gleitet zwischen Zeilen | ◐ (Chip-Wechsel springt noch) |
-| Fenster | öffnen, Fokus, schließen, Ziehen | Pop-in (Feder + Einblenden), Fokuswechsel weich (Schatten, Titel), Geisterbild beim Schließen | ◐ (Maximieren-Knopf für Wayland-Fenster ✔, Minimieren –) |
+| Fenster | öffnen, Fokus, schließen, Ziehen | Pop-in (Feder + Einblenden), Fokuswechsel weich (Schatten, Titel), Geisterbild beim Schließen | ✔ (Minimieren: Fenster schrumpft zur Leiste und blendet aus, Knopf in der Leiste bleibt markiert, Klick holt es federnd zurück; der Knopf des fokussierten Fensters minimiert es; Maximieren für Wayland-Fenster) |
 | Schließen-Knopf | Hover | Scheibe blendet per Feder ein | ✔ |
 | Desktop-Symbole | Hover, ausgewählt, Start | Hebung + Lichtplatte, Hüpfer beim Starten | ✔ |
 | Dateimanager | Zeile Hover/Auswahl, Orte, Leer | Auswahl- und Hover-Platte gleiten, weiches Scrollen mit Mausrad, Scrollbalken blendet | ✔ |
