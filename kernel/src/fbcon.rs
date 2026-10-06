@@ -165,6 +165,21 @@ pub fn resume() {
     }
 }
 
+/// While the login screen is up, kernel log lines (network bring-up and the like) stay off the screen; the login code itself lets its own lines through.
+static LOGIN_FILTER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static LOGIN_ALLOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub fn login_allow(on: bool) {
+    LOGIN_ALLOW.store(on, core::sync::atomic::Ordering::Relaxed);
+}
+/// Kernel log text (as opposed to program or prompt output): hidden while the login screen is up.
+pub fn write_log(bytes: &[u8]) {
+    use core::sync::atomic::Ordering::Relaxed;
+    if LOGIN_FILTER.load(Relaxed) && !LOGIN_ALLOW.load(Relaxed) {
+        return;
+    }
+    write(bytes);
+}
+
 /// Feed output bytes (UTF-8) to the console.
 pub fn write(bytes: &[u8]) {
     if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
@@ -738,6 +753,7 @@ pub fn splash_progress(pct: u32) {
 /// The login screen: the wordmark on top, a narrow centred text column below it, in the THOS colours.
 pub fn theme_login() {
     QUIET.store(false, core::sync::atomic::Ordering::Relaxed);
+    LOGIN_FILTER.store(true, core::sync::atomic::Ordering::Relaxed);
     if let Some(c) = CON.lock().as_mut() {
         c.relayout(72, 36 + u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize + 40, true);
     }
@@ -745,6 +761,7 @@ pub fn theme_login() {
 
 /// The shell console after login: the whole screen, THOS colours, no logo.
 pub fn theme_shell() {
+    LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
     QUIET.store(false, core::sync::atomic::Ordering::Relaxed);
     if let Some(c) = CON.lock().as_mut() {
         c.relayout(0, 0, false);
@@ -753,6 +770,7 @@ pub fn theme_shell() {
 
 /// A failure while the splash is up: make the text visible again.
 pub fn reveal() {
+    LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
     if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
         theme_shell();
     }

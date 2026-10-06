@@ -10,7 +10,16 @@ use alloc::vec::Vec;
 
 use crate::cred::{self, Cred, ADMIN_UID};
 use crate::ext2::Ext2;
-use crate::{console, kprintln, sched, serial};
+use crate::{console, sched, serial};
+
+/// Login screen output: like kprintln!, but not hidden by the log filter.
+macro_rules! kprintln {
+    ($($arg:tt)*) => {{
+        crate::fbcon::login_allow(true);
+        crate::kprintln!($($arg)*);
+        crate::fbcon::login_allow(false);
+    }};
+}
 
 /// A resolved session identity. Grows into the executive `Principal` / token.
 #[derive(Clone)]

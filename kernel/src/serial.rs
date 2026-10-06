@@ -65,7 +65,7 @@ pub fn init() {
 pub fn print(s: &str) {
     let port = PORT.lock();
     write_str(&port, s);
-    crate::fbcon::write(s.as_bytes());
+    crate::fbcon::write_log(s.as_bytes());
 }
 
 /// Write raw bytes verbatim (no CR translation) — used by `write`/`writev`.
@@ -123,7 +123,7 @@ impl core::fmt::Write for Writer<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         log_append(s);
         write_str(self.0, s);
-        crate::fbcon::write(s.as_bytes());
+        crate::fbcon::write_log(s.as_bytes());
         Ok(())
     }
 }
