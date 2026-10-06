@@ -1172,6 +1172,41 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-switch-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskswitch-serial.log"), root.join("target/deskswitch-mon.sock"));
+            let shots = [root.join("target/deskswitch0.ppm"), root.join("target/deskswitch1.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "win 3 ready", 200) { return; }
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                std::thread::sleep(ms(500));
+                mon(&tsock, "sendkey alt-tab");                         // Alt+Tab held for 2.5 s: the switcher is up meanwhile
+                std::thread::sleep(ms(1200));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+                std::thread::sleep(ms(3000));
+            });
+            let out = boot_and_run(&img, "deskswitch", "/busybox sh /desk-tasklist.sh", "desk ok:", 200);
+            let differ = match (read_ppm(&shots[0]), read_ppm(&shots[1])) {
+                (Some((w, _, a)), Some((_, _, b))) => { let mut c = 0; for y in 300..500usize { for x in (w / 2 - 150)..(w / 2 + 150) { let o = (y * w + x) * 3; if a[o] != b[o] || a[o + 2] != b[o + 2] { c += 1; } } } c }
+                _ => 0,
+            };
+            let lines: Vec<&str> = out.lines().filter(|l| l.contains("panel tasks:")).collect();
+            let first = lines.iter().position(|l| l.contains("Beta*") && l.contains("Alpha="));
+            let then = lines.iter().rposition(|l| l.contains("Alpha*") && l.contains("Beta="));
+            if first.is_some() && then.is_some() && first < then {
+                println!("desk-switch-test PASSED: Alt+Tab opened the switcher, releasing Alt focused the other window ({differ} pixels changed meanwhile)");
+            } else {
+                eprintln!("  switcher pixels {differ}, focus moved {}", first.is_some() && then.is_some());
+                for l in lines.iter().take(8) { eprintln!("  {l}"); }
+                eprintln!("desk-switch-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -5844,7 +5879,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-switch-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

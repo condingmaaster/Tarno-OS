@@ -423,8 +423,19 @@ pub fn kbd_read(buf: &mut [u8], nonblock: bool) -> i64 {
 }
 
 /// Turn the change between two reports into press/release events.
+/// The modifier byte of the previous report: a change alone (Alt let go, say) is delivered as an event for the modifier key itself
+/// (usage 0xE0 + bit), so a program that grabbed the keyboard — the desktop's Alt+Tab switcher — can see it.
+static PREV_MODS: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+
 fn kbd_events(rpt: &[u8; 8], keys: &[u8; 6], prev: &[u8; 6], shift: bool, altgr: bool) {
     let mut q = KBD_Q.lock();
+    let old = PREV_MODS.swap(rpt[0], Ordering::Relaxed);
+    for bit in 0..8u8 {
+        let (was, is) = (old & (1 << bit) != 0, rpt[0] & (1 << bit) != 0);
+        if was != is && q.len() < 256 {
+            q.push_back([is as u8, 0xE0 + bit, rpt[0], 0, 0, 0, 0, 0]);
+        }
+    }
     for &k in prev {
         if k != 0 && !keys.contains(&k) && q.len() < 256 {
             q.push_back([0, k, rpt[0], 0, 0, 0, 0, 0]);

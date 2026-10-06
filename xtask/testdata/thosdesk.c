@@ -312,6 +312,8 @@ static uint32_t title_color(int row, unsigned f) {                     /* f: foc
 /* ---- desktop icons: "Label|command" lines in /desktop.conf, painted over the wallpaper ---- */
 static unsigned long long now_ms(void);
 static void compose(struct rect r);
+struct win;
+static struct win *win_by_id(int id);
 static struct rect uni(struct rect a, struct rect b);
 #define MAXICON 16
 #define ICON_X 20
@@ -608,6 +610,36 @@ static void draw_toasts(struct rect r) {
         ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     }
 }
+/* ---- the window switcher (Alt+Tab): a glass panel with one tile per window, most recent first; the highlight glides between tiles,
+   releasing Alt picks the highlighted window, Esc cancels ---- */
+#define SW_TILE 96
+#define SW_H 132
+static int sw_active, sw_n, sw_sel, sw_ids[8];
+static struct spring sw_hl;
+static struct tween sw_op;
+static struct rect sw_rect(void) { int w = sw_n * SW_TILE + 28; return rect_xywh((W - w) / 2, H / 2 - SW_H / 2 - 20, w, SW_H); }
+static void draw_switcher(struct rect r) {
+    if (!sw_active) return;
+    struct rect pr = sw_rect();
+    if (empty(isect(inflate_r(pr, 20), r))) return;
+    unsigned a = (unsigned)(tween_value(&sw_op, ease_out) * 255);
+    ui_set_clip(r.x0, r.y0, r.x1, r.y1);
+    for (int k = 4; k >= 1; k--) ui_rrect_g(bb, W, H, pr.x0 - k * 3, pr.y0 - k * 3 + 8, pr.x1 - pr.x0 + k * 6, SW_H + k * 6, 22 + k * 2, 0x000000u, 0x000000u, a * 18 / 255);
+    ui_rrect_g(bb, W, H, pr.x0, pr.y0, pr.x1 - pr.x0, SW_H, 22, 0x3a4260u, 0x2a3148u, a * 190 / 255);
+    ui_rrect_g(bb, W, H, pr.x0 + 1, pr.y0 + 1, pr.x1 - pr.x0 - 2, SW_H - 2, 21, 0x1c2132u, 0x141824u, a * 226 / 255);
+    ui_rrect_g(bb, W, H, pr.x0 + 14 + (int)(sw_hl.p + 0.5f), pr.y0 + 12, SW_TILE - 4, SW_H - 24, 14, 0x34405fu, 0x28324cu, a);          /* the gliding highlight */
+    for (int i = 0; i < sw_n; i++) {
+        struct win *w = win_by_id(sw_ids[i]);
+        if (!w) continue;
+        int tx = pr.x0 + 14 + i * SW_TILE + 2;
+        ui_tile(bb, W, H, tx + (SW_TILE - 4 - 56) / 2, pr.y0 + 24, 56, w->title);
+        char t[14]; snprintf(t, sizeof t, "%.12s", w->title[0] ? w->title : "Window");
+        int tw = ui_text_width(i == sw_sel ? UI_BOLD : UI_REG, 12, t);
+        ui_text_a(bb, W, H, tx + (SW_TILE - 4 - tw) / 2, pr.y0 + SW_H - 22, t, i == sw_sel ? UI_BOLD : UI_REG, 12, i == sw_sel ? UI_TEXT : UI_MUTED, a);
+        if (w->minimized) ui_disc(bb, W, H, tx + (SW_TILE - 4) / 2, pr.y0 + SW_H - 12, 2, UI_MUTED);
+    }
+    ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+}
 static void draw_ghosts(struct rect r) {
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) draw_snap_at(ghosts[i].snap, ghosts[i].r, ghosts[i].ax, ghosts[i].ay, ghosts[i].sc.p, tween_value(&ghosts[i].opq, ease_in), r);
 }
@@ -652,6 +684,7 @@ static void compose(struct rect r) {
     }
     draw_ghosts(r);
     draw_toasts(r);
+    draw_switcher(r);
     for (int y = r.y0; y < r.y1; y++)
         blit_row((uint32_t *)(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4), &bb[(size_t)y * W + r.x0], r.x1 - r.x0);
     draw_cursor();
@@ -746,6 +779,42 @@ static void minimize_win(int i) {
     if (nwin && wins[nwin - 1].wl && !wins[nwin - 1].minimized) wls_focus_keyboard(wins[nwin - 1].wl);
     winlist_dirty = 1;
 }
+static void switcher_close(void) {
+    if (!sw_active) return;
+    struct rect pr = inflate_r(sw_rect(), 24);
+    sw_active = 0;
+    compose(pr);
+}
+static void switcher_open(void) {                                   /* the listed windows, most recent first */
+    sw_n = 0;
+    for (int i = nwin - 1; i >= 0 && sw_n < 8; i--) if (is_listed(&wins[i])) sw_ids[sw_n++] = wins[i].id;
+    if (sw_n < 2) return;
+    sw_active = 1; sw_sel = 1;
+    spring_init(&sw_hl, (float)(sw_sel * SW_TILE), SP_SNAPPY);
+    tween_start(&sw_op, 0, 1, MO_FAST);
+    compose(inflate_r(sw_rect(), 24));
+}
+static void switcher_step(int dir) {
+    if (!sw_active) return;
+    sw_sel = (sw_sel + dir + sw_n) % sw_n;
+    spring_to(&sw_hl, (float)(sw_sel * SW_TILE));
+    compose(inflate_r(sw_rect(), 24));
+}
+static void restore_win(struct win *w);
+static void switcher_commit(void) {
+    int id = sw_active ? sw_ids[sw_sel] : 0;
+    switcher_close();
+    struct win *t = id ? win_by_id(id) : 0;
+    if (!t) return;
+    int ot = wins[nwin - 1].id, ti = (int)(t - wins);
+    if (t->minimized) restore_win(t);
+    if (ti != nwin - 1) raise_win(ti);
+    struct win *o = win_by_id(ot);
+    if (o) compose(outer_of(o));
+    compose(outer_of(&wins[nwin - 1]));
+    if (wins[nwin - 1].wl) wls_focus_keyboard(wins[nwin - 1].wl);
+    winlist_dirty = 1;
+}
 static void restore_win(struct win *w) {
     w->minimized = 0;
     win_anim_start(w);
@@ -829,7 +898,7 @@ static void place_window(struct win *w);
 /* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
 static long long anim_last;
 static int anim_pending(void) {
-    if (toasts_busy() || cur_kind == 3) return 1;
+    if (toasts_busy() || cur_kind == 3 || (sw_active && (spring_busy(&sw_hl) || tween_busy(&sw_op)))) return 1;
     if (icons_busy()) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mns.k != 0 && (spring_busy(&wins[i].mns) || wins[i].mns.t != (hover_min == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
@@ -876,6 +945,7 @@ static void anim_tick(void) {
             compose(rr);
         }
     }
+    if (sw_active) { spring_step(&sw_hl, dt); compose(inflate_r(sw_rect(), 22)); }
     toasts_step(dt);
     if (cur_kind == 3) compose(cur_rect(mx, my, 3));
     if (icons_busy()) { icons_step(dt); for (int j = 0; j < nicons; j++) compose(inflate_r(icon_cell(j), 10)); }
@@ -1177,6 +1247,17 @@ int main(int argc, char **argv) {
             ssize_t kn = read(kbd, ev, 8);
             if (kn == 8 && ev[0] && ev[1] == 0x46) { save_screenshot(); kn = 0; }                      /* Print: screenshot to /tmp */
             if (kn == 8 && ev[0] && ev[1] == 0x14 && (ev[2] & 0x11) && (ev[2] & 0x44)) { quit = 1; kn = 0; }   /* Ctrl+Alt+Q: leave the desktop */
+            if (kn == 8 && ev[1] >= 0xE0 && ev[1] <= 0xE7 && !sw_active) kn = 0;            /* a bare modifier press or release: only the switcher cares */
+            if (kn == 8 && sw_active) {                                                                  /* the switcher is up: it owns the keyboard */
+                if (ev[0] && ev[1] == 0x2B) switcher_step((ev[2] & 0x22) ? -1 : 1);
+                else if (ev[0] && ev[1] == 0x29) switcher_close();                                       /* Esc */
+                else if (!(ev[2] & 0x04)) switcher_commit();                                             /* Alt let go */
+                kn = 0;
+            } else if (kn == 8 && ev[0] && ev[1] == 0x2B && (ev[2] & 0x04) && !(ev[2] & 0x40)) {         /* Alt+Tab opens it */
+                switcher_open();
+                if (!sw_active && nwin > 1) {                                                             /* fewer than two windows: nothing to pick */ }
+                kn = 0;
+            }
             if (kn == 8 && ev[0] && (ev[2] & 0x44) && !(ev[2] & 0x40)) {
                 /* Left-Alt shortcuts (AltGr is not Alt): Enter = new terminal, Tab = cycle, F4 = close */
                 if (ev[1] == 0x28) {
