@@ -71,7 +71,7 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Terminal | Cursor, Farben | Cursor atmet im Leerlauf, ist bei Eingabe voll | ✔ |
 | Zeiger | normal | – (Hand, Text, Warten fehlen) | ◐ |
 | Hintergrund | – | – | ✔ |
-| Benachrichtigungen | – | – | – |
+| Benachrichtigungen (Toasts) | Info, Fertig, Warnung, Fehler; bis zu 4 gestapelt | gleiten per Feder (SP_POP) von rechts ein, stehen 5 s, blenden aus; `thosnotify.h` oder Befehl `thosnotify 'Titel|Text'` | ✔ (Klick zum Schließen –) |
 | Start-Bildschirm / Anmeldung | Splash mit Wortmarke + Fortschrittsbalken, danach Anmeldekonsole im THOS-Farbschema (Logo, zentrierte Spalte, keine Log-Zeilen) | Balken füllt sich an Startmeilensteinen | ◐ (grafische Anmeldung im Desktop –) |
 | Einstellungen (About, Network, Storage, Display) | Seitenleiste Hover/Auswahl, Karten mit Werten, Nutzungsbalken (`ui_bar`) | Platten gleiten, Seite blendet und rutscht 14 px ein (MO_BASE), Werte live alle 2 s | ◐ (Aussehen/Akzent, Ton, Konten fehlen) |
 
