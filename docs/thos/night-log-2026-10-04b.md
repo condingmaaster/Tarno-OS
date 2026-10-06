@@ -71,3 +71,8 @@ Alle Punkte mit Test, außer wo ausdrücklich "ungetestet" steht.
 - Haiku-Fehlersuche in tg3/ehci/hda/ps2: 8 Meldungen, 7 davon falsch (Speicherbarrieren/DMA-Größen waren in Ordnung); eine echte Kleinigkeit (HDA wartete ohne Zeitgrenze) behoben.
 - Offen: 32-Bit-PE (WOW64), `.msi`, GUI-Teile von user32/gdi32, Paketsignaturen, Hover im Startmenü, Icons verschieben.
 - `thos-pkg update` verifiziert jetzt die Signatur von `InRelease` (gpgv + Debian-Archivschlüssel im Image) und die Prüfsummenkette — im Test mit dem echten Archiv bestätigt.
+
+## Nachtrag ~03:00
+- **Ein heruntergeladenes, unverändertes Windows-Programm läuft: `rg.exe` (ripgrep 14.1.1, MSVC-Build).** Dafür nötig: Win64-Einstieg mit „Home space" (MSVC-Startcode schreibt über die Rücksprungadresse), korrektes `SYSTEM_INFO` (Allocation Granularity), SList-Funktionen, `LoadLibraryExW`, `RtlPcToFileHeader` u. a.; ein Absturz meldet jetzt `unhandled exception 0x… at 0x… ` auf stderr und `THOS: pe process … ended with exception status …` im Kernel-Log.
+- Bildbetrachter (`thosview`, PNG/JPEG), Hover im Startmenü, „System info", Autostart (`thos-autostart`), Tipp nach dem Login, `thos-pkg` räumt nach fehlgeschlagenem Entpacken auf und sucht Programme eine Ordnerebene tiefer.
+- Importanalyse von `fd.exe` und `jq.exe`: es fehlen die UCRT (`api-ms-win-crt-*`), `vcruntime140` (C++-Ausnahmen), SRW-Locks und einige advapi32/bcrypt/shell32-Aufrufe — siehe `software-install-plan.md`.
