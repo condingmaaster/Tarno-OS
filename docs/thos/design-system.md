@@ -62,17 +62,17 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Leiste (3 Glas-Pillen) | normal, Hover, Fokus, Druck | Pille federt mit der Summe der Breiten; Knöpfe wachsen und schrumpfen | ✔ (Druck-Zustand –) |
 | Starter / Fensterknopf | Hover, Fokus, vorhanden/weg | Hebung + Vergrößerung (Feder), Fokus blendet, Einblenden beim Öffnen | ✔ |
 | Startmenü | offen/zu, Zeile Hover, Chips an/aus, Fußknöpfe | wächst aus der Start-Pille (Skalierung + Einblenden), Hover-Platte gleitet zwischen Zeilen | ◐ (Chip-Wechsel springt noch) |
-| Fenster | öffnen, Fokus, schließen, Ziehen | Pop-in (Feder + Einblenden), Fokuswechsel weich (Schatten, Titel), Geisterbild beim Schließen | ✔ (Maximieren, Minimieren –) |
+| Fenster | öffnen, Fokus, schließen, Ziehen | Pop-in (Feder + Einblenden), Fokuswechsel weich (Schatten, Titel), Geisterbild beim Schließen | ◐ (Maximieren-Knopf für Wayland-Fenster ✔, Minimieren –) |
 | Schließen-Knopf | Hover | Scheibe blendet per Feder ein | ✔ |
 | Desktop-Symbole | Hover, ausgewählt, Start | Hebung + Lichtplatte, Hüpfer beim Starten | ✔ |
 | Dateimanager | Zeile Hover/Auswahl, Orte, Leer | Auswahl- und Hover-Platte gleiten, weiches Scrollen mit Mausrad, Scrollbalken blendet | ✔ |
-| Software-Zentrale | Suche, Ergebnis Hover/Auswahl, Installieren/Entfernen | wie Dateimanager | ◐ (Knopf-Druck –, Fortschritt –) |
+| Software-Zentrale | Suche, Ergebnis Hover/Auswahl, Installieren/Entfernen | wie Dateimanager | ◐ (Installation läuft in der App: Knopf wird „Installing“ mit gleitendem Balken, letzte Ausgabezeile in der Fußleiste; Knopf-Druck –) |
 | Bildbetrachter | Bild, Fehler | – (Überblenden beim Blättern fehlt) | ◐ |
 | Terminal | Cursor, Farben | Cursor atmet im Leerlauf, ist bei Eingabe voll | ✔ |
 | Zeiger | normal | – (Hand, Text, Warten fehlen) | ◐ |
 | Hintergrund | – | – | ✔ |
 | Benachrichtigungen | – | – | – |
-| Anmeldebildschirm / Start-Animation | – | – | – (Konsole) |
+| Start-Bildschirm / Anmeldung | Splash mit Wortmarke + Fortschrittsbalken, danach Anmeldekonsole im THOS-Farbschema (Logo, zentrierte Spalte, keine Log-Zeilen) | Balken füllt sich an Startmeilensteinen | ◐ (grafische Anmeldung im Desktop –) |
 | Einstellungen | – | – | – |
 
 Neue Elemente kommen zuerst hier als Zeile hinein; erst wenn Zustände und Bewegung beschrieben sind, wird gebaut.

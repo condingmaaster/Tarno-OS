@@ -101,6 +101,51 @@ static void search(void) {
 }
 static void commit(void) { struct wl_msg c = { WL_COMMIT, 0, 0, SW, SH }; (void)!write(sock, &c, sizeof c); }
 static int hover_row = -1;
+/* a running install/remove: thos-pkg's output arrives through a pipe and its last line is shown as progress */
+static int job_fd = -1, job_pid, job_remove, job_ok_shown;
+static char job_name[64], job_line[128];
+static long long job_t0;
+#include <sys/wait.h>
+#include <poll.h>
+#include <fcntl.h>
+static void job_start(const char *name, int remove) {
+    if (job_fd >= 0) return;
+    int p[2];
+    if (pipe(p) != 0) return;
+    int pid = fork();
+    if (pid == 0) {
+        dup2(p[1], 1); dup2(p[1], 2); close(p[0]); close(p[1]);
+        setenv("HOME", "/tmp", 1);
+        const char *tp = getenv("THOS_PKG");
+        if (tp) execl("/busybox", "sh", tp, remove ? "remove" : "install", name, (char *)0);
+        else execl("/bin/thos-pkg", "thos-pkg", remove ? "remove" : "install", name, (char *)0);
+        _exit(127);
+    }
+    close(p[1]);
+    if (pid < 0) { close(p[0]); return; }
+    job_fd = p[0]; job_pid = pid; job_remove = remove; job_t0 = mo_now_ms();
+    snprintf(job_name, sizeof job_name, "%s", name);
+    snprintf(job_line, sizeof job_line, "%s", remove ? "removing ..." : "starting ...");
+    snprintf(status, sizeof status, "%s %s ...", remove ? "removing" : "installing", name);
+}
+static void job_read(void) {                       /* output (a line at a time) while the job runs; its end finishes it */
+    char buf[256];
+    ssize_t n = read(job_fd, buf, sizeof buf - 1);
+    if (n > 0) {
+        buf[n] = 0;
+        char *e = buf + n;
+        while (e > buf && (e[-1] == '\n' || e[-1] == '\r' || e[-1] == ' ')) *--e = 0;
+        char *l = strrchr(buf, '\n');
+        snprintf(job_line, sizeof job_line, "%s", l ? l + 1 : buf);
+        return;
+    }
+    close(job_fd); job_fd = -1;
+    int st = 0;
+    waitpid(job_pid, &st, 0);
+    if (WIFEXITED(st) && WEXITSTATUS(st) == 0) snprintf(status, sizeof status, "%s %s", job_name, job_remove ? "removed" : "installed — find it in the Start menu");
+    else snprintf(status, sizeof status, "%s %s failed: %s", job_remove ? "removing" : "installing", job_name, job_line);
+    job_ok_shown = 1;
+}
 static void render(void) {
     for (int i = 0; i < SW * SH; i++) px[i] = UI_SURFACE;
     /* header with the search field */
@@ -140,7 +185,16 @@ static void render(void) {
         while (ui_text_width(UI_REG, 12, dd) > SW - 76 - 150 && strlen(dd) > 4) dd[strlen(dd) - 1] = 0;
         ui_text(px, SW, SH, 76, y + 40, dd, UI_REG, 12, 0xa8b0c8);
         int bx = SW - 112, by = y + 11, bw = 88;                                          /* the action pill */
-        if (inst) { ui_card(px, SW, SH, bx, by, bw, 28, 14, 0x1d2333, 0x3a4560); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_REG, 12, "Remove")) / 2, by + 19, "Remove", UI_REG, 12, 0xff9aa6); }
+        if (job_fd >= 0 && !strcmp(name, job_name)) {                                  /* busy: an indeterminate bar slides inside the pill */
+            ui_card(px, SW, SH, bx - 8, by, bw + 8, 28, 14, 0x1d2333, 0x4a639e);
+            float ph = (float)((mo_now_ms() - job_t0) % 1200) / 1200.0f;
+            int segw = 28, bxx = bx + (int)((bw - 24) * ph);
+            ui_set_clip(bx - 2, by + 2, bx + bw - 6, by + 26);
+            ui_rrect_g(px, SW, SH, bxx - segw / 2, by + 22, segw, 3, 1, UI_ACCENT_HI, UI_ACCENT_HI, 220);
+            ui_set_clip(0, HEAD, SW, SH - FOOT);
+            const char *bt = job_remove ? "Removing" : "Installing";
+            ui_text(px, SW, SH, bx - 8 + (bw + 8 - ui_text_width(UI_REG, 12, bt)) / 2, by + 18, bt, UI_REG, 12, UI_TEXT);
+        } else if (inst) { ui_card(px, SW, SH, bx, by, bw, 28, 14, 0x1d2333, 0x3a4560); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_REG, 12, "Remove")) / 2, by + 19, "Remove", UI_REG, 12, 0xff9aa6); }
         else { ui_rrect_g(px, SW, SH, bx, by, bw, 28, 14, UI_ACCENT_HI, 0x3f69d6, 255); ui_text(px, SW, SH, bx + (bw - ui_text_width(UI_BOLD, 12, "Install")) / 2, by + 19, "Install", UI_BOLD, 12, 0xffffffu); }
         if (inst) ui_icon(px, SW, SH, bx - 16, by + 14, 0xf00c, 12, UI_GOOD);
     }
@@ -148,7 +202,11 @@ static void render(void) {
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     for (int y = SH - FOOT; y < SW * SH / SW && y < SH; y++) for (int x = 0; x < SW; x++) px[y * SW + x] = 0x1b202e;
     for (int x = 0; x < SW; x++) px[(SH - FOOT) * SW + x] = UI_LINE;
-    ui_text(px, SW, SH, 16, SH - 10, status, UI_REG, 12, UI_MUTED);
+    if (job_fd >= 0) {
+        char ln[200]; snprintf(ln, sizeof ln, "%s %s: %s", job_remove ? "Removing" : "Installing", job_name, job_line);
+        while (ui_text_width(UI_REG, 12, ln) > SW - 32 && strlen(ln) > 4) ln[strlen(ln) - 1] = 0;
+        ui_text(px, SW, SH, 16, SH - 10, ln, UI_REG, 12, UI_TEXT);
+    } else ui_text(px, SW, SH, 16, SH - 10, status, UI_REG, 12, job_ok_shown && strstr(status, "failed") ? 0xff9aa6 : UI_MUTED);
     commit();
 }
 static void in_terminal(const char *cmd) {
@@ -164,8 +222,8 @@ static void act(void) {
     field(&res[list.sel], 0, name, sizeof name);
     for (char *c = name; *c; c++) if (!((*c >= 'a' && *c <= 'z') || (*c >= '0' && *c <= '9') || *c == '-' || *c == '.' || *c == '+')) return;
     snprintf(cmd, sizeof cmd, "/bin/thos-pkg %s %s", installed(name) ? "remove" : "install", name);
-    in_terminal(cmd);
-    snprintf(status, sizeof status, "%s %s ...", installed(name) ? "removing" : "installing", name);
+    (void)cmd;
+    job_start(name, installed(name));
 }
 static void move(int to) { ui_list_select(&list, to); }
 
@@ -191,17 +249,22 @@ int main(void) {
     if (q0) { snprintf(query, sizeof query, "%s", q0); search(); }
     else snprintf(status, sizeof status, index_buf ? "Type a name or a word from the description" : "No package index");
     render();
+    if (getenv("SOFT_AUTO") && nres) { list.sel = 0; act(); }          /* test hook: start the install of the first result */
     printf("soft ready\n");
     fflush(stdout);
     int last_row = -1;
     long long last_click = 0, clk = mo_now_ms();
     for (;;) {
-        int busy = ui_list_busy(&list);
-        int pr = ui_wait(sock, busy);
+        int busy = ui_list_busy(&list) || job_fd >= 0;
+        struct pollfd pf[2] = { { sock, POLLIN, 0 }, { job_fd, POLLIN, 0 } };
+        poll(pf, 2, busy ? MO_FRAME_MS : -1);
+        if (job_fd >= 0 && (pf[1].revents & (POLLIN | POLLHUP))) { job_read(); render(); }
+        int pr = (pf[0].revents & POLLIN) ? 1 : 0;
         long long nowt = mo_now_ms();
         float dt = (float)(nowt - clk) / 1000.0f;
         clk = nowt;
         if (busy) { ui_list_step(&list, dt); render(); }
+        if (!pr && pf[0].revents & (POLLHUP | POLLERR)) break;
         if (pr <= 0) continue;
         if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
         if (m.op == WL_POINTER && m.c == 1) {

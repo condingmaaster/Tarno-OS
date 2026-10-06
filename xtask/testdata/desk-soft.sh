@@ -6,7 +6,16 @@ treesize|1.0|pool/z.deb|abc| libc6|1000|a tree size tool
 X
 thosdesk &
 sleep 1
-SOFT_QUERY=tree thossoft &
+/busybox cat > /opt/fakepkg <<'X'
+#!/busybox sh
+echo "downloading $2"
+/busybox sleep 4
+echo "unpacking $2"
+/busybox sleep 4
+echo fake-pkg-ran $1 $2
+X
+/busybox chmod +x /opt/fakepkg
+SOFT_QUERY=tree SOFT_AUTO=1 THOS_PKG=/opt/fakepkg thossoft &
 sleep 40
 thoswin quit
 sleep 1
