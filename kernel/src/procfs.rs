@@ -170,7 +170,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
         [] => {
-            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "self"]
+            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "self"]
                 .iter()
                 .map(|n| (n.to_string(), if *n == "self" { DT_DIR } else { DT_REG }))
                 .collect();
@@ -193,6 +193,12 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         }
         ["version"] => file(path, "Linux version 6.1.0-thos (thos@thos) (rustc) #1 SMP THOS\n".to_string()),
         ["cpuinfo"] => file(path, cpuinfo()),
+        ["netinfo"] => {
+            let ip = crate::net::local_ip();
+            let up = ip != [0; 4];
+            let dns = crate::net::resolv_conf().unwrap_or_default().replace("nameserver ", "").replace('\n', " ");
+            file(path, format!("link {}\nip {}.{}.{}.{}\ndns {}\n", if up { "up" } else { "down" }, ip[0], ip[1], ip[2], ip[3], dns.trim()))
+        }
         ["pci"] => file(path, pci_list()),
         ["dmesg"] => {
             let f: Arc<dyn FileOps> = Ext2File::new(path.to_string(), crate::serial::log_snapshot());

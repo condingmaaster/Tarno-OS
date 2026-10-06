@@ -858,6 +858,34 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_soft_test(&img);
         }
+        "desk-settings-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/desksettings-serial.log"), root.join("target/desksettings-mon.sock"));
+            let shots = [root.join("target/desksettings1.ppm"), root.join("target/desksettings2.ppm")];
+            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "settings ready", 200) { return; }
+                std::thread::sleep(ms(2000));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                std::thread::sleep(ms(1000));
+                mon(&tsock, "sendkey down");
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "desksettings", "/busybox sh /desk-settings.sh", "desk ok:", 200);
+            let (a, b) = (read_ppm(&shots[0]), read_ppm(&shots[1]));
+            let differ = match (&a, &b) { (Some(x), Some(y)) => x.2.iter().zip(y.2.iter()).filter(|(p, q)| p != q).count() > 2000, _ => false };
+            if out.contains("settings ready") && differ {
+                println!("desk-settings-test PASSED: the settings app opened and switched pages");
+            } else {
+                for l in out.lines().filter(|l| l.contains("settings") || l.contains("desk")) { eprintln!("  {l}"); }
+                eprintln!("desk-settings-test FAILED (shots differ: {differ})");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2063,7 +2091,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2172,14 +2200,14 @@ fn disk_image() -> PathBuf {
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
                 }
                 let out = root.join(format!("target/{prog}"));
-                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
+                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thossettings", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
                 let mut gargs: Vec<String> = vec!["-O1".into(), "-o".into(), out.to_str().unwrap().into(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap().into()];
                 if ui {
                     gargs.extend(["-I/usr/include/freetype2".to_string(), "-lfreetype".to_string(), "-lm".to_string()]);
@@ -5447,7 +5475,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

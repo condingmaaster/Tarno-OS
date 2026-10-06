@@ -194,7 +194,7 @@ static void ui_disc(uint32_t *buf, int bw, int bh, int cx, int cy, int rad, uint
 
 /* the glyph and tile colour a program gets on the desktop, in the Start menu and the software centre */
 static uint32_t ui_app_glyph(const char *label) {
-    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
+    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Settings", IC_COG }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
         { "Win32", IC_WIN }, { "System", IC_INFO }, { "Web", 0xf0ac }, { "Image", IC_IMAGE }, { "GTK", IC_PUZZLE }, { "Pkg", IC_BOX } };
     for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) if (!strncasecmp(label, m[i].k, strlen(m[i].k))) return m[i].g;
     return IC_PUZZLE;
@@ -217,6 +217,16 @@ static void ui_tile(uint32_t *buf, int bw, int bh, int x, int y, int size, const
     ui_rrect_g(buf, bw, bh, x, y, size, size, size / 4, ui_shade(c, 22), ui_shade(c, -18), 255);
     ui_gloss(buf, bw, bh, x, y, size, size, size / 4);
     ui_icon(buf, bw, bh, x + size / 2, y + size / 2, ui_app_glyph(label), size * 5 / 12, 0xffffffu);
+}
+
+/* a horizontal progress / usage bar: a track with a filled, rounded part (frac 0..1) */
+static void ui_bar(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, float frac, uint32_t color) {
+    ui_rrect(buf, bw, bh, x, y, w, h, h / 2, 0x10131c);
+    if (frac < 0) frac = 0;
+    if (frac > 1) frac = 1;
+    int fw = (int)(w * frac);
+    if (fw < h && frac > 0) fw = h;
+    if (frac > 0) ui_rrect_g(buf, bw, bh, x, y, fw, h, h / 2, ui_mix(color, 0xffffffu, 60), color, 255);
 }
 
 /* ---- ui_list: a scrolling list whose selection and hover highlights glide between rows, and which scrolls smoothly ----

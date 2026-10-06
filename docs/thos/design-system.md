@@ -73,6 +73,6 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Hintergrund | – | – | ✔ |
 | Benachrichtigungen | – | – | – |
 | Start-Bildschirm / Anmeldung | Splash mit Wortmarke + Fortschrittsbalken, danach Anmeldekonsole im THOS-Farbschema (Logo, zentrierte Spalte, keine Log-Zeilen) | Balken füllt sich an Startmeilensteinen | ◐ (grafische Anmeldung im Desktop –) |
-| Einstellungen | – | – | – |
+| Einstellungen (About, Network, Storage, Display) | Seitenleiste Hover/Auswahl, Karten mit Werten, Nutzungsbalken (`ui_bar`) | Platten gleiten, Seite blendet und rutscht 14 px ein (MO_BASE), Werte live alle 2 s | ◐ (Aussehen/Akzent, Ton, Konten fehlen) |
 
 Neue Elemente kommen zuerst hier als Zeile hinein; erst wenn Zustände und Bewegung beschrieben sind, wird gebaut.
