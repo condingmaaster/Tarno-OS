@@ -1807,7 +1807,7 @@ pub fn spawn_pe(bytes: &[u8]) -> Result<u64, &'static str> {
     let stack_top = space.new_user_stack();
     let img = crate::pe::load(&space, bytes, stack_top)?; // malformed .exe -> Err, never panic
     // MS x64 ABI: at the entry instruction RSP+8 must be 16-aligned.
-    let rsp = (stack_top & !0xF) - 8;
+    let rsp = (stack_top & !0xF) - 0x28; // a return address plus the 32-byte home space a Win64 entry point may store its registers in
     let task = Task::new(0, space);
     task.mark_pe();
     sched::spawn_user_pe("pe", task.clone(), img.entry, rsp, img.teb);
@@ -1829,7 +1829,7 @@ pub fn spawn_pe_args(bytes: &[u8], cmdline: &[u8], parent: &Arc<Task>) -> Result
         *crate::pe::NEXT_CMDLINE.lock() = None;
         r?
     };
-    let rsp = (stack_top & !0xF) - 8;
+    let rsp = (stack_top & !0xF) - 0x28; // a return address plus the 32-byte home space a Win64 entry point may store its registers in
     let task = Task::new(parent.pid, space);
     *task.fds.lock() = parent.clone_fds();
     task.set_cwd(parent.cwd());

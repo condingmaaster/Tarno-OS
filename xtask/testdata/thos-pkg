@@ -38,7 +38,7 @@ register() {
     done
     [ $n -gt 0 ] && return
     # 2. otherwise: the executables in bin directories (at most five), then loose executables in the top directory
-    for d in "$dir/usr/bin" "$dir/bin" "$dir/usr/games" "$dir"; do
+    for d in "$dir/usr/bin" "$dir/bin" "$dir/usr/games" "$dir" "$dir"/*/; do
         [ -d "$d" ] || continue
         for f in "$d"/*; do
             [ -f "$f" ] || continue

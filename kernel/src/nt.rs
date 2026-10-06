@@ -672,6 +672,11 @@ const MSV_C_SPECIFIC_HANDLER: u16 = 31;
 
 /// Set the exit status and leave ring 3 for good.
 fn proc_terminate(code: i32) -> ! {
+    if (code as u32) >> 28 == 0xC {
+        use core::sync::atomic::Ordering::Relaxed;
+        let lf = &crate::seh::LAST_FAULT;
+        crate::kprintln!("THOS: pe process {} ended with exception status {:#x} (last fault rip={:#x} cr2={:#x} err={:#x})", process::current_pid(), code as u32, lf[0].load(Relaxed), lf[1].load(Relaxed), lf[2].load(Relaxed));
+    }
     process::set_exit_status(code);
     crate::syscall::note_user_exit();
     sched::exit();

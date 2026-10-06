@@ -169,7 +169,9 @@ static void uw_step(u32 type, DISPATCH *d, unsigned char *ctx) {
         d->language_handler = RtlVirtualUnwind(type, d->image_base, pc, d->func, ctx, &hd, &est, 0);
         d->handler_data = hd; d->establisher = est;
     } else {                                                           /* a leaf: the return address is at the top of the stack */
-        u64 rsp = *cx_reg(ctx, 4);
+        u64 rsp = *cx_reg(ctx, 4), sbase, slimit;
+        __asm__("mov %%gs:8, %0" : "=r"(sbase)); __asm__("mov %%gs:0x10, %0" : "=r"(slimit));
+        if (rsp < slimit || rsp + 8 > sbase || (rsp & 7)) { d->establisher = 0; d->image_base = 0; return; }   /* off the stack: the walk ends here */
         d->establisher = rsp; d->image_base = 0;
         *(u64 *)(ctx + CX_RIP) = *(u64 *)rsp; *cx_reg(ctx, 4) = rsp + 8;
     }
@@ -230,10 +232,17 @@ static int uw_dispatch(unsigned char *rec, unsigned char *ctx) {                
     return 0;
 }
 /* registered as a last-resort vectored handler: -1 = resume, 0 = continue searching */
+static void uw_hex(char *out, u64 v) { for (int i = 0; i < 16; i++) out[i] = "0123456789abcdef"[(v >> (60 - 4 * i)) & 15]; }
 static long WINAPI uw_vectored(void **ptrs) {
     unsigned char *rec = ptrs[0], *ctx = ptrs[1];
     if (*(u32 *)(rec + 4) & EXC_UNWINDING) return 0;
-    return uw_dispatch(rec, ctx) ? -1 : 0;
+    if (uw_dispatch(rec, ctx)) return -1;
+    /* nobody handled it: say so on stderr (the process ends right after) */
+    char m[96]; int n = 0; const char *t = "unhandled exception 0x"; while (*t) m[n++] = *t++;
+    uw_hex(m + n, *(u32 *)rec); n += 16; t = " at 0x"; while (*t) m[n++] = *t++; uw_hex(m + n, *(u64 *)(rec + 0x10)); n += 16;
+    if (*(u32 *)rec == 0xC0000005 && *(u32 *)(rec + 0x18) >= 2) { t = " accessing 0x"; while (*t) m[n++] = *t++; uw_hex(m + n, *(u64 *)(rec + 0x30)); n += 16; }
+    m[n++] = '\n'; sc3(1, 2, m, n);
+    return 0;
 }
 extern void *WINAPI RtlAddVectoredExceptionHandler(u32 first, void *handler);
 static void uw_install(void) { RtlAddVectoredExceptionHandler(0, (void *)uw_vectored); }

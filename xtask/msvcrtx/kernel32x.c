@@ -90,7 +90,8 @@ EXPORT void WINAPI GetSystemInfo(void *p) {
     *(u64 *)(b + 24) = 1;               /* active processor mask */
     *(u32 *)(b + 32) = 1;               /* number of processors */
     *(u32 *)(b + 36) = 8664;
-    *(u32 *)(b + 44) = 65536;           /* allocation granularity */
+    *(u32 *)(b + 40) = 65536;           /* allocation granularity */
+    *(unsigned short *)(b + 44) = 6;    /* processor level */
 }
 EXPORT u32 WINAPI GetCurrentDirectoryA(u32 size, char *buf) {
     char p[512];
@@ -1163,5 +1164,21 @@ EXPORT BOOL WINAPI WriteFile(HANDLE h, const void *buf, u32 n, u32 *put, u64 *ov
     if (ov) { ov[0] = 0; ov[1] = (u64)r; { HANDLE ev = (HANDLE)ov[3]; if (ev) SetEvent(ev); } }
     return 1;
 }
+
+
+/* more of what MSVC-built programs (a downloaded rg.exe, say) pull in */
+EXPORT BOOL WINAPI GetComputerNameExW(u32 type, u16 *buf, u32 *size) { (void)type; if (*size < 5) { *size = 5; SetLastError(234); return 0; } a2w("THOS", buf, *size); *size = 4; return 1; }
+EXPORT BOOL WINAPI IsDebuggerPresent(void) { return 0; }
+EXPORT HANDLE WINAPI LoadLibraryExW(const u16 *n, HANDLE f, u32 flags) { (void)f; (void)flags; return LoadLibraryW(n); }
+EXPORT BOOL WINAPI SetStdHandle(u32 id, HANDLE h) { (void)id; (void)h; return 1; }
+EXPORT long WINAPI UnhandledExceptionFilter(void *info) { (void)info; return 1; }
+EXPORT void *WINAPI RtlPcToFileHeader(u64 pc, void **base) { u64 b = 0; if (uw_lookup(pc, &b)) { if (base) *base = (void *)b; return (void *)b; } if (base) *base = 0; return 0; }
+/* interlocked singly linked lists: SLIST_HEADER { Next; depth }, one global lock (a handful of operations, rarely contended) */
+static volatile int slist_lock;
+EXPORT void WINAPI InitializeSListHead(u64 *h) { h[0] = 0; h[1] = 0; }
+EXPORT u64 *WINAPI InterlockedPushEntrySList(u64 *h, u64 *e) { while (__sync_lock_test_and_set(&slist_lock, 1)) sc3(24, 0, 0, 0); u64 *old = (u64 *)h[0]; e[0] = (u64)old; h[0] = (u64)e; h[1] += 1; __sync_lock_release(&slist_lock); return old; }
+EXPORT u64 *WINAPI InterlockedPopEntrySList(u64 *h) { while (__sync_lock_test_and_set(&slist_lock, 1)) sc3(24, 0, 0, 0); u64 *e = (u64 *)h[0]; if (e) { h[0] = e[0]; h[1] -= 1; } __sync_lock_release(&slist_lock); return e; }
+EXPORT u64 *WINAPI InterlockedFlushSList(u64 *h) { while (__sync_lock_test_and_set(&slist_lock, 1)) sc3(24, 0, 0, 0); u64 *e = (u64 *)h[0]; h[0] = 0; h[1] = 0; __sync_lock_release(&slist_lock); return e; }
+EXPORT u16 WINAPI QueryDepthSList(u64 *h) { return (u16)h[1]; }
 
 __attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }

@@ -806,6 +806,18 @@ fn main() {
                 exit(1);
             }
         }
+        "winrg-test" => {
+            // needs the internet once (the release zip is cached in target/rg-win): ripgrep.exe as MSVC built it
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "winrg", "/busybox sh /winrg.sh", "winrg-done", 200);
+            if out.contains("ripgrep 14.1.1") && out.contains("hello-needle-line") && out.contains("rg-rc=0") && out.contains("winrg-done") {
+                println!("winrg-test PASSED: an unmodified, downloaded Windows program (ripgrep 14.1.1, MSVC build) runs and searches a file");
+            } else {
+                for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(25).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
+                eprintln!("winrg-test FAILED");
+                exit(1);
+            }
+        }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkg", "/busybox sh /pkg.sh", "shebang=", 150);
@@ -1937,7 +1949,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrt.sh"] {
+                for f in ["hwreport", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-shot.sh", "desk-view.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -1989,6 +2001,20 @@ fn disk_image() -> PathBuf {
             let cp = root.join("target/cproc.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", cp.to_str().unwrap(), root.join("xtask/testdata/cproc.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} cproc.exe", cp.to_str().unwrap()), img.to_str().unwrap()]));
+            }
+            // a real, unmodified Windows program downloaded from the internet (ripgrep, MSVC build): fetched once into target/
+            let rgdir = root.join("target/rg-win");
+            let rgexe = rgdir.join("rg.exe");
+            if !rgexe.exists() {
+                let _ = std::fs::create_dir_all(&rgdir);
+                let zip = rgdir.join("rg.zip");
+                let ok = Command::new("curl").args(["-sSfL", "-o", zip.to_str().unwrap(), "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip"]).status().map(|s| s.success()).unwrap_or(false);
+                if ok {
+                    let _ = Command::new("unzip").args(["-o", "-q", "-j", zip.to_str().unwrap(), "*/rg.exe", "-d", rgdir.to_str().unwrap()]).status();
+                }
+            }
+            if rgexe.exists() {
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} rg.exe", rgexe.to_str().unwrap()), img.to_str().unwrap()]));
             }
             let ws = root.join("target/wsock.exe");
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", ws.to_str().unwrap(), root.join("xtask/testdata/wsock.c").to_str().unwrap(), "-lws2_32"]).status().map(|s| s.success()).unwrap_or(false) {

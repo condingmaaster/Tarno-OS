@@ -17,6 +17,8 @@ const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
 const STATUS_INTEGER_DIVIDE_BY_ZERO: u32 = 0xC000_0094;
 const STATUS_ACCESS_VIOLATION: u32 = 0xC000_0005;
 
+/// The last user fault delivered to a PE process (rip, cr2, error code): named in the log when that process dies of an exception.
+pub static LAST_FAULT: [core::sync::atomic::AtomicU64; 3] = [core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0)];
 const NT_STUB_BASE: u64 = 0x0000_7FF0_0000_0000;
 /// Per-process vectored-handler slot (one `PVOID`); [`crate::pe`] maps it rw.
 pub const PE_EXC_ADDR: u64 = NT_STUB_BASE + 0x9000;
@@ -214,6 +216,10 @@ extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code:
     }
 
     if from_user && handler != 0 {
+        use core::sync::atomic::Ordering::Relaxed;
+        LAST_FAULT[0].store(frame.rip, Relaxed);
+        LAST_FAULT[1].store(cr2, Relaxed);
+        LAST_FAULT[2].store(error_code, Relaxed);
         let pf = (vector == 14).then_some((error_code, cr2));
         if deliver(frame, code, pf) {
             return;
