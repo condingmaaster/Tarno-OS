@@ -36,6 +36,18 @@ fn main() {
             build_kernel_prod(if args.iter().any(|a| a == "--interactive") { &["interactive"] } else { &[] });
             bios_image();
         }
+        "release-image" => {
+            // the image meant for a real machine: login build, the desktop starts by itself after login (`thos-autostart off` undoes it), room for programs
+            std::env::set_var("THOS_AUTOSTART", "1");
+            if std::env::var("THOS_FS_MIB").is_err() {
+                std::env::set_var("THOS_FS_MIB", "1536");
+            }
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = workspace_root().join("target/thos-release.img");
+            std::fs::copy(&img, &out).expect("copy the release image");
+            println!("release image: {} ({} MiB); write it with: sudo tools/make-stick.sh /dev/sdX {}", out.display(), std::fs::metadata(&out).map(|m| m.len() >> 20).unwrap_or(0), out.display());
+        }
         "bios-test" => {
             build_kernel_prod(&[]);
             let img = bios_image();

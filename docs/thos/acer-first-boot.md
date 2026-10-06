@@ -5,6 +5,7 @@ Stand 2026-10-04. Nichts davon ist auf der echten Hardware getestet; QEMU bildet
 ## Image bauen und auf einen Stick schreiben
 ```
 export PATH=$PATH:/sbin:/usr/sbin
+cargo xtask release-image                # das fertige Stick-Image (Desktop startet nach der Anmeldung von selbst, 1,5 GiB Root): target/thos-release.img
 cargo xtask bios-image --interactive      # ergibt target/thos-bios.img (MBR, FAT32 /boot, ext2-Root, Limine BIOS)
 sudo dd if=target/thos-bios.img of=/dev/sdX bs=4M conv=fsync status=progress     # sdX = der STICK, vorher mit lsblk prüfen!
 ```
