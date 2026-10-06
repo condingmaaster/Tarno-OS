@@ -76,6 +76,7 @@ static int find(struct ent *e, int n, const char *label) {
 static int cmd_exists(const char *cmd) {
     char prog[160];
     if (!*cmd) return access("/thosterm", X_OK) == 0;
+    if (!strncmp(cmd, "TERM:", 5)) cmd += 5;
     while (*cmd) {                                           /* leading VAR=value words are environment */
         const char *sp = cmd + strcspn(cmd, " ="), *w = cmd;
         if (*sp != '=') break;
@@ -111,6 +112,7 @@ static void build_apps(void) {
     add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
     add_app("GTK demo", "/gtkhello 70");
     add_app("Win32 demo", "/thoswin");
+    add_app("System info", "TERM:/bin/hwreport > /dev/null; /busybox less /tmp/hwreport.txt");
     static struct ent extra[MAXA];
     for (int f = 0; f < 2; f++) {
         int nx = load_list(f ? "/opt/apps.conf" : "/apps.conf", extra, MAXA);
@@ -158,7 +160,7 @@ static void draw_bar(void) {
 #define M_HEAD 30
 #define M_ROW 28
 #define M_FOOT 24
-static int mfd = -1, mh, mshm = -1;
+static int mfd = -1, mh, mshm = -1, hover = -1;
 static uint32_t *mpx;
 static unsigned long long closed_ms;
 static unsigned long long ms_now(void) {
@@ -183,6 +185,7 @@ static void draw_menu(void) {
     gfx_str(mpx, M_W, mh, 12, 7, "THOS", 0x00ffffff, 0xFFFFFFFFu);
     for (int r = 0; r < ROWS; r++) {
         int y = M_HEAD + r * M_ROW;
+        if (r == hover) for (int j = 0; j < M_ROW; j++) for (int i = 1; i < M_W - 1; i++) mpx[(y + j) * M_W + i] = 0x00364868;
         if (r >= napps) {
             if (r == napps) for (int i = 1; i < M_W - 1; i++) mpx[y * M_W + i] = 0x00606078;
             gfx_str(mpx, M_W, mh, 12, y + 6, r == napps ? "Quit desktop" : r == napps + 1 ? "Restart" : "Shut down", 0x00ff9090, 0xFFFFFFFFu);
@@ -208,6 +211,7 @@ static void menu_close(void) {
 }
 static void menu_open(void) {
     build_apps();
+    hover = -1;
     mh = M_HEAD + ROWS * M_ROW + M_FOOT;
     mfd = sock_connect();
     if (mfd < 0) return;
@@ -228,6 +232,7 @@ static void menu_open(void) {
 static void launch(const char *cmd) {
     if (fork() != 0) return;
     if (!*cmd) execl("/thosterm", "thosterm", "-l", (char *)0);
+    if (!strncmp(cmd, "TERM:", 5)) execl("/thosterm", "thosterm", "-c", cmd + 5, (char *)0);          /* "TERM:command" runs in a terminal window */
     setenv("XDG_RUNTIME_DIR", "/run", 1); setenv("HOME", "/tmp", 1); setenv("LC_ALL", "C.UTF-8", 1);
     setenv("FONTCONFIG_FILE", "/etc/fonts/fonts.conf", 1); setenv("GDK_BACKEND", "wayland", 1);
     execl("/busybox", "sh", "-c", cmd, (char *)0);
@@ -289,6 +294,12 @@ int main(void) {
         if (poll(pf, 2, 15000) <= 0) continue;
         if (mfd >= 0 && pf[1].revents) {                      /* the menu surface: a click in it, or the compositor closed it */
             if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) { menu_close(); continue; }
+            if (m.op == WL_POINTER && m.c == 0) {            /* motion: light up the row under the pointer */
+                int hr = (int)m.b >= M_HEAD ? ((int)m.b - M_HEAD) / M_ROW : -1;
+                if (hr >= ROWS) hr = -1;
+                if (hr != hover) { hover = hr; draw_menu(); menu_commit(); }
+                continue;
+            }
             if (m.op != WL_POINTER || m.c != 1) continue;
             int x = (int)m.a, y = (int)m.b, r = (y - M_HEAD) / M_ROW;
             if (y < M_HEAD || r >= ROWS) continue;

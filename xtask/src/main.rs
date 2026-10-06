@@ -7277,10 +7277,12 @@ fn desk_menu_test(img: &Path) {
             mon(sock, "mouse_button 0");
             std::thread::sleep(ms(700));
         };
+        // the menu lists 7 programs (Terminal, Files, Software, Text editor, Foot terminal, Win32 demo, System info) plus 3 power rows
+        let row_y = |i: i32| 800 - 32 - 24 - (7 + 3) * 28 + 14 + 28 * i;
         goto(38, 784);                       // Start
         click(&tsock);
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
-        goto(262, 506);                      // "D" toggle of the Terminal row: pin to the desktop (9 rows: 6 programs + quit/restart/shut down)
+        goto(262, row_y(0));                 // "D" toggle of the Terminal row: pin to the desktop
         click(&tsock);
         std::thread::sleep(ms(1500));        // the compositor re-reads /desktop.conf
         goto(700, 300);                      // a click on empty desktop closes the menu
@@ -7288,13 +7290,13 @@ fn desk_menu_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
         goto(38, 784);                       // Start again, then the Terminal row itself
         click(&tsock);
-        goto(238, 590);                      // "T" toggle of the Text editor row (fourth): pin to the taskbar
+        goto(238, row_y(3));                 // "T" toggle of the Text editor row (fourth): pin to the taskbar
         click(&tsock);
-        goto(262, 646);                      // "D" toggle of the Win32 demo row (sixth)
+        goto(262, row_y(5));                 // "D" toggle of the Win32 demo row (sixth)
         click(&tsock);
         std::thread::sleep(ms(1500));
         mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
-        goto(80, 506);
+        goto(80, row_y(0));
         click(&tsock);
         if wait_for(&tlog, "term ready", 40) {
             std::thread::sleep(ms(1500));
@@ -7306,10 +7308,10 @@ fn desk_menu_test(img: &Path) {
         let (w, h, d) = read_ppm(&shots[n])?;
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
-    let menu_open = px(0, 150, 560).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // menu body 0x262634
+    let menu_open = px(0, 150, 520).is_some_and(|c| c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70); // menu body 0x262634
     let icon = px(1, 48, 30).is_some_and(|c| (c.0 as i32 - 18).abs() + (c.1 as i32 - 25).abs() + (c.2 as i32 - 58).abs() > 60); // not wallpaper: an icon
     let icon_shot = px(1, 48, 50);
-    let menu_closed = px(1, 150, 560).is_some_and(|c| !(c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70));
+    let menu_closed = px(1, 150, 520).is_some_and(|c| !(c.0 < 60 && c.1 < 60 && c.2 > 40 && c.2 < 70));
     let term = out.contains("term ready");
     if menu_open && icon && menu_closed && term {
         println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");

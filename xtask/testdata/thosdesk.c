@@ -770,6 +770,12 @@ int main(int argc, char **argv) {
             if (mx > W - 1) mx = W - 1;
             if (my > H - 1) my = H - 1;
             int btn = pkt[0] & 1;
+            if (ddx || ddy)                                  /* start-menu surfaces follow the pointer (c = 0: motion) */
+                for (int i = nwin - 1; i >= 0; i--)
+                    if (wins[i].menu && in(frame_of(&wins[i]), mx, my)) {
+                        struct wl_msg pm = { WL_POINTER, (uint32_t)(mx - wins[i].x), (uint32_t)(my - wins[i].y), 0, 0 };
+                        (void)!write(wins[i].fd, &pm, sizeof pm);
+                    }
             int started_resize = 0;
             if (btn && !prev_btn) {
                 for (int i = nwin - 1; i >= 0 && !started_resize; i--) {
