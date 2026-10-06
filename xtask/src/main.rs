@@ -42,6 +42,9 @@ fn main() {
             if std::env::var("THOS_FS_MIB").is_err() {
                 std::env::set_var("THOS_FS_MIB", "1536");
             }
+            if std::env::var("THOS_NO_BROWSER").is_err() && netsurf_tree().is_some() {
+                std::env::set_var("THOS_NETSURF", "1");            // the web browser (NetSurf with GTK 3) goes into the image: "Web browser" appears in the Start menu
+            }
             build_kernel_prod(&["interactive"]);
             let img = bios_image();
             let out = workspace_root().join("target/thos-release.img");
