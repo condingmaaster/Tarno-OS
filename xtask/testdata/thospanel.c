@@ -217,6 +217,7 @@ static void draw_bar(void) {
     /* left: Start */
     int lw = 118;
     pill(DOCK_X, lw);
+    start_x0 = DOCK_X; start_x1 = DOCK_X + lw;
     if (start_hov.p > 0.02f) ui_rrect_g(col, PW, PH, DOCK_X + 3, sy - 3, lw - 6, 42, 14, 0x2e3858u, 0x2e3858u, fadeto(start_hov.p));
     float lift = start_hov.p * 1.0f;
     ui_rrect_g(col, PW, PH, DOCK_X + 6, sy - (int)(lift + 0.5f), 36, 36, 12, UI_ACCENT_HI, 0x3560d4, 255);
