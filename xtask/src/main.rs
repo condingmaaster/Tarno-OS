@@ -2610,6 +2610,7 @@ fn disk_image() -> PathBuf {
     }
     for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall")] {
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
+        let _ = Command::new("debugfs").args(["-w", "-R", &format!("sif /{f} links_count 2"), img.to_str().unwrap()]).output();      // the hard link counts as a second name (e2fsck checks)
     }
     // links_count = the root `/busybox` entry + every `/bin/*` link.
     let links = 1 + APPLETS.len();
