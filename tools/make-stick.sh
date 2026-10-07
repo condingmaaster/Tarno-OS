@@ -24,6 +24,14 @@ IMGSIZE="$(stat -c %s "$IMG")"
 echo "Erasing $DEV: $MODEL, $((SIZE / 1000000000)) GB (removable, nothing mounted: checked)"
 lsblk "$DEV"
 
+NPART="$(sfdisk -d "$IMG" | grep -c 'start=')"
+if [ "$NPART" = 1 ]; then
+    # a live image (one boot partition that carries the whole system): nothing to grow, write it as it is
+    echo "== writing the live image ($((IMGSIZE / 1048576)) MiB)"
+    dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+    sync
+    partprobe "$DEV" || true
+else
 # Growing the file system ON a USB stick is hopelessly slow (thousands of small writes at about 60 KB/s), so the root partition is grown
 # inside a sparse copy of the image on this computer's disk and the finished image is then written to the stick in one sequential pass.
 ROOT_MIB="${STICK_ROOT_MIB:-16384}"                                  # root size; more of the stick can be used later
@@ -38,5 +46,6 @@ echo "== writing it to the stick ($ROOT_MIB MiB)"
 dd if="$WORK" of="$DEV" bs=4M conv=fsync status=progress
 sync
 partprobe "$DEV" || true
+fi
 echo "== done. Put the stick in the Acer, press F12 at power-on and choose the stick (Legacy/BIOS boot)."
 lsblk -o NAME,SIZE,FSTYPE,LABEL "$DEV"

@@ -54,7 +54,7 @@ fn dev_write(d: Dev, lba: u64, buf: &[u8]) -> Result<(), &'static str> {
 }
 /// Is this the disk the running system lives on?
 fn is_boot_disk(d: Dev) -> bool {
-    (d == Dev::Usb) == crate::blk::is_usb()
+    !crate::blk::is_ram() && (d == Dev::Usb) == crate::blk::is_usb()
 }
 
 pub struct RawDisk {

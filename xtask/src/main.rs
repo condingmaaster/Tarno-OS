@@ -55,6 +55,34 @@ fn main() {
             std::fs::copy(&img, &out).expect("copy the release image");
             println!("release image: {} ({} MiB); write it with: sudo tools/make-stick.sh /dev/sdX {}", out.display(), std::fs::metadata(&out).map(|m| m.len() >> 20).unwrap_or(0), out.display());
         }
+        "release-ram-image" => {
+            // like release-image, but the root file system rides on the boot partition as a boot-loader module and runs from memory:
+            // no USB or disk driver is needed to start (the stick is a live system; the account and files are gone at power-off)
+            std::env::set_var("THOS_RAMROOT", "1");
+            std::env::set_var("THOS_AUTOSTART", "1");
+            if std::env::var("THOS_FS_MIB").is_err() {
+                std::env::set_var("THOS_FS_MIB", "512");
+            }
+            build_kernel_prod(&["interactive"]);
+            let img = bios_image();
+            let out = workspace_root().join("target/thos-live.img");
+            std::fs::copy(&img, &out).expect("copy the live image");
+            println!("live image: {} ({} MiB); write it with: sudo tools/make-stick.sh /dev/sdX {}", out.display(), std::fs::metadata(&out).map(|m| m.len() >> 20).unwrap_or(0), out.display());
+        }
+        "ramroot-test" => {
+            // the root file system comes from a boot-loader module (no usable disk root, no USB): the system must boot to the shell from memory
+            std::env::set_var("THOS_RAMROOT", "1");
+            std::env::set_var("THOS_FS_MIB", "256");
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "ramroot", "echo ram-ok-$((9)); cat /proc/bootdisk; echo ram-end-$((9))", "ram-end-9", 300);
+            if out.contains("root file system module") && out.lines().any(|l| l.trim() == "ram-ok-9") && out.lines().any(|l| l.trim() == "ram") {
+                println!("ramroot-test PASSED: with the root file system as a boot-loader module the system booted to the shell from memory (no USB, no disk root)");
+            } else {
+                for l in out.lines().filter(|l| l.contains("THOS: boot") || l.contains("cannot continue") || l.contains("ram")).take(12) { eprintln!("  {l}"); }
+                eprintln!("ramroot-test FAILED");
+                exit(1);
+            }
+        }
         "bios-test" => {
             build_kernel_prod(&[]);
             let img = bios_image();
@@ -2071,17 +2099,28 @@ const QEMU_SUCCESS: i32 = 33;
 /// xtask changes. Needs `as`, `ld`, `mke2fs`, `debugfs` on PATH.
 /// Root filesystem size in MiB (`THOS_FS_MIB`, default 128; bigger images skip the ESP/scratch area).
 /// `boot/limine.conf`, plus `resolution: WxH` when `THOS_RES` is set (to try the desktop at the Acer's 1366x768).
+fn ramroot() -> bool {
+    std::env::var("THOS_RAMROOT").is_ok()
+}
+
+/// boot/limine.conf, with `resolution:` when THOS_RES is set and the root file system as a module when THOS_RAMROOT is set.
 fn limine_conf(root: &Path) -> PathBuf {
     let src = root.join("boot/limine.conf");
-    let Ok(res) = std::env::var("THOS_RES") else { return src };
-    let text = std::fs::read_to_string(&src).expect("read limine.conf").replace("    protocol: limine\n", &format!("    protocol: limine\n    resolution: {res}\n"));
-    let out = root.join("target/limine-res.conf");
-    std::fs::write(&out, text).expect("write limine conf");
-    // mcopy keeps the file name, so give it the right one
+    let res = std::env::var("THOS_RES").ok();
+    if res.is_none() && !ramroot() {
+        return src;
+    }
+    let mut text = std::fs::read_to_string(&src).expect("read limine.conf");
+    if let Some(res) = res {
+        text = text.replace("    protocol: limine\n", &format!("    protocol: limine\n    resolution: {res}\n"));
+    }
+    if ramroot() {
+        text = text.replace("    kernel_path: boot():/boot/thos-kernel\n", "    kernel_path: boot():/boot/thos-kernel\n    module_path: boot():/boot/thos-root.ext2\n");
+    }
     let dir = root.join("target/limine-res");
     std::fs::create_dir_all(&dir).expect("mkdir");
     let named = dir.join("limine.conf");
-    std::fs::copy(&out, &named).expect("copy");
+    std::fs::write(&named, text).expect("write limine conf");     // mcopy keeps the file name, so it has the right one
     named
 }
 
@@ -6132,7 +6171,11 @@ fn bios_image() -> PathBuf {
     let boot = root.join("target/bios-boot.img");
     let b = boot.to_str().unwrap();
     let _ = std::fs::remove_file(&boot);
-    std::fs::write(&boot, vec![0u8; (BOOT_MIB << 20) as usize]).expect("create boot partition");
+    // THOS_RAMROOT: the boot partition also carries the root file system (a module the boot loader loads into memory), sized to hold it
+    let _ = std::fs::remove_file(root.join("target/disk.img"));
+    let ram_fs = if ramroot() { Some(disk_image()) } else { None };
+    let boot_mib = match &ram_fs { Some(f) => BOOT_MIB + std::fs::metadata(f).map(|m| m.len() >> 20).unwrap_or(0) + 16, None => BOOT_MIB };
+    std::fs::write(&boot, vec![0u8; (boot_mib << 20) as usize]).expect("create boot partition");
     run(Command::new("mkfs.fat").args(["-F", "32", "-n", "THOSBOOT", b]));
     run(Command::new("mmd").args(["-i", b, "::boot", "::boot/limine"]));
     for (src, dst) in [
@@ -6142,12 +6185,14 @@ fn bios_image() -> PathBuf {
     ] {
         run(Command::new("mcopy").args(["-i", b, src.to_str().unwrap(), dst]));
     }
+    if let Some(f) = &ram_fs {
+        run(Command::new("mcopy").args(["-i", b, f.to_str().unwrap(), "::boot/thos-root.ext2"]));
+    }
 
     // Always start from a pristine root FS: other tests (`kbd-test`, ...) boot
     // `target/disk.img` itself and leave an admin account / hives behind, which
     // would turn the next first-run setup into a login prompt.
-    let _ = std::fs::remove_file(root.join("target/disk.img"));
-    let rootfs = std::fs::read(disk_image()).expect("read disk.img");
+    let rootfs = match &ram_fs { Some(_) => Vec::new(), None => { let _ = std::fs::remove_file(root.join("target/disk.img")); std::fs::read(disk_image()).expect("read disk.img") } };
     let boot_bytes = std::fs::read(&boot).expect("read boot partition");
     let boot_secs = boot_bytes.len() as u64 / 512;
     let root_secs = rootfs.len() as u64 / 512;
@@ -6155,12 +6200,11 @@ fn bios_image() -> PathBuf {
 
     let mut disk = vec![0u8; (GAP_SECTORS * 512) as usize];
     // Entries: CHS left at the 0xFE 0xFF 0xFF "use LBA" sentinel.
-    for (i, (active, ptype, start, len)) in [
-        (0x80u8, 0x0Cu8, GAP_SECTORS, boot_secs),
-        (0x00, 0x83, root_start, root_secs),
-    ]
-    .into_iter()
-    .enumerate()
+    let mut parts = vec![(0x80u8, 0x0Cu8, GAP_SECTORS, boot_secs)];
+    if root_secs > 0 {
+        parts.push((0x00, 0x83, root_start, root_secs));
+    }
+    for (i, (active, ptype, start, len)) in parts.into_iter().enumerate()
     {
         let e = 0x1BE + i * 16;
         disk[e] = active;

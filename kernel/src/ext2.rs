@@ -144,6 +144,13 @@ impl SectorCache {
     }
 }
 
+/// Forget every cached sector and the partition offset: the root device changed (the cache is keyed by LBA only, so sectors of the previous
+/// device, a SATA disk that turned out not to hold THOSROOT, would otherwise answer for the new one).
+pub fn reset_cache() {
+    *CACHE.lock() = SectorCache { map: BTreeMap::new(), tick: 0 };
+    PART_LBA.store(0, Ordering::Relaxed);
+}
+
 /// Read `sectors` sectors starting at ext2-relative `start_lba` through the cache.
 fn read_sectors(start_lba: u64, sectors: usize) -> Vec<u8> {
     let part = PART_LBA.load(Ordering::Relaxed);

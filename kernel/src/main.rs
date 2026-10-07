@@ -134,6 +134,10 @@ static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
 
 #[used]
 #[link_section = ".requests"]
+static MODULES_REQUEST: limine::request::ModulesRequest = limine::request::ModulesRequest::new();
+
+#[used]
+#[link_section = ".requests"]
 static MP_REQUEST: MpRequest = MpRequest::new(0);
 
 #[used]
@@ -1638,8 +1642,27 @@ fn start_input_devices() {
 fn boot_system() {
     let mut have_root = ahci::init().is_ok() && ext2::open().is_ok();
     if !have_root {
-        // booted from a stick (or the SATA disk carries no THOSROOT filesystem): look for USB mass storage
-        kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk; trying USB storage");
+        // booted from a stick (or the SATA disk carries no THOSROOT filesystem). A root file system loaded into memory by the boot
+        // loader (module thos-root.ext2 on the boot partition) comes first: it needs no USB driver. Then USB mass storage.
+        kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk");
+        if let Some(r) = MODULES_REQUEST.response() {
+            for f in r.modules() {
+                if f.path().ends_with("thos-root.ext2") {
+                    let d = f.data();
+                    kprintln!("THOS: boot             root file system module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
+                    blk::use_ram(d.as_ptr() as u64, d.len() as u64);
+                    ext2::reset_cache();
+                    have_root = ext2::open().is_ok();
+                    if !have_root {
+                        kprintln!("THOS: boot             the module is not a THOSROOT file system");
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    if !have_root {
+        kprintln!("THOS: boot             trying USB storage");
         match ehci::init() {
             Ok(e) => {
                 let found = e.has_msc();
@@ -1647,6 +1670,7 @@ fn boot_system() {
                 *EHCI.lock() = Some(e);
                 if found {
                     blk::use_usb();
+                    ext2::reset_cache();
                     kprintln!("THOS: usb msc ok       {} MiB mass-storage device", sectors / 2048);
                     have_root = ext2::open().is_ok();
                 }

@@ -193,7 +193,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         }
         ["version"] => file(path, "Linux version 6.1.0-thos (thos@thos) (rustc) #1 SMP THOS\n".to_string()),
         ["cpuinfo"] => file(path, cpuinfo()),
-        ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_usb() { "usb" } else { "sata" })),
+        ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_ram() { "ram" } else if crate::blk::is_usb() { "usb" } else { "sata" })),
         ["netinfo"] => {
             let ip = crate::net::local_ip();
             let up = ip != [0; 4];
