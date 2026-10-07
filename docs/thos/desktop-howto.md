@@ -70,3 +70,17 @@ Tests: `cargo xtask desk-test | desk-kbd-test | desk-term-test | desk-panel-test
 - **Bildbetrachter** (`thosview`, öffnet sich per Doppelklick auf `.png`/`.jpg` im Dateimanager): PNG über libpng, JPEG über libjpeg, skaliert aufs Fenster; Links/Rechts blättert durch den Ordner, Esc schließt. Test: `desk-view-test`.
 - **Startmenü:** die Zeile unter dem Zeiger leuchtet auf; „System info" führt `hwreport` aus und zeigt das Ergebnis in `less`.
 - **Autostart:** `thos-autostart on` (siehe `acer-first-boot.md`).
+
+## Bedienung im Überblick (Stand 2026-10-07)
+| Was | Wie |
+|---|---|
+| Programme starten | Start-Knopf unten links (Chips pinnen ans Dock / auf den Desktop); Rechtsklick auf den Desktop: Terminal, Dateien, Editor, Einstellungen, Hintergrund wechseln |
+| Fenster wechseln | Alt+Tab (Alt halten, Tab weiter, Umschalt+Tab zurück, loslassen wählt, Esc bricht ab); Klick auf den Knopf im Dock |
+| Minimieren / Maximieren / Schließen | Knöpfe oben rechts im Fenster; ein Klick auf den Dock-Knopf des aktiven Fensters minimiert es, auf ein minimiertes holt es zurück; Alt+Pfeil hoch maximiert, Alt+F4 schließt |
+| Neues Terminal | Alt+Enter |
+| Bildschirmfoto | Taste Druck (PNG nach `/tmp`) |
+| Uhr, Kalender | Klick auf die Uhr rechts unten; der grüne Stecker daneben zeigt die Netzverbindung, Klick öffnet die Netzwerk-Einstellungen |
+| Aussehen | Einstellungen › Appearance: Akzentfarbe, Hintergrund (wirkt sofort in allen Fenstern) |
+| Programme installieren | Software-Zentrale (Fortschritt im Fenster, Meldung rechts oben) oder Doppelklick auf `.deb`/`.rpm`/… im Dateimanager |
+| Auf die interne Platte installieren | vom Stick: Startmenü „Install THOS" oder `thos-install` (löscht die Platte, fragt zweimal) |
+| Dateien | `/home/<name>` mit Dokumente, Downloads, Bilder, Desktop; der Texteditor (`thosedit`) öffnet Textdateien per Doppelklick im Dateimanager, Strg+S speichert |
