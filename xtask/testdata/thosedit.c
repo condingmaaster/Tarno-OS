@@ -28,7 +28,7 @@
 #define MAXLINES 200000
 static uint32_t *px;
 static int sock;
-static char **ln;                    /* the lines, without newlines */
+static uint32_t **ln;                /* the lines as code points, without newlines (German umlauts and the rest of Unicode just work) */
 static int *ll, *lc;                 /* lengths and capacities */
 static int nl;
 static int cy, cx, want;             /* caret line, column, remembered column for up/down */
@@ -44,7 +44,7 @@ static void line_ins(int at) {
     if (nl >= MAXLINES) return;
     ln = realloc(ln, sizeof *ln * (size_t)(nl + 1)); ll = realloc(ll, sizeof *ll * (size_t)(nl + 1)); lc = realloc(lc, sizeof *lc * (size_t)(nl + 1));
     memmove(&ln[at + 1], &ln[at], sizeof *ln * (size_t)(nl - at)); memmove(&ll[at + 1], &ll[at], sizeof *ll * (size_t)(nl - at)); memmove(&lc[at + 1], &lc[at], sizeof *lc * (size_t)(nl - at));
-    lc[at] = 32; ll[at] = 0; ln[at] = malloc(32);
+    lc[at] = 32; ll[at] = 0; ln[at] = malloc(32 * sizeof(uint32_t));
     nl++;
 }
 static void line_del(int at) {
@@ -52,12 +52,13 @@ static void line_del(int at) {
     memmove(&ln[at], &ln[at + 1], sizeof *ln * (size_t)(nl - at - 1)); memmove(&ll[at], &ll[at + 1], sizeof *ll * (size_t)(nl - at - 1)); memmove(&lc[at], &lc[at + 1], sizeof *lc * (size_t)(nl - at - 1));
     nl--;
 }
-static void line_put(int at, int pos, const char *s, int n) {        /* insert n bytes at pos in line at */
-    if (ll[at] + n + 1 > lc[at]) { lc[at] = (ll[at] + n + 1) * 2; ln[at] = realloc(ln[at], (size_t)lc[at]); }
-    memmove(ln[at] + pos + n, ln[at] + pos, (size_t)(ll[at] - pos));
-    memcpy(ln[at] + pos, s, (size_t)n);
+static void line_put(int at, int pos, const uint32_t *s, int n) {    /* insert n code points at pos in line at */
+    if (ll[at] + n + 1 > lc[at]) { lc[at] = (ll[at] + n + 1) * 2; ln[at] = realloc(ln[at], (size_t)lc[at] * sizeof(uint32_t)); }
+    memmove(ln[at] + pos + n, ln[at] + pos, (size_t)(ll[at] - pos) * sizeof(uint32_t));
+    memcpy(ln[at] + pos, s, (size_t)n * sizeof(uint32_t));
     ll[at] += n;
 }
+static void put_cp(int at, uint32_t cp) { line_put(at, ll[at], &cp, 1); }
 static void load(const char *p) {
     line_ins(0);
     FILE *f = fopen(p, "r");
@@ -65,12 +66,20 @@ static void load(const char *p) {
     char buf[4096];
     int cur = 0;
     size_t n, total = 0;
+    uint32_t cp = 0; int need = 0;                                     /* UTF-8 decoder state */
     while ((n = fread(buf, 1, sizeof buf, f)) > 0 && total < (4u << 20)) {
         total += n;
         for (size_t i = 0; i < n; i++) {
-            if (buf[i] == '\n') { line_ins(cur + 1); cur++; }
-            else if (buf[i] == '\r') continue;
-            else { char c = buf[i] == '\t' ? ' ' : buf[i]; line_put(cur, ll[cur], &c, 1); }
+            unsigned char b = (unsigned char)buf[i];
+            if (b == '\n') { line_ins(cur + 1); cur++; need = 0; }
+            else if (b == '\r') continue;
+            else if (b == '\t') put_cp(cur, ' ');
+            else if (need) { if ((b & 0xC0) == 0x80) { cp = (cp << 6) | (b & 0x3F); if (--need == 0) put_cp(cur, cp); } else { need = 0; put_cp(cur, 0xFFFD); } }
+            else if (b < 0x80) put_cp(cur, b);
+            else if ((b & 0xE0) == 0xC0) { cp = b & 0x1F; need = 1; }
+            else if ((b & 0xF0) == 0xE0) { cp = b & 0x0F; need = 2; }
+            else if ((b & 0xF8) == 0xF0) { cp = b & 0x07; need = 3; }
+            else put_cp(cur, 0xFFFD);
         }
     }
     fclose(f);
@@ -80,7 +89,18 @@ static void load(const char *p) {
 static int save(void) {
     FILE *f = fopen(path, "w");
     if (!f) { snprintf(msg, sizeof msg, "Cannot save %s", path); thos_notify(3, "Not saved|cannot write the file"); return -1; }
-    for (int i = 0; i < nl; i++) { fwrite(ln[i], 1, (size_t)ll[i], f); fputc('\n', f); }
+    for (int i = 0; i < nl; i++) {
+        for (int k = 0; k < ll[i]; k++) {
+            uint32_t c = ln[i][k];
+            char o[4]; int m = 0;
+            if (c < 0x80) o[m++] = (char)c;
+            else if (c < 0x800) { o[m++] = (char)(0xC0 | (c >> 6)); o[m++] = (char)(0x80 | (c & 0x3F)); }
+            else if (c < 0x10000) { o[m++] = (char)(0xE0 | (c >> 12)); o[m++] = (char)(0x80 | ((c >> 6) & 0x3F)); o[m++] = (char)(0x80 | (c & 0x3F)); }
+            else { o[m++] = (char)(0xF0 | (c >> 18)); o[m++] = (char)(0x80 | ((c >> 12) & 0x3F)); o[m++] = (char)(0x80 | ((c >> 6) & 0x3F)); o[m++] = (char)(0x80 | (c & 0x3F)); }
+            fwrite(o, 1, (size_t)m, f);
+        }
+        fputc('\n', f);
+    }
     fclose(f);
     modified = 0;
     snprintf(msg, sizeof msg, "Saved %s", path);
@@ -123,10 +143,17 @@ static void render(void) {
         if (i == cy) { ui_rrect(px, EW, EH, GUT, y, EW - GUT, LH, 0, 0x1b2132); }
         char num[12]; snprintf(num, sizeof num, "%d", i + 1);
         ui_text(px, EW, EH, GUT - 12 - ui_text_width(UI_MONO, 12, num), y + 15, num, UI_MONO, 12, i == cy ? 0xb4bbd0u : 0x5b6580);
-        char vis[1024]; int n = ll[i] < 1000 ? ll[i] : 1000;
-        for (int k = 0; k < n; k++) vis[k] = (unsigned char)ln[i][k] < 32 || (unsigned char)ln[i][k] > 126 ? '?' : ln[i][k];
-        vis[n] = 0;
-        if (n) ui_text(px, EW, EH, GUT + 12, y + 15, vis, UI_MONO, FS, UI_TEXT);
+        char vis[2048]; int n = ll[i] < 400 ? ll[i] : 400, m = 0;
+        for (int k = 0; k < n; k++) {
+            uint32_t c = ln[i][k];
+            if (c < 32) c = '?';
+            if (c < 0x80) vis[m++] = (char)c;
+            else if (c < 0x800) { vis[m++] = (char)(0xC0 | (c >> 6)); vis[m++] = (char)(0x80 | (c & 0x3F)); }
+            else if (c < 0x10000) { vis[m++] = (char)(0xE0 | (c >> 12)); vis[m++] = (char)(0x80 | ((c >> 6) & 0x3F)); vis[m++] = (char)(0x80 | (c & 0x3F)); }
+            else { vis[m++] = (char)(0xF0 | (c >> 18)); vis[m++] = (char)(0x80 | ((c >> 12) & 0x3F)); vis[m++] = (char)(0x80 | ((c >> 6) & 0x3F)); vis[m++] = (char)(0x80 | (c & 0x3F)); }
+        }
+        vis[m] = 0;
+        if (m) ui_text(px, EW, EH, GUT + 12, y + 15, vis, UI_MONO, FS, UI_TEXT);
         if (i == cy && blink_on) ui_rrect(px, EW, EH, GUT + 12 + cx * cw, y + 2, 2, LH - 4, 1, UI_ACCENT_HI);
     }
     for (int y = HEAD; y < EH - STATUS; y++) px[y * EW + GUT] = UI_LINE;
@@ -137,7 +164,7 @@ static void render(void) {
     char st[64]; snprintf(st, sizeof st, "Ln %d, Col %d", cy + 1, cx + 1);
     ui_text(px, EW, EH, 16, EH - 9, st, UI_REG, 12, UI_MUTED);
     ui_text(px, EW, EH, 150, EH - 9, msg, UI_REG, 12, 0x8e97ae);
-    const char *hint = "Ctrl+S save   plain text";
+    const char *hint = "Ctrl+S save   UTF-8 text";
     ui_text(px, EW, EH, EW - 16 - ui_text_width(UI_REG, 12, hint), EH - 9, hint, UI_REG, 12, 0x657090);
     struct wl_msg c = { WL_COMMIT, 0, 0, EW, EH };
     (void)!write(sock, &c, sizeof c);
@@ -161,14 +188,14 @@ static void edit_key(const struct wl_msg *m) {
         ll[cy] = cx;
         cy++; cx = 0; want = 0; modified = 1;
     } else if (a == 0x2A) {                                                                    /* Backspace */
-        if (cx > 0) { memmove(ln[cy] + cx - 1, ln[cy] + cx, (size_t)(ll[cy] - cx)); ll[cy]--; cx--; modified = 1; }
+        if (cx > 0) { memmove(ln[cy] + cx - 1, ln[cy] + cx, (size_t)(ll[cy] - cx) * sizeof(uint32_t)); ll[cy]--; cx--; modified = 1; }
         else if (cy > 0) { int px0 = ll[cy - 1]; line_put(cy - 1, px0, ln[cy], ll[cy]); line_del(cy); cy--; cx = px0; modified = 1; }
         want = cx;
     } else if (a == 0x4C) {                                                                    /* Delete */
-        if (cx < ll[cy]) { memmove(ln[cy] + cx, ln[cy] + cx + 1, (size_t)(ll[cy] - cx - 1)); ll[cy]--; modified = 1; }
+        if (cx < ll[cy]) { memmove(ln[cy] + cx, ln[cy] + cx + 1, (size_t)(ll[cy] - cx - 1) * sizeof(uint32_t)); ll[cy]--; modified = 1; }
         else if (cy + 1 < nl) { line_put(cy, ll[cy], ln[cy + 1], ll[cy + 1]); line_del(cy + 1); modified = 1; }
-    } else if (a == 0x2B) { line_put(cy, cx, "    ", 4); cx += 4; want = cx; modified = 1; }
-    else if (!ctrl && c >= 32 && c < 127) { char ch = (char)c; line_put(cy, cx, &ch, 1); cx++; want = cx; modified = 1; }
+    } else if (a == 0x2B) { static const uint32_t sp[4] = { ' ', ' ', ' ', ' ' }; line_put(cy, cx, sp, 4); cx += 4; want = cx; modified = 1; }
+    else if (!ctrl && c >= 32 && c != 127 && c < 0x110000) { uint32_t ch = c; line_put(cy, cx, &ch, 1); cx++; want = cx; modified = 1; }
     else return;
     if (modified != was_mod) set_title();
     if (modified) snprintf(msg, sizeof msg, "Edited");

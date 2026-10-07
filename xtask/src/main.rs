@@ -1118,7 +1118,7 @@ fn main() {
                 let ms = std::time::Duration::from_millis;
                 if !wait_for(&tlog, "edit ready", 200) { return; }
                 std::thread::sleep(ms(1500));
-                for ch in ["h", "e", "l", "l", "o", "spc"] { mon(&tsock, &format!("sendkey {ch}")); std::thread::sleep(ms(120)); }
+                for ch in ["h", "e", "l", "l", "o", "spc", "apostrophe"] { mon(&tsock, &format!("sendkey {ch}")); std::thread::sleep(ms(120)); }
                 mon(&tsock, "sendkey ret");
                 std::thread::sleep(ms(300));
                 mon(&tsock, "sendkey ctrl-s");
@@ -1126,9 +1126,9 @@ fn main() {
                 mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
             });
             let out = boot_and_run(&img, "deskedit", "/busybox sh /desk-edit.sh", "desk ok:", 200);
-            let saved = out.lines().any(|l| l.trim() == "note-line1=hello") && out.lines().any(|l| l.trim() == "note-line2=alpha");
+            let saved = out.lines().any(|l| l.trim() == "note-line1=hello ä") && out.lines().any(|l| l.trim() == "note-line2=alpha");
             if saved {
-                println!("desk-edit-test PASSED: the editor opened a file, typed text and a new line landed in it, and Ctrl+S wrote it back");
+                println!("desk-edit-test PASSED: the editor opened a file, typed text (with an umlaut) and a new line landed in it, and Ctrl+S wrote it back as UTF-8");
             } else {
                 for l in out.lines().filter(|l| l.contains("note") || l.contains("edit") || l.contains("desk")) { eprintln!("  {l}"); }
                 eprintln!("desk-edit-test FAILED");
