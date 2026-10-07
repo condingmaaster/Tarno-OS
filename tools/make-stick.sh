@@ -24,20 +24,19 @@ IMGSIZE="$(stat -c %s "$IMG")"
 echo "Erasing $DEV: $MODEL, $((SIZE / 1000000000)) GB (removable, nothing mounted: checked)"
 lsblk "$DEV"
 
-echo "== writing the image ($((IMGSIZE / 1048576)) MiB)"
-dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
+# Growing the file system ON a USB stick is hopelessly slow (thousands of small writes at about 60 KB/s), so the root partition is grown
+# inside a sparse copy of the image on this computer's disk and the finished image is then written to the stick in one sequential pass.
+ROOT_MIB="${STICK_ROOT_MIB:-16384}"                                  # root size; more of the stick can be used later
+MAX_MIB=$((SIZE / 1048576 - 8))
+[ "$ROOT_MIB" -le "$MAX_MIB" ] || ROOT_MIB="$MAX_MIB"
+WORK="$(mktemp "$(dirname "$IMG")/stick-work.XXXXXX")"
+trap 'rm -f "$WORK"' EXIT
+echo "== growing a copy of the image to $ROOT_MIB MiB (on this computer, fast)"
+cp --sparse=always "$IMG" "$WORK"
+"$(dirname "$0")/grow-image.sh" "$WORK" "$ROOT_MIB"
+echo "== writing it to the stick ($ROOT_MIB MiB)"
+dd if="$WORK" of="$DEV" bs=4M conv=fsync status=progress
 sync
-echo "== growing the root partition to the end of the stick"
-# the image has two MBR partitions: 1 = FAT32 /boot, 2 = ext2 THOSROOT (the last one). Extend 2 to the end of the disk.
-PART_START="$(sfdisk -d "$DEV" | awk '/'"$(basename "$DEV")"'2 :/ { gsub(",", ""); for (i = 1; i <= NF; i++) if ($i == "start=") print $(i + 1) }')"
-[ -n "$PART_START" ] || { echo "could not read the partition table of the stick"; exit 1; }
-echo "start=$PART_START, type=83" | sfdisk --no-reread -N 2 "$DEV" >/dev/null
 partprobe "$DEV" || true
-sleep 2
-ROOTPART="${DEV}2"
-[ -b "$ROOTPART" ] || ROOTPART="${DEV}p2"
-e2fsck -fy "$ROOTPART" || true
-resize2fs "$ROOTPART"
-sync
 echo "== done. Put the stick in the Acer, press F12 at power-on and choose the stick (Legacy/BIOS boot)."
 lsblk -o NAME,SIZE,FSTYPE,LABEL "$DEV"
