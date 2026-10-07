@@ -75,3 +75,7 @@ Läuft THOS vom Stick, kann es sich auf die interne Platte kopieren (in QEMU mit
 
 Technik dahinter: neue Rohgeräte `/dev/sda` (SATA) und `/dev/sdb` (USB) samt `/dev/sda1..4` (nur root; die Platte, von der gebootet wurde, ist schreibgeschützt), `/proc/bootdisk` (`usb` oder `sata`), `pwrite64`, THOS-Aufruf `readpass`, `thoselevate` (Admin-Passwort, dann Programm als root).
 Offen: die Root-Partition behält die Größe der Stick-Partition (der Rest der SSD bleibt frei); Größenanpassung folgt.
+
+## Hardware-Bericht ohne Fotos
+Im Terminal `hwreport` ausführen: der Bericht (CPU, Speicher, PCI, Platten, Netz, Kernel-Log) liegt danach in `/tmp/hwreport.txt` und in `~/hwreport.txt`.
+Den Stick an einen Linux-Rechner stecken: Partition 2 ist ein normales ext2, darin `home/<name>/hwreport.txt` lesen und mir schicken.
