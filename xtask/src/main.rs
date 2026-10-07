@@ -1420,6 +1420,45 @@ fn main() {
                 None => { eprintln!("video-theme FAILED"); exit(1); }
             }
         }
+        "video-desktop" => {
+            let img = prod_interactive_image(cmd);
+            let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
+                let wait = |s: u64| std::thread::sleep(std::time::Duration::from_secs(s));
+                let mut cur = (640, 400);
+                wait(12);
+                pointer_to(&sock, &mut cur, 380, 260);
+                wait(4);
+                mon(&sock, "mouse_button 2");
+                wait(1);
+                mon(&sock, "mouse_button 0");
+                wait(10);
+                for i in 0..5 { pointer_to(&sock, &mut cur, 480, 260 + 26 + 36 * i); wait(4); }       // glide down the rows
+                pointer_to(&sock, &mut cur, 480, 260 + 26 + 36);                                      // Files
+                wait(4);
+                pointer_click(&sock);
+                wait(22);
+                if let Some((wx, wy)) = log_window(&log, "780x500", 0) {
+                    pointer_to(&sock, &mut cur, wx + 780 - 53, wy - 19);                              // minimize it
+                    wait(5);
+                    pointer_click(&sock);
+                }
+                wait(14);
+                pointer_to(&sock, &mut cur, 700, 300);
+                wait(4);
+                mon(&sock, "mouse_button 2");
+                wait(1);
+                mon(&sock, "mouse_button 0");
+                wait(8);
+                pointer_to(&sock, &mut cur, 800, 300 + 26 + 36 * 4);                                  // Change wallpaper
+                wait(5);
+                pointer_click(&sock);
+                wait(16);
+            });
+            match record_video(&img, "videodesktop", "/busybox sh /desk-video-ctx.sh", "panel ready", 150, 20, Some(act)) {
+                Some(p) => println!("video: {}", p.display()),
+                None => { eprintln!("video-desktop FAILED"); exit(1); }
+            }
+        }
         "video-menu" => {
             let img = prod_interactive_image(cmd);
             let act: Box<dyn FnOnce(PathBuf, PathBuf) + Send> = Box::new(|log, sock| {
@@ -2536,7 +2575,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
