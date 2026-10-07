@@ -259,6 +259,7 @@ impl Ehci {
         self.control(hub, setup_pkt(0, 9, 1, 0, 0), false, 0)?;
         let hd = self.control(hub, setup_pkt(0xA0, 6, 0x2900, 0, 8), true, 8)?;
         let n = *hd.get(2).ok_or("EHCI: short hub descriptor")? as u16;
+        crate::kprintln!("THOS: usb              hub with {} ports", n);
         for p in 1..=n {
             let _ = self.control(hub, setup_pkt(0x23, 3, 8, p, 0), false, 0); // PORT_POWER
         }
@@ -269,16 +270,24 @@ impl Ehci {
             if st.len() < 4 || st[0] & 1 == 0 {
                 continue; // nothing connected
             }
+            crate::kprintln!("THOS: usb              hub port {}: device connected (status {:02x}{:02x})", p, st[1], st[0]);
             let _ = self.control(hub, setup_pkt(0x23, 3, 4, p, 0), false, 0); // PORT_RESET
             ms(80);
             let st = self.control(hub, setup_pkt(0xA3, 0, 0, p, 4), true, 4)?;
             if st[0] & 2 == 0 {
+                crate::kprintln!("THOS: usb              hub port {}: not enabled after reset (status {:02x}{:02x})", p, st[1], st[0]);
                 continue; // not enabled
             }
             let speed = if st[1] & 4 != 0 { 2 } else if st[1] & 2 != 0 { 1 } else { 0 };
             let _ = self.control(hub, setup_pkt(0x23, 1, 0x10, p, 0), false, 0); // clear C_PORT_RESET
-            if let Ok(dev) = self.enumerate(speed, hub.addr, p as u8, &mut next) {
-                let _ = self.try_keyboard(dev); // keyboard and/or mass storage: look at every port
+            match self.enumerate(speed, hub.addr, p as u8, &mut next) {
+                Ok(dev) => {
+                    if let Ok(dd) = self.get_descriptor(dev, 1, 0, 18) {
+                        crate::kprintln!("THOS: usb              hub port {}: device {:02x}{:02x}:{:02x}{:02x} class {} speed {}", p, dd.get(9).copied().unwrap_or(0), dd.get(8).copied().unwrap_or(0), dd.get(11).copied().unwrap_or(0), dd.get(10).copied().unwrap_or(0), dd.get(4).copied().unwrap_or(0), speed);
+                    }
+                    let _ = self.try_keyboard(dev); // keyboard and/or mass storage: look at every port
+                }
+                Err(why) => crate::kprintln!("THOS: usb              hub port {}: could not enumerate: {}", p, why),
             }
         }
         Ok(())
@@ -631,13 +640,40 @@ impl Ehci {
     }
 }
 
-fn find_ehci() -> Option<pci::Location> {
-    pci::find_class(0x0C, 0x03, 0x20)
+/// Bring up every EHCI controller until one has the stick (or a keyboard), trying up to three rounds: a stick can need seconds to
+/// show up. Every step is logged, because a hang or failure on real hardware can only be diagnosed from the screen.
+pub fn init() -> Result<Ehci, &'static str> {
+    let locs = pci::find_class_all(0x0C, 0x03, 0x20);
+    if locs.is_empty() {
+        return Err("no EHCI controller");
+    }
+    crate::kprintln!("THOS: usb              {} EHCI controller(s) on PCI bus 0", locs.len());
+    let mut last = "EHCI: no controller brought up";
+    let mut kbd_only: Option<Ehci> = None;
+    for round in 0..3 {
+        for &loc in &locs {
+            match init_at(loc, round) {
+                Ok(e) if e.has_msc() => return Ok(e),
+                Ok(e) => {
+                    if kbd_only.is_none() {
+                        kbd_only = Some(e);
+                    }
+                }
+                Err(why) => last = why,
+            }
+        }
+        if round < 2 {
+            crate::kprintln!("THOS: usb              no storage yet (round {}), waiting 2 s and trying again", round + 1);
+            ms(2000);
+        }
+    }
+    match kbd_only {
+        Some(e) => Ok(e),
+        None => Err(last),
+    }
 }
 
-/// Bring up every EHCI controller until one has a keyboard.
-pub fn init() -> Result<Ehci, &'static str> {
-    let loc = find_ehci().ok_or("no EHCI controller")?;
+fn init_at(loc: pci::Location, round: u32) -> Result<Ehci, &'static str> {
     pci::enable_bus_master(loc);
     let bar = pci::bar(loc, 0);
     if bar == 0 {
@@ -649,6 +685,9 @@ pub fn init() -> Result<Ehci, &'static str> {
     let hcc = r32(base + 8);
     let op = base + caplen;
     let ports = hcs & 0xF;
+    if round == 0 {
+        crate::kprintln!("THOS: usb              EHCI at {:02x}:{:02x}.{} BAR {:#x}, {} ports, port power control {}", loc.bus, loc.dev, loc.func, bar, ports, if hcs & (1 << 4) != 0 { "yes" } else { "no" });
+    }
 
     // BIOS -> OS hand-off (USB legacy support capability in PCI config space)
     let mut eecp = ((hcc >> 8) & 0xFF) as u8;
@@ -714,14 +753,24 @@ pub fn init() -> Result<Ehci, &'static str> {
     let mut next = 1u8;
     for p in 0..e.ports {
         let a = op + PORTSC + 4 * p as u64;
-        if r32(a) & 1 == 0 {
+        let sc = r32(a);
+        if sc & 1 == 0 {
             continue; // nothing connected
         }
-        let Some(speed) = e.reset_root_port(p) else { continue };
-        if let Ok(dev) = e.enumerate(speed, 0, 0, &mut next) {
-            if e.try_keyboard(dev) && e.has_msc() {
-                break;
+        let Some(speed) = e.reset_root_port(p) else {
+            crate::kprintln!("THOS: usb              port {} PORTSC {:#x}: a full/low-speed device: handed to the companion controller (not supported)", p + 1, sc);
+            continue;
+        };
+        match e.enumerate(speed, 0, 0, &mut next) {
+            Ok(dev) => {
+                if let Ok(dd) = e.get_descriptor(dev, 1, 0, 18) {
+                    crate::kprintln!("THOS: usb              port {}: device {:02x}{:02x}:{:02x}{:02x} class {}", p + 1, dd.get(9).copied().unwrap_or(0), dd.get(8).copied().unwrap_or(0), dd.get(11).copied().unwrap_or(0), dd.get(10).copied().unwrap_or(0), dd.get(4).copied().unwrap_or(0));
+                }
+                if e.try_keyboard(dev) && e.has_msc() {
+                    break;
+                }
             }
+            Err(why) => crate::kprintln!("THOS: usb              port {}: could not enumerate the device: {}", p + 1, why),
         }
     }
     if e.has_keyboard() || e.has_msc() {

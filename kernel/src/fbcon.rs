@@ -864,5 +864,11 @@ pub fn reveal() {
     LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
     if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
         theme_shell();
+        // the splash hid the log: put the whole kernel log (everything before this failure) back on the screen
+        crate::serial::with_log_try(|a, b| {
+            for &byte in a.iter().chain(b.iter()) {
+                write(core::slice::from_ref(&byte));
+            }
+        });
     }
 }

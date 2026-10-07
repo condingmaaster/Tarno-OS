@@ -99,6 +99,26 @@ pub fn find_class(class: u8, subclass: u8, progif: u8) -> Option<Location> {
     None
 }
 
+/// Every device on bus 0 with the given (class, subclass, prog-if): the Acer has two EHCI controllers and the stick may be on either.
+pub fn find_class_all(class: u8, subclass: u8, progif: u8) -> alloc::vec::Vec<Location> {
+    let mut out = alloc::vec::Vec::new();
+    for dev in 0..32u8 {
+        for func in 0..8u8 {
+            let loc = Location { bus: 0, dev, func };
+            if read16(loc, 0x00) == 0xFFFF {
+                if func == 0 {
+                    break;
+                }
+                continue;
+            }
+            if class_code(loc) == (class, subclass, progif) {
+                out.push(loc);
+            }
+        }
+    }
+    out
+}
+
 /// Scan the first buses (bridges forward config cycles to the buses the BIOS numbered) for the first device
 /// with this vendor/device id. Bus 0 comes first, so integrated devices are found as before; the Acer's
 /// Ethernet chip sits behind a PCIe root port on bus 2.
