@@ -785,6 +785,27 @@ pub fn theme_shell() {
     }
 }
 
+/// Called once a second from the timer interrupt: if the splash is still up 45 s after power-on, the boot is stuck (or a driver is slow),
+/// so show the kernel log instead of a progress bar that does not move. Never blocks (interrupt context).
+pub fn splash_watchdog(ms: u64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    static DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if ms < 45_000 || !QUIET.load(Relaxed) || DONE.load(Relaxed) {
+        return;
+    }
+    let Some(mut g) = CON.try_lock() else { return };
+    let Some(c) = g.as_mut() else { return };
+    DONE.store(true, Relaxed);
+    QUIET.store(false, Relaxed);
+    c.relayout(0, 0, false);
+    crate::serial::with_log_try(|a, b| {
+        for &byte in a.iter().chain(b.iter()) {
+            c.utf8(byte);
+        }
+    });
+    c.redraw_all();
+}
+
 /// A failure while the splash is up: make the text visible again.
 pub fn reveal() {
     LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);

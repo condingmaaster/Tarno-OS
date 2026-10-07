@@ -104,6 +104,19 @@ fn log_append(s: &str) {
     }
 }
 
+/// The retained kernel log as two slices (oldest first), without blocking or allocating: for the interrupt-context watchdog that
+/// brings the boot log back onto the screen. `false` if the log was busy.
+pub fn with_log_try(f: impl FnOnce(&[u8], &[u8])) -> bool {
+    let Some(l) = LOG.try_lock() else { return false };
+    if l.total <= LOG_SIZE {
+        f(&l.buf[..l.total], &[]);
+    } else {
+        let start = l.total % LOG_SIZE;
+        f(&l.buf[start..], &l.buf[..start]);
+    }
+    true
+}
+
 /// The retained kernel log, oldest byte first.
 pub fn log_snapshot() -> alloc::vec::Vec<u8> {
     let l = LOG.lock();
