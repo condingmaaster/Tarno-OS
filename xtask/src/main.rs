@@ -1270,6 +1270,36 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-cal-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskcal-serial.log"), root.join("target/deskcal-mon.sock"));
+            let shot = root.join("target/deskcal.ppm");
+            for f in [&log, &sock, &shot] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "panel ready", 200) { return; }
+                std::thread::sleep(ms(2000));
+                let mut cur = (640, 400);
+                pointer_to(&tsock, &mut cur, 1210, 768);                     // the clock
+                std::thread::sleep(ms(400));
+                pointer_click(&tsock);
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "deskcal", "/busybox sh /desk-cal.sh", "desk ok:", 150);
+            let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> { let (w, h, d) = read_ppm(&shot)?; (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2])) };
+            let shown = out.contains("cal ready") && px(1150, 600).is_some_and(|c| c.0 < 60 && c.1 < 64 && c.2 < 80);    // the dark glass panel above the clock
+            if shown {
+                println!("desk-cal-test PASSED: a click on the clock opened the calendar popover above it");
+            } else {
+                eprintln!("  panel pixel {:?}", px(1150, 600));
+                for l in out.lines().filter(|l| l.contains("cal") || l.contains("panel")) { eprintln!("  {l}"); }
+                eprintln!("desk-cal-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2596,7 +2626,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2705,14 +2735,14 @@ fn disk_image() -> PathBuf {
             {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings", "thosnotify", "thosedit"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings", "thosnotify", "thosedit", "thoscal"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
                 }
                 let out = root.join(format!("target/{prog}"));
-                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thossettings", "thosedit", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
+                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thossettings", "thosedit", "thoscal", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
                 let mut gargs: Vec<String> = vec!["-O1".into(), "-o".into(), out.to_str().unwrap().into(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap().into()];
                 if ui {
                     gargs.extend(["-I/usr/include/freetype2".to_string(), "-lfreetype".to_string(), "-lm".to_string()]);
@@ -5981,7 +6011,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-cal-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

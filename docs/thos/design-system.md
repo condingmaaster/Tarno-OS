@@ -62,7 +62,8 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 
 | Element | Zustände | Bewegung | Stand |
 |---|---|---|---|
-| Leiste (3 Glas-Pillen) | normal, Hover, Fokus, Druck | Pille federt mit der Summe der Breiten; Knöpfe wachsen und schrumpfen | ✔ (Druck-Zustand –) |
+| Kalender (Klick auf die Uhr) | Monat, heute in der Akzentfarbe, Tag-Hover, Monatspfeile | Glasfläche federt wie das Startmenü ein, Hover-Platte blendet | ✔ |
+| Leiste (3 Glas-Pillen; rechts Netz-Stecker grün/grau + Uhr) | normal, Hover, Fokus, Druck | Pille federt mit der Summe der Breiten; Knöpfe wachsen und schrumpfen | ✔ (Druck-Zustand –) |
 | Starter / Fensterknopf | Hover, Fokus, vorhanden/weg | Hebung + Vergrößerung (Feder), Fokus blendet, Einblenden beim Öffnen | ✔ |
 | Startmenü | offen/zu, Zeile Hover, Chips an/aus, Fußknöpfe | wächst aus der Start-Pille (Skalierung + Einblenden), Hover-Platte gleitet zwischen Zeilen | ◐ (Chip-Wechsel springt noch) |
 | Fenster | öffnen, Fokus, schließen, Ziehen | Pop-in (Feder + Einblenden), Fokuswechsel weich (Schatten, Titel), Geisterbild beim Schließen | ✔ (Minimieren: Fenster schrumpft zur Leiste und blendet aus, Knopf in der Leiste bleibt markiert, Klick holt es federnd zurück; der Knopf des fokussierten Fensters minimiert es; Maximieren für Wayland-Fenster) |

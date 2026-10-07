@@ -544,6 +544,7 @@ int main(void) {
         }
         if (m.op == WL_POINTER && m.c == 1) {
             if ((int)m.a >= net_x0 && (int)m.a < net_x1 && net_x1 > 0) { launch("SETTINGS_PAGE=1 /thossettings"); continue; }       /* the plug opens the network page */
+            if ((int)m.a >= net_x1 && net_x1 > 0 && (int)m.a >= PW - DOCK_X - RW) { launch("/thoscal"); continue; }                  /* the clock opens the calendar */
             if ((int)m.a >= start_x0 && (int)m.a < start_x1) {
                 start_dip.p = 1; spring_to(&start_dip, 0);
                 if (mfd >= 0) menu_close();
