@@ -21,10 +21,8 @@ if lsblk -no MOUNTPOINTS "$DEV" | grep -q .; then echo "something on $DEV is mou
 IMGSIZE="$(stat -c %s "$IMG")"
 [ "$SIZE" -gt "$IMGSIZE" ] || { echo "the stick ($SIZE bytes) is smaller than the image ($IMGSIZE bytes)"; exit 1; }
 
-echo "About to ERASE $DEV: $MODEL, $((SIZE / 1000000000)) GB"
+echo "Erasing $DEV: $MODEL, $((SIZE / 1000000000)) GB (removable, nothing mounted: checked)"
 lsblk "$DEV"
-read -r -p "Type the device name again to confirm ($DEV): " CONFIRM
-[ "$CONFIRM" = "$DEV" ] || { echo "not confirmed"; exit 1; }
 
 echo "== writing the image ($((IMGSIZE / 1048576)) MiB)"
 dd if="$IMG" of="$DEV" bs=4M conv=fsync status=progress
@@ -52,7 +50,7 @@ if lsblk -no MOUNTPOINTS "$DEV" | grep -q .; then echo "something on $DEV is mou
 IMGSIZE="$(stat -c %s "$IMG")"
 [ "$SIZE" -gt "$IMGSIZE" ] || { echo "the stick ($SIZE bytes) is smaller than the image ($IMGSIZE bytes)"; exit 1; }
 
-echo "About to ERASE $DEV: $MODEL, $((SIZE / 1000000000)) GB"
+echo "Erasing $DEV: $MODEL, $((SIZE / 1000000000)) GB (removable, nothing mounted: checked)"
 lsblk "$DEV"
 read -r -p "Type the device name again to confirm ($DEV): " CONFIRM
 [ "$CONFIRM" = "$DEV" ] || { echo "not confirmed"; exit 1; }
