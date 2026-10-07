@@ -9,6 +9,7 @@
 #include <sys/shm.h>
 #include <sys/socket.h>
 #include <sys/statvfs.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <poll.h>
 #include <time.h>
@@ -72,14 +73,16 @@ static void page_about(int x, int y, int w) {
     ui_text(px, WW, WH, x, y + 28, "THOS", UI_BOLD, 28, UI_TEXT);
     ui_text(px, WW, WH, x + 106, y + 28, "a hybrid kernel with Linux and Windows personalities", UI_REG, 13, UI_MUTED);
     y += 52;
-    card(x, y, w, 5);
+    char bd[16]; slurp("/proc/bootdisk", bd, sizeof bd);
+    card(x, y, w, 6);
     char b[120];
     row(x, y + 2, w, "Device name", host, 0);
     row(x, y + 2 + ROWH, w, "Processor", model[0] ? model : "unknown", 0);
     snprintf(b, sizeof b, "%s", cores); row(x, y + 2 + 2 * ROWH, w, "Cores", b, 0);
     snprintf(b, sizeof b, "%ld MB total, %ld MB in use", total / 1024, (total - fr) / 1024); row(x, y + 2 + 3 * ROWH, w, "Memory", b, 0);
-    snprintf(b, sizeof b, "%ld h %02ld min", secs / 3600, secs / 60 % 60); row(x, y + 2 + 4 * ROWH, w, "Running for", b, 1);
-    y += 5 * ROWH + 20;
+    snprintf(b, sizeof b, "%ld h %02ld min", secs / 3600, secs / 60 % 60); row(x, y + 2 + 4 * ROWH, w, "Running for", b, 0);
+    row(x, y + 2 + 5 * ROWH, w, "Started from", !strncmp(bd, "usb", 3) ? "USB stick (Install THOS is in the Start menu)" : "Internal disk", 1);
+    y += 6 * ROWH + 20;
     ui_text(px, WW, WH, x + 4, y + 8, "Memory use", UI_REG, 12, UI_MUTED);
     ui_bar(px, WW, WH, x, y + 18, w, 10, total ? (float)(total - fr) / (float)total : 0, UI_ACCENT);
 }
@@ -113,6 +116,17 @@ static void page_storage(int x, int y, int w) {
     if (total) snprintf(b, sizeof b, "%ld MB used of %ld MB, %ld MB free", total - fr, total, fr); else snprintf(b, sizeof b, "size unknown");
     ui_text(px, WW, WH, x + 66, y + 50, b, UI_REG, 12, UI_MUTED);
     ui_bar(px, WW, WH, x + 18, y + 66, w - 36, 10, total ? (float)(total - fr) / (float)total : 0, total && fr * 10 < total ? UI_WARN : UI_ACCENT);
+    y += 116;
+    struct stat st1, st2;                                           /* the raw disks the kernel found (see /dev/sda, /dev/sdb) */
+    int h1 = stat("/dev/sda", &st1) == 0, h2 = stat("/dev/sdb", &st2) == 0;
+    char bd[16]; slurp("/proc/bootdisk", bd, sizeof bd);
+    int usb = !strncmp(bd, "usb", 3);
+    if (h1 || h2) {
+        card(x, y, w, (h1 && h2) ? 2 : 1);
+        int r = 0;
+        if (h1) { char v[80]; snprintf(v, sizeof v, "%llu GB%s", (unsigned long long)st1.st_size / 1000000000ULL, usb ? "" : " (running from it)"); row(x, y + 2 + r * ROWH, w, "Internal disk", v, !h2); r++; }
+        if (h2) { char v[80]; snprintf(v, sizeof v, "%llu GB%s", (unsigned long long)st2.st_size / 1000000000ULL, usb ? " (running from it)" : ""); row(x, y + 2 + r * ROWH, w, "USB stick", v, 1); }
+    }
 }
 static void page_display(int x, int y, int w) {
     ui_text(px, WW, WH, x, y + 28, "Display", UI_BOLD, 22, UI_TEXT);
