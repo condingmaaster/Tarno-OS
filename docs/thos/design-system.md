@@ -71,6 +71,7 @@ Diese Tabelle ist die Arbeitsliste. „✔“ = gebaut und im Video/Screenshot g
 | Dateimanager | Zeile Hover/Auswahl, Orte, Leer | Auswahl- und Hover-Platte gleiten, weiches Scrollen mit Mausrad, Scrollbalken blendet | ✔ |
 | Software-Zentrale | Suche, Ergebnis Hover/Auswahl, Installieren/Entfernen | wie Dateimanager | ◐ (Installation läuft in der App: Knopf wird „Installing“ mit gleitendem Balken, letzte Ausgabezeile in der Fußleiste; Knopf-Druck –) |
 | Bildbetrachter | Bild, Fehler | – (Überblenden beim Blättern fehlt) | ◐ |
+| Desktop-Kontextmenü (Rechtsklick) | Zeile Hover; Neues Terminal, Dateien, Editor, Einstellungen, Hintergrund wechseln | Panel federt von oben ein, Auswahlplatte gleitet, Esc/Klick daneben schließt | ✔ |
 | Fensterwechsler (Alt+Tab) | Kachel je Fenster (neueste zuerst), Auswahl, minimierte markiert; Tab/Umschalt+Tab wechselt, Alt loslassen wählt, Esc bricht ab | Glasfläche blendet ein, die Auswahlplatte gleitet per Feder | ✔ |
 | Texteditor (`thosedit`) | Zeile aktuell, Zeilennummern, Speichern-Knopf (ungespeichert/gespeichert), Statusleiste | Cursor blinkt, weiches Scrollen (Feder), Toast beim Speichern | ◐ (Auswahl, Kopieren, Suchen fehlen) |
 | Terminal | Cursor, Farben | Cursor atmet im Leerlauf, ist bei Eingabe voll | ✔ |

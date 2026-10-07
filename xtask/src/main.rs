@@ -1207,6 +1207,48 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-ctx-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskctx-serial.log"), root.join("target/deskctx-mon.sock"));
+            let shots: Vec<PathBuf> = (0..3).map(|i| root.join(format!("target/deskctx{i}.ppm"))).collect();
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            for f in &shots { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "desk: ready", 200) { return; }
+                std::thread::sleep(ms(1500));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                let mut cur = (640, 400);
+                pointer_to(&tsock, &mut cur, 400, 300);
+                std::thread::sleep(ms(300));
+                mon(&tsock, "mouse_button 2");
+                std::thread::sleep(ms(200));
+                mon(&tsock, "mouse_button 0");
+                std::thread::sleep(ms(1200));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+                pointer_to(&tsock, &mut cur, 500, 470);                          // "Change wallpaper"
+                std::thread::sleep(ms(600));
+                pointer_click(&tsock);
+                std::thread::sleep(ms(2000));
+                mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+            });
+            let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+            let px = |n: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> { let (w, h, d) = read_ppm(&shots[n])?; (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2])) };
+            let dark = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| c.0 < 40 && c.1 < 44 && c.2 < 60);
+            let menu_shown = dark(px(1, 420, 320)) && !dark(px(0, 420, 320));       // the glass panel is darker than the wallpaper there
+            let (a, b) = (px(0, 60, 700), px(2, 60, 700));
+            let wall_changed = match (a, b) { (Some(a), Some(b)) => (a.0 as i32 - b.0 as i32).abs() + (a.1 as i32 - b.1 as i32).abs() + (a.2 as i32 - b.2 as i32).abs() > 10, _ => false };
+            let menu_gone = !dark(px(2, 420, 320));
+            if menu_shown && wall_changed && menu_gone {
+                println!("desk-ctx-test PASSED: right click opened the desktop menu, its Change wallpaper row repainted the desktop and closed the menu");
+            } else {
+                eprintln!("  menu shown {menu_shown}, wallpaper changed {wall_changed} ({a:?} -> {b:?}), menu gone {menu_gone}");
+                eprintln!("desk-ctx-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2494,7 +2536,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5879,7 +5921,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-switch-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

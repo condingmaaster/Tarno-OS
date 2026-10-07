@@ -640,6 +640,54 @@ static void draw_switcher(struct rect r) {
     }
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
 }
+/* ---- the desktop context menu (right click on the desktop): a glass list with a gliding highlight ---- */
+#define CTX_W 216
+#define CTX_ROW 36
+static const struct { const char *label; uint32_t icon; const char *cmd; } ctx_items[] = {
+    { "New terminal", IC_TERMINAL, "" }, { "Files", IC_FOLDER, "/thosfiles" }, { "Text editor", IC_EDIT, "/thosedit" },
+    { "Settings", IC_COG, "/thossettings" }, { "Change wallpaper", IC_IMAGE, "WALL" } };
+#define CTX_N 5
+static int ctx_active, ctx_x, ctx_y, ctx_hover = -1;
+static struct spring ctx_hl, ctx_pop, ctx_ha;
+static int ctx_h(void) { return CTX_N * CTX_ROW + 16; }
+static struct rect ctx_rect(void) { return rect_xywh(ctx_x, ctx_y, CTX_W, ctx_h()); }
+static void draw_ctx(struct rect r) {
+    if (!ctx_active) return;
+    struct rect pr = ctx_rect();
+    if (empty(isect(inflate_r(pr, 24), r))) return;
+    float po = ctx_pop.p < 0 ? 0 : ctx_pop.p > 1 ? 1 : ctx_pop.p;
+    unsigned a = (unsigned)(po * 255);
+    int oy = (int)((1.0f - ctx_pop.p) * -10);
+    ui_set_clip(r.x0, r.y0, r.x1, r.y1);
+    for (int k = 3; k >= 1; k--) ui_rrect_g(bb, W, H, pr.x0 - k * 3, pr.y0 + oy - k * 3 + 6, CTX_W + k * 6, ctx_h() + k * 6, 16 + k * 2, 0x000000u, 0x000000u, a * 20 / 255);
+    ui_rrect_g(bb, W, H, pr.x0, pr.y0 + oy, CTX_W, ctx_h(), 16, 0x3a4260u, 0x2a3148u, a * 200 / 255);
+    ui_rrect_g(bb, W, H, pr.x0 + 1, pr.y0 + oy + 1, CTX_W - 2, ctx_h() - 2, 15, 0x1c2132u, 0x141824u, a * 236 / 255);
+    if (ctx_ha.p > 0.02f) ui_rrect_g(bb, W, H, pr.x0 + 8, pr.y0 + oy + 8 + (int)(ctx_hl.p + 0.5f), CTX_W - 16, CTX_ROW - 2, 10, 0x34405fu, 0x2a3552u, (unsigned)((ctx_ha.p > 1 ? 1 : ctx_ha.p) * a));
+    for (int i = 0; i < CTX_N; i++) {
+        int y = pr.y0 + oy + 8 + i * CTX_ROW;
+        ui_icon(bb, W, H, pr.x0 + 28, y + CTX_ROW / 2 - 1, ctx_items[i].icon, 14, i == ctx_hover ? UI_ACCENT_HI : 0x8e97ae);
+        ui_text_a(bb, W, H, pr.x0 + 50, y + CTX_ROW / 2 + 4, ctx_items[i].label, UI_REG, 13, i == ctx_hover ? UI_TEXT : 0xc8cee0u, a);
+    }
+    ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
+}
+static void ctx_close(void) { if (!ctx_active) return; struct rect pr = inflate_r(ctx_rect(), 26); ctx_active = 0; ctx_hover = -1; compose(pr); }
+static void ctx_open(int x, int y) {
+    if (x + CTX_W > W - 8) x = W - 8 - CTX_W;
+    if (y + ctx_h() > H - 70) y = H - 70 - ctx_h();
+    if (y < 8) y = 8;
+    ctx_x = x; ctx_y = y; ctx_active = 1; ctx_hover = -1;
+    spring_init(&ctx_pop, 0, SP_POP); spring_to(&ctx_pop, 1);
+    spring_init(&ctx_hl, 0, SP_HOVER); spring_init(&ctx_ha, 0, SP_HOVER);
+    compose(inflate_r(ctx_rect(), 26));
+}
+static int ctx_at(int px, int py) { struct rect pr = ctx_rect(); if (px < pr.x0 + 8 || px >= pr.x1 - 8 || py < pr.y0 + 8) return -1; int i = (py - pr.y0 - 8) / CTX_ROW; return i < CTX_N ? i : -1; }
+static void ctx_hover_to(int i) {
+    if (i == ctx_hover) return;
+    if (i >= 0 && ctx_hover < 0) { spring_init(&ctx_hl, (float)(i * CTX_ROW), SP_HOVER); }
+    ctx_hover = i;
+    if (i >= 0) { spring_to(&ctx_hl, (float)(i * CTX_ROW)); spring_to(&ctx_ha, 1); } else spring_to(&ctx_ha, 0);
+    compose(inflate_r(ctx_rect(), 26));
+}
 static void draw_ghosts(struct rect r) {
     for (int i = 0; i < MAXGHOST; i++) if (ghosts[i].active) draw_snap_at(ghosts[i].snap, ghosts[i].r, ghosts[i].ax, ghosts[i].ay, ghosts[i].sc.p, tween_value(&ghosts[i].opq, ease_in), r);
 }
@@ -685,6 +733,7 @@ static void compose(struct rect r) {
     draw_ghosts(r);
     draw_toasts(r);
     draw_switcher(r);
+    draw_ctx(r);
     for (int y = r.y0; y < r.y1; y++)
         blit_row((uint32_t *)(fbmap + (size_t)y * pitch + (size_t)r.x0 * 4), &bb[(size_t)y * W + r.x0], r.x1 - r.x0);
     draw_cursor();
@@ -778,6 +827,19 @@ static void minimize_win(int i) {
     compose(old);
     if (nwin && wins[nwin - 1].wl && !wins[nwin - 1].minimized) wls_focus_keyboard(wins[nwin - 1].wl);
     winlist_dirty = 1;
+}
+static void theme_cycle_wall(void) {                                /* the next wallpaper preset: saved in ~/.thos-theme, repainted, announced to every client */
+    int next = (ui_wall_theme + 1) & 3;
+    const char *h = getenv("HOME");
+    char path[220];
+    snprintf(path, sizeof path, "%s/.thos-theme", h && h[0] == '/' && h[1] ? h : "/tmp");
+    FILE *f = fopen(path, "w");
+    if (f) { fprintf(f, "accent=%06x\nwallpaper=%d\n", ui_accent & 0xffffff, next); fclose(f); }
+    ui_wall_theme = next;
+    wall_render();
+    compose((struct rect){ 0, 0, W, H });
+    struct wl_msg tm = { WL_THEME, 0, 0, 0, 0 };
+    for (int k = 0; k < nwin; k++) if (!wins[k].is_wl && !wins[k].hwnd && wins[k].fd >= 0) (void)!write(wins[k].fd, &tm, sizeof tm);
 }
 static void switcher_close(void) {
     if (!sw_active) return;
@@ -898,7 +960,7 @@ static void place_window(struct win *w);
 /* ---- the animation clock: window pop-in, focus changes, closing ghosts ---- */
 static long long anim_last;
 static int anim_pending(void) {
-    if (toasts_busy() || cur_kind == 3 || (sw_active && (spring_busy(&sw_hl) || tween_busy(&sw_op)))) return 1;
+    if (toasts_busy() || cur_kind == 3 || (sw_active && (spring_busy(&sw_hl) || tween_busy(&sw_op))) || (ctx_active && (spring_busy(&ctx_pop) || spring_busy(&ctx_hl) || spring_busy(&ctx_ha)))) return 1;
     if (icons_busy()) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mns.k != 0 && (spring_busy(&wins[i].mns) || wins[i].mns.t != (hover_min == wins[i].id ? 1.0f : 0.0f))) return 1;
     for (int i = 0; i < nwin; i++) if (wins[i].mxs.k != 0 && (spring_busy(&wins[i].mxs) || wins[i].mxs.t != (hover_max == wins[i].id ? 1.0f : 0.0f))) return 1;
@@ -946,6 +1008,7 @@ static void anim_tick(void) {
         }
     }
     if (sw_active) { spring_step(&sw_hl, dt); compose(inflate_r(sw_rect(), 22)); }
+    if (ctx_active) { spring_step(&ctx_pop, dt); spring_step(&ctx_hl, dt); spring_step(&ctx_ha, dt); compose(inflate_r(ctx_rect(), 26)); }
     toasts_step(dt);
     if (cur_kind == 3) compose(cur_rect(mx, my, 3));
     if (icons_busy()) { icons_step(dt); for (int j = 0; j < nicons; j++) compose(inflate_r(icon_cell(j), 10)); }
@@ -1248,6 +1311,7 @@ int main(int argc, char **argv) {
             if (kn == 8 && ev[0] && ev[1] == 0x46) { save_screenshot(); kn = 0; }                      /* Print: screenshot to /tmp */
             if (kn == 8 && ev[0] && ev[1] == 0x14 && (ev[2] & 0x11) && (ev[2] & 0x44)) { quit = 1; kn = 0; }   /* Ctrl+Alt+Q: leave the desktop */
             if (kn == 8 && ev[1] >= 0xE0 && ev[1] <= 0xE7 && !sw_active) kn = 0;            /* a bare modifier press or release: only the switcher cares */
+            if (kn == 8 && ctx_active && ev[0] && ev[1] == 0x29) { ctx_close(); kn = 0; }
             if (kn == 8 && sw_active) {                                                                  /* the switcher is up: it owns the keyboard */
                 if (ev[0] && ev[1] == 0x2B) switcher_step((ev[2] & 0x22) ? -1 : 1);
                 else if (ev[0] && ev[1] == 0x29) switcher_close();                                       /* Esc */
@@ -1306,6 +1370,28 @@ int main(int argc, char **argv) {
             if (mx > W - 1) mx = W - 1;
             if (my > H - 1) my = H - 1;
             int btn = pkt[0] & 1;
+            { static int rprev, ignore;                                       /* the desktop context menu: right click opens it, a left click picks or dismisses */
+              int rb = (pkt[0] >> 1) & 1;
+              if (ignore) { if (!btn) ignore = 0; btn = 0; }
+              if (rb && !rprev) {
+                  int over = 0; for (int i = 0; i < nwin; i++) if (in(frame_of(&wins[i]), mx, my) && !wins[i].taskbar) over = 1;
+                  if (ctx_active) ctx_close();
+                  else if (!over && icon_at(mx, my) < 0) ctx_open(mx, my);
+              }
+              rprev = rb;
+              if (ctx_active) {
+                  if (ddx || ddy) ctx_hover_to(ctx_at(mx, my));
+                  if (btn && !prev_btn) {
+                      int i = ctx_at(mx, my);
+                      ctx_close();
+                      if (i >= 0) {
+                          if (!strcmp(ctx_items[i].cmd, "WALL")) theme_cycle_wall();
+                          else launch_cmd(ctx_items[i].cmd);
+                      }
+                      ignore = 1; btn = 0;
+                  }
+              }
+            }
             if (ddx || ddy) {                                /* legacy clients see the pointer move over their content (c = 0), and leave it (c = 2) */
                 int over = -1;
                 for (int i = nwin - 1; i >= 0 && over < 0; i--) if (in(frame_of(&wins[i]), mx, my)) over = i;
