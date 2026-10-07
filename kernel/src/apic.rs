@@ -91,9 +91,7 @@ pub fn on_timer_tick() {
     let hz = timer_hz() as u64;
     if hz > 0 && (read(REG_ID) >> 24) as u8 == bsp_apic_id() {
         let t = BSP_TICKS.fetch_add(1, Ordering::Relaxed) + 1;
-        if t % hz == 0 {
-            crate::fbcon::splash_watchdog(t / hz * 1000); // a boot that sits on the splash for 45 s shows its log (this tick runs before the scheduler)
-        }
+        let _ = t;
     }
 }
 

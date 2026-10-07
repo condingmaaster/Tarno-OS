@@ -161,11 +161,7 @@ pub fn suspend() {
 pub fn resume() {
     if let Some(c) = CON.lock().as_mut() {
         c.active = true;
-        if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
-            paint_splash(c); // the splash is not part of the text model: paint it again on the freshly mapped framebuffer
-        } else {
-            c.redraw_all(); // anything printed while suspended is in the model only
-        }
+        c.redraw_all(); // anything printed while suspended is in the model only (the logo and bar above the text stay on the screen)
     }
 }
 
@@ -175,62 +171,9 @@ static LOGIN_ALLOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicB
 pub fn login_allow(on: bool) {
     LOGIN_ALLOW.store(on, core::sync::atomic::Ordering::Relaxed);
 }
-/// While the splash is up the newest kernel log line is shown small under the progress bar: on a machine that hangs during boot it says where.
-static SPLASH_LINE: Mutex<([u8; 100], usize)> = Mutex::new(([0; 100], 0));
-fn splash_line_feed(bytes: &[u8]) {
-    let Some(mut l) = SPLASH_LINE.try_lock() else { return };
-    let mut done: Option<([u8; 100], usize)> = None;
-    for &b in bytes {
-        if b == b'\n' {
-            done = Some((l.0, l.1));
-            l.1 = 0;
-        } else if (0x20..0x7F).contains(&b) && l.1 < 100 {
-            let i = l.1;
-            l.0[i] = b;
-            l.1 += 1;
-        }
-    }
-    drop(l);
-    if let Some((buf, n)) = done {
-        splash_line_draw(&buf[..n]);
-    }
-}
-fn splash_line_draw(text: &[u8]) {
-    let Some(mut g) = CON.try_lock() else { return };
-    let Some(c) = g.as_mut() else { return };
-    if !c.active {
-        return;
-    }
-    let (w, h) = (c.width, c.height);
-    let lh = u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize;
-    let y0 = (h * 2 / 5).saturating_sub(lh / 2) + lh + 48 + 26;
-    let n = text.len().min(w / GLYPH_W - 2);
-    let x0 = (w - n * GLYPH_W) / 2;
-    for y in y0..(y0 + GLYPH_H + 2).min(h) {
-        let base = Con::blend(0x000B_0E15, 0x0019_2036, (y * 255 / h) as u32);
-        for x in 0..w {
-            c.px(x, y, base);
-        }
-    }
-    for (i, &ch) in text.iter().take(n).enumerate() {
-        let g = &FONT[4 + ch as usize * GLYPH_H..4 + (ch as usize + 1) * GLYPH_H];
-        for (dy, bits) in g.iter().enumerate() {
-            for dx in 0..GLYPH_W {
-                if bits & (0x80 >> dx) != 0 {
-                    c.px(x0 + i * GLYPH_W + dx, y0 + dy, 0x006B_7794);
-                }
-            }
-        }
-    }
-}
-
 /// Kernel log text (as opposed to program or prompt output): hidden while the login screen is up.
 pub fn write_log(bytes: &[u8]) {
     use core::sync::atomic::Ordering::Relaxed;
-    if QUIET.load(Relaxed) {
-        splash_line_feed(bytes);
-        return;
-    }
     if LOGIN_FILTER.load(Relaxed) && !LOGIN_ALLOW.load(Relaxed) {
         return;
     }
@@ -748,61 +691,38 @@ impl Con {
     }
 }
 
-/// The boot splash: a deep gradient with a soft glow, the wordmark and an empty progress track. Text output stays off the screen until
-/// [`theme_login`] (or [`reveal`] after a failure).
+/// The boot screen: the wordmark and a progress bar on top, the kernel log scrolling below them (like a Linux boot with a splash,
+/// but with the details visible). [`theme_login`] replaces it with the login screen.
+const BOOT_COLS: usize = 110;
+fn logo_h() -> usize {
+    u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize
+}
+fn boot_bar_y() -> usize {
+    36 + logo_h() + 18
+}
+static SPLASH_ON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 pub fn splash_start() {
     let mut g = CON.lock();
     let Some(c) = g.as_mut() else { return };
-    paint_splash(c);
-    QUIET.store(true, core::sync::atomic::Ordering::Relaxed);
+    c.relayout(BOOT_COLS, 36 + logo_h() + 44, true);
+    SPLASH_ON.store(true, core::sync::atomic::Ordering::Relaxed);
+    paint_progress(c, 0);
 }
 
-/// How far the splash progress bar is (so a redraw after a framebuffer remap restores it).
+/// How far the progress bar is (so a redraw after a framebuffer remap restores it).
 static SPLASH_PCT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-fn paint_splash(c: &mut Con) {
-    let (w, h) = (c.width, c.height);
-    let (gx, gy) = (w / 2, h * 2 / 5);
-    for y in 0..h {
-        let base = Con::blend(0x000B_0E15, 0x0019_2036, (y * 255 / h) as u32);
-        for x in 0..w {
-            let dx = x as i64 - gx as i64;
-            let dy = (y as i64 - gy as i64) * 3 / 2;
-            let k = (w * h / 6) as i64;
-            let glow = (60 * k / (k + dx * dx + dy * dy)) as u32;
-            c.px(x, y, Con::blend(base, 0x0040_5FB0, glow));
-        }
-    }
-    let (lw, lh) = (u16::from_le_bytes([LOGO[0], LOGO[1]]) as usize, u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize);
-    let (lx, ly) = ((w.saturating_sub(lw)) / 2, (h * 2 / 5).saturating_sub(lh / 2));
-    // the logo is blended over the gradient it sits on
-    for y in 0..lh {
-        let tint = Con::blend(0x00F4_F7FF, 0x008F_B0F5, (y * 255 / lh.max(1)) as u32);
-        for x in 0..lw {
-            let a = LOGO[4 + y * lw + x] as u32;
-            if a != 0 {
-                let p = unsafe { core::ptr::read_volatile(c.base.add((ly + y) * c.pitch + (lx + x) * 4) as *const u32) };
-                c.px(lx + x, ly + y, Con::blend(p, tint, a));
-            }
-        }
-    }
-    let (bw, bx, by) = (280usize, w / 2 - 140, ly + lh + 48);
-    for x in 0..bw {
-        c.px(bx + x, by, 0x0030_3A55);
-        c.px(bx + x, by + 1, 0x0030_3A55);
-        c.px(bx + x, by + 2, 0x0030_3A55);
-    }
-    paint_progress(c, SPLASH_PCT.load(core::sync::atomic::Ordering::Relaxed));
-}
-
 fn paint_progress(c: &mut Con, pct: u32) {
-    let (w, h) = (c.width, c.height);
-    let (lh, bw) = (u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize, 280usize);
-    let (bx, by) = (w / 2 - 140, (h * 2 / 5).saturating_sub(lh / 2) + lh + 48);
+    let (w, bw) = (c.width, 280usize);
+    let (bx, by) = (w / 2 - 140, boot_bar_y());
+    for x in 0..bw {
+        for dy in 0..3 {
+            c.px(bx + x, by + dy, 0x0030_3A55);
+        }
+    }
     let fill = bw * pct.min(100) as usize / 100;
     for x in 0..fill {
-        let t = (x * 255 / bw) as u32;
-        let col = Con::blend(0x007B_A3FF, 0x00B9_CDFF, t);
+        let col = Con::blend(0x007B_A3FF, 0x00B9_CDFF, (x * 255 / bw) as u32);
         for dy in 0..3 {
             c.px(bx + x, by + dy, col);
         }
@@ -811,17 +731,20 @@ fn paint_progress(c: &mut Con, pct: u32) {
 
 /// Advance the splash progress bar to `pct` percent.
 pub fn splash_progress(pct: u32) {
-    if !QUIET.load(core::sync::atomic::Ordering::Relaxed) {
+    if !SPLASH_ON.load(core::sync::atomic::Ordering::Relaxed) {
         return;
     }
     SPLASH_PCT.store(pct, core::sync::atomic::Ordering::Relaxed);
-    let mut g = CON.lock();
+    let Some(mut g) = CON.try_lock() else { return };
     let Some(c) = g.as_mut() else { return };
-    paint_progress(c, pct);
+    if c.active {
+        paint_progress(c, pct);
+    }
 }
 
 /// The login screen: the wordmark on top, a narrow centred text column below it, in the THOS colours.
 pub fn theme_login() {
+    SPLASH_ON.store(false, core::sync::atomic::Ordering::Relaxed);
     QUIET.store(false, core::sync::atomic::Ordering::Relaxed);
     LOGIN_FILTER.store(true, core::sync::atomic::Ordering::Relaxed);
     if let Some(c) = CON.lock().as_mut() {
@@ -838,37 +761,8 @@ pub fn theme_shell() {
     }
 }
 
-/// Called once a second from the timer interrupt: if the splash is still up 45 s after power-on, the boot is stuck (or a driver is slow),
-/// so show the kernel log instead of a progress bar that does not move. Never blocks (interrupt context).
-pub fn splash_watchdog(ms: u64) {
-    use core::sync::atomic::Ordering::Relaxed;
-    static DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-    if ms < 45_000 || !QUIET.load(Relaxed) || DONE.load(Relaxed) {
-        return;
-    }
-    let Some(mut g) = CON.try_lock() else { return };
-    let Some(c) = g.as_mut() else { return };
-    DONE.store(true, Relaxed);
-    QUIET.store(false, Relaxed);
-    c.relayout(0, 0, false);
-    crate::serial::with_log_try(|a, b| {
-        for &byte in a.iter().chain(b.iter()) {
-            c.utf8(byte);
-        }
-    });
-    c.redraw_all();
-}
-
 /// A failure while the splash is up: make the text visible again.
 pub fn reveal() {
     LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
-    if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
-        theme_shell();
-        // the splash hid the log: put the whole kernel log (everything before this failure) back on the screen
-        crate::serial::with_log_try(|a, b| {
-            for &byte in a.iter().chain(b.iter()) {
-                write(core::slice::from_ref(&byte));
-            }
-        });
-    }
+    SPLASH_ON.store(false, core::sync::atomic::Ordering::Relaxed);
 }

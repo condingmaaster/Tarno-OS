@@ -1892,8 +1892,9 @@ fn main() {
             let disk = disk_image();
             let (mut c, log, sock) = spawn_interactive_qemu("loginshot", &iso, &disk);
             let t = workspace_root().join("target");
-            for (i, ms) in [1500u64, 1500, 1500, 1500].iter().enumerate() {                // a few frames of the splash while it fills up
-                std::thread::sleep(std::time::Duration::from_millis(*ms));
+            for (i, marker) in ["THOS: gdi ok", "THOS: ahci irq", "THOS: ext2 ok"].iter().enumerate() {        // the boot screen at three points of the start
+                wait_for(&log, marker, 120);
+                std::thread::sleep(std::time::Duration::from_millis(400));
                 mon(&sock, &format!("screendump {}", t.join(format!("splash{i}.ppm")).to_str().unwrap()));
             }
             wait_for(&log, "THOS first-run setup", 90);
