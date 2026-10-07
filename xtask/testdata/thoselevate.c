@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define THOS_BASE 0x54480000L
@@ -18,7 +19,20 @@ int main(int argc, char **argv) {
     char pw[128];
     printf("Administrator password: ");
     fflush(stdout);
-    long n = thos3(THOS_BASE + 1, (long)pw, sizeof pw, 0);
+    long n;
+    struct termios old, t, chk;
+    int pty = 0;
+    if (isatty(0) && tcgetattr(0, &old) == 0) {            /* a terminal window (pty) really switches the echo off; the text console ignores the request */
+        t = old; t.c_lflag &= ~(tcflag_t)ECHO;
+        tcsetattr(0, TCSANOW, &t);
+        pty = tcgetattr(0, &chk) == 0 && !(chk.c_lflag & ECHO);
+        if (!pty) tcsetattr(0, TCSANOW, &old);
+    }
+    if (pty) {
+        n = fgets(pw, sizeof pw, stdin) ? (long)strlen(pw) : -1;
+        tcsetattr(0, TCSANOW, &old);
+        while (n > 0 && (pw[n - 1] == '\n' || pw[n - 1] == '\r')) pw[--n] = 0;
+    } else n = thos3(THOS_BASE + 1, (long)pw, sizeof pw, 0);          /* the text console: the kernel reads it masked */
     putchar('\n');
     if (n < 0) { fputs("cannot read the password\n", stderr); return 1; }
     long pid = thos3(THOS_BASE, (long)argv[1], (long)&argv[1], (long)pw);

@@ -1249,6 +1249,27 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-elevate-test" => {
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskelev-serial.log"), root.join("target/deskelev-mon.sock"));
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "term ready", 200) { return; }
+                std::thread::sleep(std::time::Duration::from_millis(5000));
+                type_line(&tsock, "pass");                                    // the administrator password, typed into the terminal window (echo is off)
+                std::thread::sleep(std::time::Duration::from_millis(4000));
+            });
+            let out = boot_and_run(&img, "deskelev", "/busybox sh /desk-elevate.sh", "desk ok:", 150);
+            if out.contains("elevated-check uid=0") && !out.contains("pass\n") {
+                println!("desk-elevate-test PASSED: a program started from a terminal window asked for the administrator password and ran as root");
+            } else {
+                for l in out.lines().filter(|l| l.contains("elevat") || l.contains("password") || l.contains("term")) { eprintln!("  {l}"); }
+                eprintln!("desk-elevate-test FAILED");
+                exit(1);
+            }
+        }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -2575,7 +2596,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -5960,7 +5981,7 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
         "net-test", "random-test", "bios-power-test",
     ];

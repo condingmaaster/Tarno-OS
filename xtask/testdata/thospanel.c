@@ -140,7 +140,15 @@ struct dk { int kind, key, focused, minimized, present, x0, x1; char label[16]; 
 static struct dk items[MAXI];
 static int nitems;
 static struct spring start_hov, start_dip;                /* dip: the press feedback, 1 at the moment of the click and springing back to 0 */
-static int dock_avail(void) { return PW - 2 * DOCK_X - 118 - 112 - 2 * 14 - 20; }
+#define RW 152                                          /* the right pill: network state + clock */
+static int net_up, net_x0, net_x1;
+static int read_net(void) {                             /* the link state the kernel reports in /proc/netinfo */
+    FILE *f = fopen("/proc/netinfo", "r");
+    char l[40] = "";
+    if (f) { if (fgets(l, sizeof l, f)) {} fclose(f); }
+    return !strncmp(l, "link up", 7);
+}
+static int dock_avail(void) { return PW - 2 * DOCK_X - 118 - RW - 2 * 14 - 20; }
 static struct dk *item_new(int kind, int key, const char *label, int at) {
     if (nitems >= MAXI) return 0;
     memmove(&items[at + 1], &items[at], (size_t)(nitems - at) * sizeof items[0]);
@@ -231,10 +239,14 @@ static void draw_bar(void) {
     ui_icon(col, PW, PH, DOCK_X + 24, sy + 18 - (int)(lift + 0.5f), 0xf00a, 16, 0xffffffu);
     ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
     /* right: clock */
-    int rw = 112, rx = PW - DOCK_X - rw;
+    int rw = RW, rx = PW - DOCK_X - rw, tw = rw - 44, tx = rx + 44;
     pill(rx, rw);
-    ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
-    ui_text(col, PW, PH, rx + (rw - ui_text_width(UI_REG, 11, clock_day)) / 2, DOCK_Y + 38, clock_day, UI_REG, 11, UI_MUTED);
+    net_x0 = rx; net_x1 = rx + 44;
+    ui_icon(col, PW, PH, rx + 24, DOCK_Y + DOCK_H / 2, 0xf1e6, 15, net_up ? UI_GOOD : 0x6c748c);                       /* a plug: lit green when the link is up */
+    if (!net_up) ui_rrect(col, PW, PH, rx + 14, DOCK_Y + DOCK_H / 2 + 11, 20, 2, 1, 0x6c748c);
+    for (int y = DOCK_Y + 14; y < DOCK_Y + DOCK_H - 14; y++) col[y * PW + rx + 42] = 0x2d3448;
+    ui_text(col, PW, PH, tx + (tw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
+    ui_text(col, PW, PH, tx + (tw - ui_text_width(UI_REG, 11, clock_day)) / 2, DOCK_Y + 38, clock_day, UI_REG, 11, UI_MUTED);
     /* centre: the items on springs */
     float sum = 0;
     for (int j = 0; j < nitems; j++) sum += items[j].w.p;
@@ -444,7 +456,8 @@ int main(void) {
     for (;;) {
         time_t now = time(0);
         int minute = (int)(now / 60);
-        if (minute != shown) { shown = minute; update_clock(); redraw = 1; }        /* the clock changes once a minute */
+        if (minute != shown) { shown = minute; update_clock(); redraw = 1; }
+        { static long long net_t; long long tn = mo_now_ms(); if (tn - net_t > 1500 || net_t == 0) { net_t = tn; int nu = read_net(); if (nu != net_up) { net_up = nu; redraw = 1; } } }        /* the clock changes once a minute */
         long long nowm = mo_now_ms();
         float dt = (float)(nowm - last_ms) / 1000.0f;
         last_ms = nowm;
@@ -460,7 +473,7 @@ int main(void) {
             fflush(stdout);
         }
         struct pollfd pf[2] = { { s, POLLIN, 0 }, { mfd, POLLIN, 0 } };
-        if (poll(pf, 2, dock_busy() || menu_busy() ? MO_FRAME_MS : 15000) <= 0) continue;
+        if (poll(pf, 2, dock_busy() || menu_busy() ? MO_FRAME_MS : 2000) <= 0) continue;
         if (mfd >= 0 && pf[1].revents) {                      /* the menu surface: pointer motion, a click in it, or the compositor closed it */
             if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) { menu_close(); continue; }
             if (m.op != WL_POINTER) continue;
@@ -530,6 +543,7 @@ int main(void) {
             continue;
         }
         if (m.op == WL_POINTER && m.c == 1) {
+            if ((int)m.a >= net_x0 && (int)m.a < net_x1 && net_x1 > 0) { launch("SETTINGS_PAGE=1 /thossettings"); continue; }       /* the plug opens the network page */
             if ((int)m.a >= start_x0 && (int)m.a < start_x1) {
                 start_dip.p = 1; spring_to(&start_dip, 0);
                 if (mfd >= 0) menu_close();
