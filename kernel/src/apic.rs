@@ -85,8 +85,16 @@ pub fn send_ipi(lapic_id: u32, vector: u8) {
     write(REG_ICR_LOW, vector as u32 | (1 << 14)); // fixed, physical destination, level assert
 }
 
+static BSP_TICKS: AtomicU64 = AtomicU64::new(0);
 pub fn on_timer_tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
+    let hz = timer_hz() as u64;
+    if hz > 0 && (read(REG_ID) >> 24) as u8 == bsp_apic_id() {
+        let t = BSP_TICKS.fetch_add(1, Ordering::Relaxed) + 1;
+        if t % hz == 0 {
+            crate::fbcon::splash_watchdog(t / hz * 1000); // a boot that sits on the splash for 45 s shows its log (this tick runs before the scheduler)
+        }
+    }
 }
 
 pub fn ticks() -> u64 {

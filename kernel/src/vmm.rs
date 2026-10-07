@@ -16,7 +16,7 @@ use spin::Once;
 use x86_64::registers::control::{Cr3, Cr3Flags};
 use x86_64::registers::model_specific::{Efer, EferFlags};
 use x86_64::structures::paging::{
-    Mapper, OffsetPageTable, Page, PageTable, PageTableFlags as F, PhysFrame, Size1GiB, Size4KiB,
+    Mapper, OffsetPageTable, Page, PageTable, PageTableFlags as F, PhysFrame, Size1GiB, Size2MiB, Size4KiB,
     Translate,
 };
 use x86_64::{PhysAddr, VirtAddr};
@@ -286,7 +286,28 @@ pub fn map_page_in(pml4_phys: u64, virt: u64, phys: u64, writable: bool, user: b
     }
 }
 
+/// Does this CPU have 1 GiB pages (CPUID 0x80000001 EDX bit 26)? The Core i3-370M of the Acer (Westmere/Arrandale) does not: a 1 GiB entry there
+/// is a reserved-bit page fault the moment the new page tables are loaded, which is a silent hang.
+pub fn has_1g_pages() -> bool {
+    unsafe {
+        let max = core::arch::x86_64::__cpuid(0x8000_0000).eax;
+        max >= 0x8000_0001 && core::arch::x86_64::__cpuid(0x8000_0001).edx & (1 << 26) != 0
+    }
+}
+
+/// Map one GiB: a single 1 GiB page where the CPU has them, else 512 pages of 2 MiB.
 fn map_1g(m: &mut OffsetPageTable<'_>, v: VirtAddr, p: PhysAddr, f: F) {
+    if !has_1g_pages() {
+        for k in 0..512u64 {
+            let page = Page::<Size2MiB>::containing_address(v + k * (2 << 20));
+            let frame = PhysFrame::<Size2MiB>::containing_address(p + k * (2 << 20));
+            let mut fa = FRAME_ALLOC.lock();
+            unsafe { m.map_to(page, frame, f, &mut *fa) }
+                .expect("map_1g (2 MiB pages)")
+                .ignore();
+        }
+        return;
+    }
     let page = Page::<Size1GiB>::containing_address(v);
     let frame = PhysFrame::<Size1GiB>::containing_address(p);
     let mut fa = FRAME_ALLOC.lock();

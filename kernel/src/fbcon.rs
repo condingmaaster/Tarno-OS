@@ -175,9 +175,62 @@ static LOGIN_ALLOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicB
 pub fn login_allow(on: bool) {
     LOGIN_ALLOW.store(on, core::sync::atomic::Ordering::Relaxed);
 }
+/// While the splash is up the newest kernel log line is shown small under the progress bar: on a machine that hangs during boot it says where.
+static SPLASH_LINE: Mutex<([u8; 100], usize)> = Mutex::new(([0; 100], 0));
+fn splash_line_feed(bytes: &[u8]) {
+    let Some(mut l) = SPLASH_LINE.try_lock() else { return };
+    let mut done: Option<([u8; 100], usize)> = None;
+    for &b in bytes {
+        if b == b'\n' {
+            done = Some((l.0, l.1));
+            l.1 = 0;
+        } else if (0x20..0x7F).contains(&b) && l.1 < 100 {
+            let i = l.1;
+            l.0[i] = b;
+            l.1 += 1;
+        }
+    }
+    drop(l);
+    if let Some((buf, n)) = done {
+        splash_line_draw(&buf[..n]);
+    }
+}
+fn splash_line_draw(text: &[u8]) {
+    let Some(mut g) = CON.try_lock() else { return };
+    let Some(c) = g.as_mut() else { return };
+    if !c.active {
+        return;
+    }
+    let (w, h) = (c.width, c.height);
+    let lh = u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize;
+    let y0 = (h * 2 / 5).saturating_sub(lh / 2) + lh + 48 + 26;
+    let n = text.len().min(w / GLYPH_W - 2);
+    let x0 = (w - n * GLYPH_W) / 2;
+    for y in y0..(y0 + GLYPH_H + 2).min(h) {
+        let base = Con::blend(0x000B_0E15, 0x0019_2036, (y * 255 / h) as u32);
+        for x in 0..w {
+            c.px(x, y, base);
+        }
+    }
+    for (i, &ch) in text.iter().take(n).enumerate() {
+        let g = &FONT[4 + ch as usize * GLYPH_H..4 + (ch as usize + 1) * GLYPH_H];
+        for (dy, bits) in g.iter().enumerate() {
+            for dx in 0..GLYPH_W {
+                if bits & (0x80 >> dx) != 0 {
+                    c.px(x0 + i * GLYPH_W + dx, y0 + dy, 0x006B_7794);
+                }
+            }
+        }
+    }
+}
+
 /// Kernel log text (as opposed to program or prompt output): hidden while the login screen is up.
 pub fn write_log(bytes: &[u8]) {
     use core::sync::atomic::Ordering::Relaxed;
+    if QUIET.load(Relaxed) {
+        splash_line_feed(bytes);
+        return;
+    }
     if LOGIN_FILTER.load(Relaxed) && !LOGIN_ALLOW.load(Relaxed) {
         return;
     }

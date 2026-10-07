@@ -119,6 +119,13 @@ pub fn login(fs: &Ext2) -> Session {
 /// then authenticate.
 pub fn establish(fs: &Ext2) -> Session {
     crate::fbcon::theme_login();
+    // A system just installed from a stick carries the stick's account. /etc/thos/fresh-install (put into the release image) says: on the
+    // first start from the internal disk, forget that account and ask for a new one. The stick itself (USB) ignores the marker.
+    if !crate::blk::is_usb() && fs.path_lookup("/etc/thos/fresh-install").is_some() {
+        let _ = fs.unlink_path(cred::STORE_PATH);
+        let _ = fs.unlink_path("/etc/thos/fresh-install");
+        crate::kprintln!("THOS: install          first start after installation: a new administrator account is created");
+    }
     if !cred::exists(fs) {
         first_run_setup(fs);
     }

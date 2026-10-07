@@ -1830,7 +1830,7 @@ pub fn spawn_pe_args(bytes: &[u8], cmdline: &[u8], parent: &Arc<Task>) -> Result
         r?
     };
     let rsp = (stack_top & !0xF) - 0x28; // a return address plus the 32-byte home space a Win64 entry point may store its registers in
-    let task = Task::new(parent.pid, space);
+    let task = Task::new_with_ids(parent.pid, space, parent.uid, parent.gid);
     *task.fds.lock() = parent.clone_fds();
     task.set_cwd(parent.cwd());
     task.set_pgid(parent.pgid());
@@ -1876,7 +1876,7 @@ pub fn fork(frame: &UserFrame) -> i64 {
         cspace.teardown(); // give back what was copied so far
         return -12; // ENOMEM
     }
-    let child = Task::new(parent.pid, cspace);
+    let child = Task::new_with_ids(parent.pid, cspace, parent.uid, parent.gid); // a forked child keeps the parent's identity (an elevated shell's children stay elevated)
     *child.fds.lock() = parent.clone_fds();
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
@@ -1911,7 +1911,7 @@ pub fn clone_vm(frame: &UserFrame, flags: u64, stack: u64, tls: u64) -> i64 {
     const CLONE_SETTLS: u64 = 0x80000;
     let parent = sched::current().task().expect("clone: not a user task");
     let pspace = parent.space();
-    let child = Task::new(parent.pid, pspace.clone());
+    let child = Task::new_with_ids(parent.pid, pspace.clone(), parent.uid, parent.gid);
     *child.fds.lock() = parent.clone_fds();
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();

@@ -33,7 +33,76 @@ static int copy_range(uint64_t off, uint64_t len) {                       /* raw
     return 0;
 }
 
+/* thosinstall --disks: what is on each disk, one line per fact, for the installer to show:
+     disk <dev> <size_mb> <table: mbr|gpt|none|unreadable> <boot: yes|no>
+     part <dev> <n> <start_mb> <size_mb> <type_hex> <what>            (what: Windows(NTFS) | FAT | Linux(ext2/3/4) | Linux swap | THOS | unknown)
+     free <dev> <largest_free_mb> */
+static const char *classify(int fd, uint64_t off, uint8_t ptype, char *label, size_t cap) {
+    uint8_t b[4096];
+    label[0] = 0;
+    if (ptype == 0x82) return "Linux swap";
+    if (ptype == 0x05 || ptype == 0x0F || ptype == 0x85) return "extended partition";
+    if (pread(fd, b, sizeof b, (off_t)off) != (ssize_t)sizeof b) return "unreadable";
+    if (!memcmp(b + 3, "NTFS    ", 8)) return "Windows (NTFS)";
+    if (!memcmp(b + 82, "FAT32   ", 8) || !memcmp(b + 54, "FAT16   ", 8) || !memcmp(b + 54, "FAT12   ", 8) || !memcmp(b + 3, "EXFAT   ", 8)) return "FAT/exFAT";
+    uint8_t sb[1024];
+    if (pread(fd, sb, sizeof sb, (off_t)(off + 1024)) == (ssize_t)sizeof sb && le16(sb + 56) == 0xEF53) {
+        snprintf(label, cap, "%.16s", (char *)sb + 120);
+        if (!strncmp(label, "THOSROOT", 8)) return "THOS";
+        uint32_t incompat = le32(sb + 96), ro = le32(sb + 100);
+        return (incompat & 0x40) || (ro & 0x40) ? "Linux (ext4)" : "Linux (ext2/3)";
+    }
+    if (!memcmp(b + 4086, "SWAPSPACE2", 10)) return "Linux swap";
+    if (ptype == 0x83) return "Linux (unknown file system)";
+    return "unknown";
+}
+static int list_disks(void) {
+    const char *devs[] = { "/dev/sda", "/dev/sdb" };
+    char bootd[16] = "";
+    FILE *bf = fopen("/proc/bootdisk", "r");
+    if (bf) { if (fgets(bootd, sizeof bootd, bf)) {} fclose(bf); }
+    for (int d = 0; d < 2; d++) {
+        int fd = open(devs[d], O_RDONLY);
+        if (fd < 0) continue;
+        off_t size = lseek(fd, 0, SEEK_END);
+        uint8_t mbr[512], gpt[512];
+        const char *table = "none";
+        int ok = pread(fd, mbr, 512, 0) == 512;
+        if (!ok) table = "unreadable";
+        else if (mbr[510] == 0x55 && mbr[511] == 0xAA) table = "mbr";
+        if (ok && pread(fd, gpt, 512, 512) == 512 && !memcmp(gpt, "EFI PART", 8)) table = "gpt";
+        int isboot = (d == 1 && !strncmp(bootd, "usb", 3)) || (d == 0 && !strncmp(bootd, "sata", 4));
+        printf("disk %s %llu %s %s\n", devs[d], (unsigned long long)size >> 20, table, isboot ? "yes" : "no");
+        uint64_t used_end = 2048, best = 0, total = (uint64_t)size / SEC;
+        if (!strcmp(table, "mbr")) {
+            struct { uint64_t s, n; } pp[4]; int np = 0;
+            for (int i = 0; i < 4; i++) {
+                const uint8_t *e = mbr + 0x1BE + 16 * i;
+                uint64_t st = le32(e + 8), cnt = le32(e + 12);
+                if (!e[4] || !cnt) continue;
+                char label[20];
+                const char *what = classify(fd, st * SEC, e[4], label, sizeof label);
+                printf("part %s %d %llu %llu %02x %s%s%s%s\n", devs[d], i + 1, (unsigned long long)(st * SEC) >> 20, (unsigned long long)(cnt * SEC) >> 20, e[4], what, label[0] ? " '" : "", label, label[0] ? "'" : "");
+                pp[np].s = st; pp[np++].n = cnt;
+            }
+            uint64_t cur = 2048;
+            for (int i = 0; i < np; i++) { /* simple sweep over the sorted entries */
+                for (int j = i; j < np; j++) if (pp[j].s < pp[i].s) { uint64_t ts = pp[i].s, tn = pp[i].n; pp[i].s = pp[j].s; pp[i].n = pp[j].n; pp[j].s = ts; pp[j].n = tn; }
+                if (pp[i].s > cur && pp[i].s - cur > best) best = pp[i].s - cur;
+                if (pp[i].s + pp[i].n > cur) cur = pp[i].s + pp[i].n;
+            }
+            if (total > cur && total - cur > best) best = total - cur;
+            used_end = cur;
+        } else if (!strcmp(table, "gpt")) { printf("part %s - 0 0 ee GPT partition table (UEFI style, not handled by this installer)\n", devs[d]); }
+        else if (!strcmp(table, "none")) best = total - used_end;
+        printf("free %s %llu\n", devs[d], (unsigned long long)(best * SEC) >> 20);
+        close(fd);
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && !strcmp(argv[1], "--disks")) return list_disks();
     if (argc != 3 || strcmp(argv[1], "--erase") || strcmp(argv[2], "/dev/sda")) { fputs("usage: thosinstall --erase /dev/sda\n", stderr); return 2; }
     dup2(1, 2);                                              /* the elevated process may have no stderr: report everything on stdout */
     buf = malloc(BUFSZ);

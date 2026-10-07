@@ -1,25 +1,112 @@
 #!/busybox sh
-# thos-install: put THOS on the internal disk (the one Windows or Linux may be on) from the stick it booted from.
-# It erases the whole internal disk, so it asks twice and needs the administrator password.
+# thos-install: the THOS installer. It runs from the stick, checks the computer, shows the disks, asks which one to use and copies THOS onto it.
+#   thos-install          interactive (Start menu: "Install THOS")
+#   thos-install --yes    no questions: erase /dev/sda and install (used by the tests)
+#   thos-install --log    show the log of the last run
+# Everything it does is written to the log (/var/log/thos-install.log and ~/thos-install.log on the stick), also when it fails.
 B=/busybox
+# disks may only be read and written by root: ask for the administrator password once, then run this same script as root
+if [ "$1" != --home ]; then
+    echo "  The installer needs the administrator password."
+    exec /bin/thoselevate $B sh /bin/thos-install --home "${HOME:-/tmp}" "$@"
+fi
+if [ "$1" = --home ]; then HOME="$2"; shift 2; fi
+HOMELOG="${HOME:-/tmp}/thos-install.log"
+LOG="$HOMELOG"
+if [ "$1" = --log ]; then exec $B less "$HOMELOG"; fi
+
+say()  { echo "$*"; echo "$($B date '+%H:%M:%S') $*" >> $LOG; }
+show() { echo "$*"; echo "         $*" >> $LOG; }
+die()  { say "STOP: $*"; keep_log; echo; echo "The log is in $HOMELOG (read it with: thos-install --log)."; exit 1; }
+keep_log() { $B cp "$LOG" /tmp/thos-install.log 2>/dev/null; $B sync; }
+
+echo "== THOS installer ==" > $LOG
+$B date >> $LOG
 BOOT=$($B cat /proc/bootdisk 2>/dev/null)
-if [ "$BOOT" != usb ]; then
-    echo "thos-install works from the THOS stick: boot the stick (this system is already running from the internal disk)."
-    exit 1
-fi
-echo "THOS installer"
-echo "  This ERASES the internal disk /dev/sda completely and copies THOS onto it."
-echo "  Everything that is on it now (Windows, Linux, your files) is lost."
+echo
+echo "  THOS installer"
+echo "  --------------"
+
+# ---- 1. compatibility check ---------------------------------------------------------------------------------------------------
+echo
+say "1/4  Checking this computer"
+CPU=$($B grep -m1 'model name' /proc/cpuinfo | $B cut -d: -f2 | $B sed 's/^ *//')
+CORES=$($B grep -c '^processor' /proc/cpuinfo)
+MEM=$($B awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+NET=$($B sed -n 1p /proc/netinfo | $B cut -d' ' -f2)
+FAIL=0
+check() { # check <ok|warn|fail> <text>
+    case "$1" in
+        ok)   show "  [ ok ]  $2" ;;
+        warn) show "  [warn]  $2" ;;
+        fail) show "  [FAIL]  $2"; FAIL=1 ;;
+    esac
+}
+check ok "Processor: $CPU, $CORES core(s)"
+if [ "$MEM" -ge 512 ]; then check ok "Memory: $MEM MB"; elif [ "$MEM" -ge 256 ]; then check warn "Memory: $MEM MB (works, but little)"; else check fail "Memory: only $MEM MB (at least 256 MB needed)"; fi
+if [ "$BOOT" = usb ]; then check ok "Started from the USB stick (BIOS/Legacy mode)"; else check fail "THOS is already running from the internal disk: boot the stick to install"; fi
+if [ "$NET" = up ]; then check ok "Network cable connected"; else check warn "No network (not needed for the installation)"; fi
+
+# ---- 2. disks ---------------------------------------------------------------------------------------------------------------------
+echo
+say "2/4  Disks in this computer"
+DISKS=/tmp/thos-disks.txt
+/bin/thosinstall --disks > $DISKS 2>&1
+[ -s $DISKS ] || die "no disks could be read (root rights are needed: run again and enter the administrator password)"
+cat $DISKS >> $LOG
+SRCMB=$($B awk '$1=="part" && $2=="/dev/sdb" {e=$4+$5; if (e>m) m=e} END {print m+0}' $DISKS)
+TARGET=""
+N=0
+while read kind dev a b c d rest; do
+    case "$kind" in
+        disk)
+            N=$((N+1)); echo
+            if [ "$c" = yes ]; then WHERE="  <- THOS is running from this one"; else WHERE=""; fi
+            show "  $dev: $a MB, partition table: $b$WHERE"
+            [ "$c" = no ] && TARGET=$dev ;;
+        part)  show "      partition $a: $c MB at $b MB   $d $rest" ;;
+        free)  show "      largest free space: $a MB" ;;
+    esac
+done < $DISKS
+check ok "System to install: $SRCMB MB (from the stick)"
+[ "$FAIL" = 0 ] || die "this computer does not pass the check (see above)"
+[ -n "$TARGET" ] || die "there is no second disk to install to (the internal disk was not found: check the SATA mode in the BIOS, it must be AHCI)"
+TMB=$($B awk -v t="$TARGET" '$1=="disk" && $2==t {print $3}' $DISKS)
+[ "$TMB" -ge "$SRCMB" ] 2>/dev/null || die "the internal disk ($TMB MB) is smaller than the system ($SRCMB MB)"
+HASOS=$($B awk -v t="$TARGET" '$1=="part" && $2==t' $DISKS | $B wc -l)
+
+# ---- 3. confirmation ----------------------------------------------------------------------------------------------------------------
+echo
+say "3/4  What will happen"
+show "  Disk to install to: $TARGET ($TMB MB)"
+show "  This ERASES the whole disk, including every system or file on it ($HASOS partition(s) found)."
+show "  THOS is installed as one boot partition and one system partition of $SRCMB MB; the rest of the disk stays unused."
+show "  After the restart THOS asks you to create your account."
 if [ "$1" != --yes ]; then
-    printf "  Type the word ERASE to continue: "
+    echo
+    printf "  Type YES (capital letters) to install, anything else cancels: "
     read ans
-    [ "$ans" = ERASE ] || { echo "cancelled, nothing was changed."; exit 1; }
+    echo "answer: $ans" >> $LOG
+    [ "$ans" = YES ] || { say "Cancelled by the user. Nothing was changed."; keep_log; exit 1; }
 fi
-/bin/thoselevate /bin/thosinstall --erase /dev/sda
-rc=$?
-if [ $rc = 0 ]; then
-    echo "Done. Shut down, remove the stick and start the computer: it boots THOS from the internal disk."
-else
-    echo "The installation did not finish (code $rc). The internal disk is NOT bootable; run thos-install again."
+
+# ---- 4. install --------------------------------------------------------------------------------------------------------------------------
+echo
+say "4/4  Installing (do not switch the computer off)"
+/bin/thosinstall --erase "$TARGET" | while read line; do
+    case "$line" in
+        progress*) printf "\r  %s%%   " "${line#progress }" ;;
+        *) echo "$line"; echo "         $line" >> $LOG ;;
+    esac
+done
+RC=$?
+echo
+if $B grep -q "install done" $LOG; then
+    say "THOS is installed."
+    keep_log
+    echo
+    echo "  Shut down, remove the stick and start the computer: THOS starts from the internal disk."
+    echo "  The log of this installation: $HOMELOG   (command: thos-install --log)"
+    exit 0
 fi
-exit $rc
+die "the installation did not finish. The internal disk is NOT bootable. You can run the installer again"

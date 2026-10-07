@@ -42,6 +42,7 @@ fn main() {
         "release-image" => {
             // the image meant for a real machine: login build, the desktop starts by itself after login (`thos-autostart off` undoes it), room for programs
             std::env::set_var("THOS_AUTOSTART", "1");
+            std::env::set_var("THOS_FRESH_INSTALL", "1");
             if std::env::var("THOS_FS_MIB").is_err() {
                 std::env::set_var("THOS_FS_MIB", "1536");
             }
@@ -596,6 +597,7 @@ fn main() {
         "install-test" => {
             // booted from a stick (USB) with a blank internal SATA disk: thos-install copies THOS onto it; then the internal disk boots alone
             std::env::set_var("THOS_BOOT_USB", "1");
+            std::env::set_var("THOS_FRESH_INSTALL", "1");
             let mut img = prod_interactive_image(cmd);
             let root = workspace_root();
             if let Ok(mib) = std::env::var("THOS_INSTALL_GROW") {              // like a real stick: the root partition grown to fill it
@@ -636,14 +638,10 @@ fn main() {
                 .args(["-serial", &format!("file:{}", log2.to_str().unwrap()), "-monitor", &format!("unix:{},server,nowait", sock2.to_str().unwrap())])
                 .spawn()
                 .expect("spawn qemu");
-            let ok = wait_for(&log2, "THOS login:", 120) && {
-                std::thread::sleep(std::time::Duration::from_millis(1500));
-                type_line(&sock2, "thos");
-                wait_for(&log2, "password:", 20) && {
-                    std::thread::sleep(std::time::Duration::from_millis(800));
-                    type_line(&sock2, "pass");
-                    wait_for(&log2, "interactive hold", 90)
-                }
+            // the installed copy starts as a fresh system: it asks for a new administrator account (first-run setup), then the shell appears
+            let ok = wait_for(&log2, "THOS first-run setup", 120) && {
+                drive_login(&sock2, &log2, &mut child, "install-test");
+                wait_for(&log2, "interactive hold", 90)
             } && {
                 std::thread::sleep(std::time::Duration::from_millis(800));
                 type_line(&sock2, "echo reboot-ok-$((13))");
@@ -678,10 +676,22 @@ fn main() {
                 good
             };
             if ok && clean {
-                println!("install-test PASSED: thos-install copied THOS from the stick to the internal disk (e2fsck clean), which then booted on its own and accepted the same login");
+                println!("install-test PASSED: thos-install copied THOS from the stick to the internal disk (e2fsck clean), which then booted on its own, asked for a new account and gave a shell");
             } else {
                 eprintln!("{}", std::fs::read_to_string(&log2).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
                 eprintln!("install-test FAILED ({})", if ok { "the copy is not a clean file system" } else { "the installed disk did not boot and log in" });
+                exit(1);
+            }
+        }
+        "westmere-test" => {
+            // the Acer's CPU (Westmere/Arrandale) has no 1 GiB pages: the kernel must boot with 2 MiB pages there
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "westmere", "echo wm-ok-$((5))", "wm-ok-5", 200, &["-cpu", "Westmere,-pdpe1gb"]);
+            if out.contains("2 MiB: this CPU has no 1 GiB pages") && out.lines().any(|l| l.trim() == "wm-ok-5") {
+                println!("westmere-test PASSED: on a CPU without 1 GiB pages the kernel maps memory with 2 MiB pages and boots to the shell");
+            } else {
+                for l in out.lines().filter(|l| l.contains("THOS: own") || l.contains("page")).take(5) { eprintln!("  {l}"); }
+                eprintln!("westmere-test FAILED");
                 exit(1);
             }
         }
@@ -2617,6 +2627,13 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} shrc", root.join("xtask/testdata/shrc").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-autostart", root.join("xtask/testdata/thos-autostart").to_str().unwrap()), img.to_str().unwrap()]));
+                if std::env::var("THOS_FRESH_INSTALL").is_ok() {            // a copy installed from this image asks for a new account at its first start
+                    let _ = Command::new("debugfs").args(["-w", "-R", "mkdir etc", img.to_str().unwrap()]).output();
+                    let _ = Command::new("debugfs").args(["-w", "-R", "mkdir etc/thos", img.to_str().unwrap()]).output();
+                    let marker = root.join("target/fresh-install-marker");
+                    std::fs::write(&marker, b"1\n").unwrap();
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} etc/thos/fresh-install", marker.to_str().unwrap()), img.to_str().unwrap()]));
+                }
                 if std::env::var("THOS_AUTOSTART").is_ok() {
                     run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()));
                     let marker = root.join("target/autostart-marker");

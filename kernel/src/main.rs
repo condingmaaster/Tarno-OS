@@ -396,8 +396,9 @@ fn vmm_bringup() {
     vmm::init(hhdm, memmap.entries(), ka.physical_base, ka.virtual_base);
 
     kprintln!(
-        "THOS: own page tables  PML4 switched; {} GiB HHDM + 4 GiB identity + W^X kernel",
-        vmm::hhdm_gib(memmap.entries())
+        "THOS: own page tables  PML4 switched; {} GiB HHDM + 4 GiB identity + W^X kernel ({} pages)",
+        vmm::hhdm_gib(memmap.entries()),
+        if vmm::has_1g_pages() { "1 GiB" } else { "2 MiB: this CPU has no 1 GiB pages" }
     );
 }
 

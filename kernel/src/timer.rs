@@ -48,9 +48,6 @@ pub fn tick() {
         return; // one clock, driven by CPU 0 only
     }
     let now = TICKS.fetch_add(1, Ordering::AcqRel) + 1;
-    if now % 1000 == 0 {
-        crate::fbcon::splash_watchdog(now); // a boot that sits on the splash for 45 s shows its log
-    }
     let mut wheel = WHEEL.lock();
     let mut i = 0;
     while i < wheel.len() {
