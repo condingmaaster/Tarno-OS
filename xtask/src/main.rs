@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
 
 fn main() {
+    // mkfs.fat, sfdisk, e2fsck ... live in /sbin and /usr/sbin, which a normal user's PATH often lacks
+    let path = std::env::var("PATH").unwrap_or_default();
+    std::env::set_var("PATH", format!("{path}:/sbin:/usr/sbin"));
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).unwrap_or("run");
     let gui = args.iter().any(|a| a == "--gui");
