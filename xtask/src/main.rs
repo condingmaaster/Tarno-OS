@@ -5715,9 +5715,17 @@ fn drive_login(sock: &Path, log: &Path, child: &mut std::process::Child, tag: &s
             kill(child, tag, "no username prompt", log);
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
-        type_line(sock, "thos"); // admin username
-        if !wait_count(log, "  password:", 1, 20) {
-            kill(child, tag, "no password prompt", log);
+        let mut tries = 0;
+        loop {
+            type_line(sock, "thos"); // admin username (under load QEMU may drop keys: an empty line is rejected and the prompt returns, so type it again)
+            if wait_count(log, "  password:", 1, 12) {
+                break;
+            }
+            tries += 1;
+            if tries >= 3 {
+                kill(child, tag, "no password prompt", log);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
         std::thread::sleep(std::time::Duration::from_millis(300));
         type_line(sock, "pass"); // password
