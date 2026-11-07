@@ -66,6 +66,9 @@ pub struct RawDisk {
     base: u64,    // first sector of the view (0 for a whole disk)
     sectors: u64, // length of the view
     pos: Mutex<u64>,
+    /// May this view be written even though it is on the boot disk? Only the FAT boot partition: the root file system is mounted,
+    /// the boot partition holds the kernel the update channel replaces (`thos-fatput`).
+    boot_fat: bool,
 }
 
 fn is_root() -> bool {
@@ -76,7 +79,7 @@ fn is_root() -> bool {
 pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     if path == "/dev/ram0" {
         let total = dev_sectors(Dev::Ram);
-        return (total > 0).then(|| Arc::new(RawDisk { dev: Dev::Ram, base: 0, sectors: total, pos: Mutex::new(0) }) as Arc<dyn FileOps>);
+        return (total > 0).then(|| Arc::new(RawDisk { dev: Dev::Ram, base: 0, sectors: total, pos: Mutex::new(0), boot_fat: false }) as Arc<dyn FileOps>);
     }
     let name = path.strip_prefix("/dev/sd")?;
     let mut ch = name.chars();
@@ -91,7 +94,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     }
     let rest = ch.as_str();
     if rest.is_empty() {
-        return Some(Arc::new(RawDisk { dev, base: 0, sectors: total, pos: Mutex::new(0) }));
+        return Some(Arc::new(RawDisk { dev, base: 0, sectors: total, pos: Mutex::new(0), boot_fat: false }));
     }
     let n: usize = rest.parse().ok()?;
     if !(1..=4).contains(&n) {
@@ -108,7 +111,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     if e[4] == 0 || count == 0 || start + count > total {
         return None;
     }
-    Some(Arc::new(RawDisk { dev, base: start, sectors: count, pos: Mutex::new(0) }))
+    Some(Arc::new(RawDisk { dev, base: start, sectors: count, pos: Mutex::new(0), boot_fat: matches!(e[4], 0x0B | 0x0C) }))
 }
 
 impl RawDisk {
@@ -166,7 +169,7 @@ impl FileOps for RawDisk {
         if !is_root() {
             return EACCES;
         }
-        if is_boot_disk(self.dev) {
+        if is_boot_disk(self.dev) && !self.boot_fat {
             return EROFS;
         }
         let mut tmp = buf.to_vec();
@@ -187,7 +190,7 @@ impl FileOps for RawDisk {
         if !is_root() {
             return EACCES;
         }
-        if is_boot_disk(self.dev) {
+        if is_boot_disk(self.dev) && !self.boot_fat {
             return EROFS;
         }
         let mut p = self.pos.lock();

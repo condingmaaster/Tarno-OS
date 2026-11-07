@@ -180,6 +180,18 @@ pub fn write_log(bytes: &[u8]) {
     write(bytes);
 }
 
+/// Put text on the screen without waiting for any lock (skipped when the console is busy): the lock-up detector's note.
+pub fn emergency(bytes: &[u8]) {
+    let Some(mut g) = CON.try_lock() else { return };
+    let Some(c) = g.as_mut() else { return };
+    if !c.active {
+        return;
+    }
+    for &b in bytes {
+        c.utf8(b);
+    }
+}
+
 /// Feed output bytes (UTF-8) to the console.
 pub fn write(bytes: &[u8]) {
     if QUIET.load(core::sync::atomic::Ordering::Relaxed) {

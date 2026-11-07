@@ -193,6 +193,12 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         }
         ["version"] => file(path, "Linux version 6.1.0-thos (thos@thos) (rustc) #1 SMP THOS\n".to_string()),
         ["cpuinfo"] => file(path, cpuinfo()),
+        ["hang_test"] => {
+            // deliberately stuck in a kernel loop (interrupts on): proves the lock-up detector (lockup.rs) reports it; `lockup-test` uses this
+            loop {
+                core::hint::spin_loop();
+            }
+        }
         ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_ram() { "ram" } else if crate::blk::is_usb() { "usb" } else { "sata" })),
         ["netinfo"] => {
             file(path, crate::net::info())

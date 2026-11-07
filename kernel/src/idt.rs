@@ -121,6 +121,7 @@ extern "C" fn thos_irq_timer_body(frame: *const u64) {
         return; // per-CPU state (gs) is not live yet
     }
     let cpu = crate::smp::this_cpu() as usize;
+    unsafe { crate::lockup::sample(cpu, *frame.add(15), *frame.add(16)) }; // where was this CPU interrupted (rip at +120, cs at +128)?
     let now = crate::timer::monotonic_ns();
     if now.saturating_sub(SLICE[cpu].load(core::sync::atomic::Ordering::Relaxed)) < 10_000_000 {
         return;

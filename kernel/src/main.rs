@@ -31,6 +31,7 @@ extern crate alloc;
 mod acpi;
 mod ahci;
 mod blk;
+mod lockup;
 mod mtrr;
 mod pat;
 mod net_config;
@@ -266,6 +267,19 @@ extern "C" fn kmain() -> ! {
         // Milestone 2: first-run setup / login, then launch the shell off ext2
         // and hand it the keyboard. When the shell ends (`exit`, Ctrl+D) the
         // session is over: back to the login prompt, never a dead console.
+        // Services that run without anyone logged in: the SSH server (and with it the update channel) when the image has one (/etc/thos/ssh/enabled).
+        if let Ok(fs) = ext2::open() {
+            if fs.path_lookup("/etc/thos/ssh/enabled").is_some() {
+                if let Some(sh) = fs.read_path("/busybox") {
+                    process::spawn_init(
+                        &sh,
+                        &["sh", "/thos-sshd"],
+                        &["PATH=/bin:/:/usr/sbin:/usr/bin", "HOME=/root", "USER=root", "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"],
+                    );
+                    kprintln!("THOS: ssh              SSH server starts once the network is up (key login as root)");
+                }
+            }
+        }
         loop {
             let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
             // boot menu entry "THOS Installer" (kernel command line `install`): no login, the installer runs as root on the console

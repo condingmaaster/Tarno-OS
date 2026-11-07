@@ -1,0 +1,42 @@
+#!/busybox sh
+# thos-update: apply an update that arrives as a tar stream on stdin (the host runs `cargo xtask push-update`, which sends it over SSH).
+#   1. unpack into /var/update and check every file against MANIFEST (sha256)
+#   2. a new kernel (boot/thos-kernel) is written into the FAT boot partition with thos-fatput (old file stays valid until the switch)
+#   3. programs and scripts replace their old versions (copy, then rename)
+#   4. the account is logged in again after the restart, and the machine restarts
+B=/busybox
+STAGE=/var/update
+fail() { echo "UPDATE FAILED: $*"; $B rm -rf $STAGE; exit 1; }
+OLD=$($B cat /etc/thos/version 2>/dev/null)
+echo "update: unpacking (installed: ${OLD:-unknown})"
+$B rm -rf $STAGE
+$B mkdir -p $STAGE || fail "no space for $STAGE"
+$B tar -x -C $STAGE || fail "the update archive is damaged"
+[ -f $STAGE/MANIFEST ] || fail "the archive has no MANIFEST"
+(cd $STAGE && $B sha256sum -c MANIFEST > /tmp/update-check.log 2>&1) || { $B tail -3 /tmp/update-check.log; fail "a file does not match its checksum"; }
+NEW=$($B cat $STAGE/VERSION 2>/dev/null)
+echo "update: files verified (new: ${NEW:-unknown})"
+if [ -f $STAGE/boot/thos-kernel ]; then
+    case "$($B cat /proc/bootdisk)" in
+        sata) BP=/dev/sda1 ;;
+        usb)  BP=/dev/sdb1 ;;
+        *)    fail "this system runs from memory (live stick): the kernel cannot be replaced, install it first" ;;
+    esac
+    /thos-fatput $BP boot/thos-kernel $STAGE/boot/thos-kernel || fail "the kernel could not be written to the boot partition"
+fi
+COUNT=0
+for f in $($B find $STAGE -type f ! -path "$STAGE/boot/*" ! -name MANIFEST ! -name VERSION); do
+    rel=${f#$STAGE}
+    $B mkdir -p "$($B dirname "$rel")"
+    $B cp "$f" "$rel.new" && $B mv "$rel.new" "$rel" || fail "could not replace $rel"
+    COUNT=$((COUNT+1))
+done
+echo "update: $COUNT files replaced"
+$B mkdir -p /etc/thos
+[ -n "$NEW" ] && echo "$NEW" > /etc/thos/version
+echo 1 > /etc/thos/autologin-once
+$B rm -rf $STAGE
+$B sync
+echo "update: done, restarting in 2 seconds"
+( $B sleep 2; $B sync; /bin/reboot -f ) > /dev/null 2>&1 &
+exit 0

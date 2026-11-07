@@ -68,6 +68,14 @@ pub fn print(s: &str) {
     crate::fbcon::write_log(s.as_bytes());
 }
 
+/// Write bytes to the serial port without taking the port lock (for the lock-up detector: the lock may be what is stuck).
+pub fn emergency(bytes: &[u8]) {
+    let port = Uart { base: 0x3F8 };
+    for &b in bytes {
+        port.write_byte(b);
+    }
+}
+
 /// Write raw bytes verbatim (no CR translation) — used by `write`/`writev`.
 pub fn write_bytes(bytes: &[u8]) {
     let port = PORT.lock();

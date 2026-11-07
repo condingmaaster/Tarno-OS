@@ -2274,7 +2274,9 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         }
 
         SYS_NEWFSTATAT => sys_newfstatat(a1, a2, a3, a4),
-        SYS_SETUID | SYS_SETGID => 0,
+        // identity changes are accepted as no-ops (a task keeps the uid it was started with): enough for daemons that drop to the user they
+        // already are (Dropbear's setresuid/seteuid/setgroups/initgroups after a root login)
+        SYS_SETUID | SYS_SETGID | 113 | 114 | 116 | 117 | 119 | 122 | 123 => 0,
 
         SYS_EXECVE => {
             let r = sys_execve(a1, a2, a3);

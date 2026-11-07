@@ -500,6 +500,11 @@ fn idle_tid(cpu: u64) -> u64 {
     0xffff_0000 | cpu
 }
 
+/// Address of the idle loop (the lock-up detector must not take a sleeping CPU for a stuck one).
+pub fn idle_addr() -> u64 {
+    idle_entry as usize as u64
+}
+
 extern "C" fn idle_entry(_arg: usize) -> ! {
     loop {
         interrupts::enable();

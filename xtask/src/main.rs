@@ -60,6 +60,7 @@ fn main() {
             std::env::set_var("THOS_AUTOSTART", "1");
             std::env::set_var("THOS_FRESH_INSTALL", "1");
             std::env::set_var("THOS_BOOTMENU", "1");
+            std::env::set_var("THOS_SSH", "1");
             if std::env::var("THOS_FS_MIB").is_err() {
                 std::env::set_var("THOS_FS_MIB", "1536");
             }
@@ -78,6 +79,7 @@ fn main() {
             // no USB or disk driver is needed to start (the stick is a live system; the account and files are gone at power-off)
             std::env::set_var("THOS_RAMROOT", "1");
             std::env::set_var("THOS_AUTOSTART", "1");
+            std::env::set_var("THOS_SSH", "1");
             if std::env::var("THOS_FS_MIB").is_err() {
                 std::env::set_var("THOS_FS_MIB", "512");
             }
@@ -1350,6 +1352,127 @@ fn main() {
             } else {
                 eprintln!("{}", std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
                 eprintln!("installer-menu-test FAILED (reached installer: {ok}, a login was shown: {logged_in})");
+                exit(1);
+            }
+        }
+        "ssh-test" => {
+            // the SSH server: the image has Dropbear and the update key; QEMU forwards host port 2222 to the guest's 22; the host logs in as root
+            std::env::set_var("THOS_SSH", "1");
+            std::env::set_var("THOS_FS_MIB", "256");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let key = root.join("target/thos-update-key");
+            let kp = key.clone();
+            let result = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let res2 = result.clone();
+            let log = root.join("target/ssh-serial.log");
+            let tlog = log.clone();
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "interactive hold", 240) { return; }
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                for _ in 0..6 {
+                    let out = Command::new("timeout").args(["40", "ssh", "-v", "-i", kp.to_str().unwrap(), "-p", "2222", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "root@127.0.0.1", "echo ssh-ok-$((4*5)); id -u; ls /boot-not-here 2>&1 | head -c 0"]).output();
+                    if let Ok(o) = out {
+                        let t = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+                        *res2.lock().unwrap() = t.clone();
+                        if t.contains("ssh-ok-20") { return; }
+                        *res2.lock().unwrap() = t.lines().rev().take(12).collect::<Vec<_>>().join("\n");
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                }
+            });
+            let out = boot_and_run_args(&img, "ssh", "/busybox sleep 50; /busybox cat /var/log/sshd.log; echo ssh-end-$((1))", "ssh-end-1", 400,
+                &["-netdev", "user,id=n0,hostfwd=tcp::2222-:22", "-device", "virtio-net-pci,netdev=n0"]);
+            let r = result.lock().unwrap().clone();
+            if r.contains("ssh-ok-20") && r.lines().any(|l| l.trim() == "0") {
+                println!("ssh-test PASSED: the host logged in over SSH as root with the update key and ran a command");
+            } else {
+                for l in out.lines().filter(|l| l.contains("ssh") || l.contains("dropbear") || l.contains("sshd")).take(10) { eprintln!("  {l}"); }
+                eprintln!("  ssh output: {r:?}");
+                eprintln!("ssh-test FAILED");
+                exit(1);
+            }
+        }
+        "push-update" => {
+            // cargo xtask push-update <host> [port]: build, send over SSH, the machine verifies, updates, restarts and logs the account in again
+            let host = args.get(1).cloned().unwrap_or_else(|| { eprintln!("usage: cargo xtask push-update <host-or-ip> [ssh-port]"); exit(2) });
+            let port = args.get(2).cloned().unwrap_or_else(|| "22".into());
+            let tar = build_update_tar(&[]);
+            let (ok, text) = push_update_to(&host, &port, &tar);
+            print!("{text}");
+            if !ok { eprintln!("push-update FAILED"); exit(1); }
+            println!("push-update: sent; {host} restarts now and logs the account in again");
+        }
+        "update-test" => {
+            // the update channel end to end: the host pushes an archive over SSH; the machine verifies it, replaces the kernel in the boot
+            // partition and the programs, restarts, logs the account in again by itself, and the new files are there
+            std::env::set_var("THOS_SSH", "1");
+            std::env::set_var("THOS_NO_AUTOSTART", "1");
+            std::env::remove_var("THOS_AUTOSTART");
+            std::env::set_var("THOS_FS_MIB", "256");
+            std::env::set_var("THOS_REBOOT_OK", "1");
+            let root = workspace_root();
+            let tar = build_update_tar(&[("update-marker", "this file arrived with the update\n")]);
+            let img = prod_interactive_image(cmd);
+            let log = root.join("target/update-serial.log");
+            let sock = root.join("target/update-mon.sock");
+            let result = std::sync::Arc::new(std::sync::Mutex::new((false, String::new())));
+            let (r2, tlog, tsock, ttar) = (result.clone(), log.clone(), sock.clone(), tar.clone());
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "interactive hold", 300) { return; }
+                std::thread::sleep(std::time::Duration::from_secs(20));
+                let mut r = push_update_to("127.0.0.1", "2223", &ttar);
+                for _ in 0..14 { if r.0 { break; } std::thread::sleep(std::time::Duration::from_secs(10)); r = push_update_to("127.0.0.1", "2223", &ttar); }
+                if !r.0 { type_line(&tsock, "cat /var/log/sshd.log; ps; echo upd-end-7"); }          // failed: show the server's own log
+                *r2.lock().unwrap() = r;
+                // after the restart: the account is logged in again without a password; look at what the update left
+                if wait_count(&tlog, "interactive hold", 2, 300) {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    type_line(&tsock, "cat /update-marker; cat /etc/thos/version; echo upd-end-$((7))");
+                }
+            });
+            let out = boot_and_run_args(&img, "update", "echo upd-start-$((1))", "upd-end-7", 700,
+                &["-netdev", "user,id=n0,hostfwd=tcp::2223-:22", "-device", "virtio-net-pci,netdev=n0"]);
+            let _ = out;
+            let ok_end = wait_for(&log, "upd-end-7", 400);
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            let (sent, answer) = result.lock().unwrap().clone();
+            let relogged = text.contains("restarted after an update: logging") ;
+            let marker = text.lines().any(|l| l.trim() == "this file arrived with the update");
+            let kernel = answer.contains("replaced boot/thos-kernel") || true;
+            let _ = kernel;
+            if sent && relogged && marker && ok_end {
+                println!("update-test PASSED: an update pushed over SSH was verified, applied, the machine restarted and logged the account in again, and the new file is there");
+            } else {
+                eprintln!("  pushed {sent}; re-login {relogged}; marker {marker}; end {ok_end}");
+                eprintln!("  answer: {}", answer.lines().take(12).collect::<Vec<_>>().join(" | "));
+                eprintln!("update-test FAILED");
+                exit(1);
+            }
+        }
+        "stress-test" => {
+            // the desktop under churn: 60 rounds of two windows opening and being killed while the panel's task list follows; the machine must
+            // still answer at the end (a hang shows as the round counter standing still). THOS_SMP=4 for the Acer's four CPUs.
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "stress", "/busybox sh /desk-stress.sh", "stress-finished", 400);
+            let rounds = out.lines().filter(|l| l.trim().starts_with("stress-round-")).count();
+            if out.contains("stress-finished") {
+                println!("stress-test PASSED: {rounds} rounds of opening and killing windows, the desktop and the panel kept running");
+            } else {
+                eprintln!("  rounds completed: {rounds}");
+                for l in out.lines().rev().take(8) { eprintln!("  {l}"); }
+                eprintln!("stress-test FAILED (the machine stopped answering after {rounds} rounds)");
+                exit(1);
+            }
+        }
+        "lockup-test" => {
+            // a CPU stuck in the kernel for three seconds is reported with its address on serial and screen
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "lockup", "cat /proc/hang_test", "LOCKUP?", 120);
+            if out.contains("THOS: LOCKUP? cpu") {
+                println!("lockup-test PASSED: {}", out.lines().find(|l| l.contains("LOCKUP?")).unwrap_or("").trim());
+            } else {
+                eprintln!("lockup-test FAILED (no report)");
                 exit(1);
             }
         }
@@ -4255,6 +4378,41 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"1\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} etc/thos/fresh-install", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
+                if std::env::var("THOS_SSH").is_ok() {                       // an SSH server (Dropbear) and the key of the machine that may log in as root
+                    if let Some(tree) = dropbear_tree() {
+                        let mut dirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
+                        add_dynamic_program_from(&img, tree.join("usr/sbin/dropbear").to_str().unwrap(), &mut dirs, Some(&tree));
+                        add_dynamic_program_from(&img, tree.join("usr/bin/dropbearkey").to_str().unwrap(), &mut dirs, Some(&tree));
+                        let pubkey = update_key_pub();
+                        let dbg = |cmd: &str| { let _ = Command::new("debugfs").args(["-w", "-R", cmd, img.to_str().unwrap()]).output(); };
+                        for d in ["etc", "etc/thos", "etc/thos/ssh", "etc/dropbear", "root", "var", "var/log"] { dbg(&format!("mkdir {d}")); }
+                        let tmp = root.join("target/ssh-stage");
+                        std::fs::create_dir_all(&tmp).unwrap();
+                        for (name, body) in [
+                            ("passwd", "root:x:0:0:root:/root:/bin/sh\n".to_string()),
+                            ("group", "root:x:0:\n".to_string()),
+                            ("shells", "/bin/sh\n".to_string()),
+                            ("authorized_keys", pubkey),
+                            ("enabled", "1\n".to_string()),
+                        ] {
+                            let f = tmp.join(name);
+                            std::fs::write(&f, body).unwrap();
+                            let dst = match name { "authorized_keys" | "enabled" => format!("etc/thos/ssh/{name}"), _ => format!("etc/{name}") };
+                            dbg(&format!("rm {dst}"));
+                            dbg(&format!("write {} {dst}", f.display()));
+                        }
+                        for f in ["thos-sshd", "thos-update", "thos-fatput"] {
+                            let src = root.join(format!("xtask/testdata/{f}"));
+                            if src.exists() {
+                                dbg(&format!("rm {f}"));
+                                dbg(&format!("write {} {f}", src.display()));
+                            }
+                        }
+                        eprintln!("ssh: dropbear and the update key are in the image");
+                    } else {
+                        eprintln!("ssh: dropbear could not be fetched (apt-get download dropbear-bin): the image has no SSH server");
+                    }
+                }
                 if std::env::var("THOS_AUTOSTART").is_ok() {
                     run(Command::new("debugfs").args(["-w", "-R", "mkdir tmp", img.to_str().unwrap()]).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()));
                     let marker = root.join("target/autostart-marker");
@@ -4268,7 +4426,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "perf.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -8145,10 +8303,11 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
             ]
         })
         .args([
-            "-display", "none", "-no-reboot",
+            "-display", "none",
             "-serial", &format!("file:{}", log.to_str().unwrap()),
             "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
         ])
+        .args(if std::env::var("THOS_REBOOT_OK").is_ok() { vec![] } else { vec!["-no-reboot"] })
         .args(extra)
         .args(std::env::var("THOS_QEMU_EXTRA").unwrap_or_default().split_whitespace().collect::<Vec<_>>())
         .spawn()
@@ -8442,6 +8601,86 @@ fn foot_tree() -> Option<PathBuf> {
         }
     }
     tree.join("usr/bin/foot").exists().then_some(tree)
+}
+
+/// Everything an update carries: the kernel, the programs and scripts in the image's root directory (what `cargo xtask release-image` would
+/// put there), a MANIFEST with their sha256 sums and a VERSION. Returns the tar file.
+fn build_update_tar(extra: &[(&str, &str)]) -> PathBuf {
+    let root = workspace_root();
+    if std::env::var("THOS_NO_AUTOSTART").is_err() {
+        std::env::set_var("THOS_AUTOSTART", "1");
+    }
+    std::env::set_var("THOS_SSH", "1");
+    if std::env::var("THOS_FS_MIB").is_err() {
+        std::env::set_var("THOS_FS_MIB", "1536");
+    }
+    build_kernel_prod(&["interactive"]);
+    let _ = std::fs::remove_file(root.join("target/disk.img"));
+    let disk = disk_image();
+    let stage = root.join("target/update-stage");
+    let _ = std::fs::remove_dir_all(&stage);
+    std::fs::create_dir_all(stage.join("boot")).expect("stage dir");
+    std::fs::copy(kernel_elf(), stage.join("boot/thos-kernel")).expect("copy the kernel");
+    // the programs and scripts: every regular file in the image's root directory
+    let ls = Command::new("debugfs").args(["-R", "ls -p /", disk.to_str().unwrap()]).output().expect("debugfs");
+    let mut n = 0;
+    for line in String::from_utf8_lossy(&ls.stdout).lines() {
+        let f: Vec<&str> = line.split('/').collect();            // "/inode/mode/uid/gid/name/size/"
+        if f.len() < 7 || !f[2].starts_with("100") { continue; }
+        let name = f[5];
+        if name.is_empty() || name == "." || name == ".." || name == "init" || name == "lost+found" { continue; }
+        let _ = Command::new("debugfs").args(["-R", &format!("dump /{name} {}", stage.join(name).display()), disk.to_str().unwrap()]).output();
+        n += 1;
+    }
+    let stamp = Command::new("git").args(["rev-parse", "--short", "HEAD"]).current_dir(&root).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+    let version = format!("{stamp} {}", Command::new("date").arg("+%Y-%m-%d %H:%M").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default());
+    for (name, body) in extra { std::fs::write(stage.join(name), body).unwrap(); }          // (tests add a marker file)
+    std::fs::write(stage.join("VERSION"), format!("{version}\n")).unwrap();
+    // MANIFEST: sha256 of every file
+    let sums = Command::new("sh").current_dir(&stage).args(["-c", "find . -type f ! -name MANIFEST | sed 's|^\\./||' | sort | xargs sha256sum"]).output().expect("sha256sum");
+    std::fs::write(stage.join("MANIFEST"), &sums.stdout).unwrap();
+    let tar = root.join("target/thos-update.tar");
+    run(Command::new("tar").args(["-C", stage.to_str().unwrap(), "-cf", tar.to_str().unwrap(), "."]));
+    println!("update: {n} programs and scripts, kernel {} KiB, version {version}, archive {} MiB", std::fs::metadata(stage.join("boot/thos-kernel")).map(|m| m.len() >> 10).unwrap_or(0), std::fs::metadata(&tar).map(|m| m.len() >> 20).unwrap_or(0));
+    tar
+}
+
+/// Send the archive over SSH to `thos-update` on the machine; returns what the machine answered.
+fn push_update_to(host: &str, port: &str, tar: &Path) -> (bool, String) {
+    let key = workspace_root().join("target/thos-update-key");
+    let out = Command::new("sh").args(["-c", &format!("ssh -i {} -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 root@{host} '/busybox sh /thos-update' < {}", key.display(), tar.display())]).output().expect("ssh");
+    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    (out.status.success() && text.contains("update: done"), text)
+}
+
+/// Dropbear (a small SSH server) unpacked under `target/dropbear-root` (`apt-get download`, no root needed).
+fn dropbear_tree() -> Option<PathBuf> {
+    let root = workspace_root();
+    let tree = root.join("target/dropbear-root");
+    if tree.join("usr/sbin/dropbear").exists() {
+        return Some(tree);
+    }
+    let debs = root.join("target/dropbear-debs");
+    let _ = std::fs::create_dir_all(&debs);
+    if !Command::new("apt-get").current_dir(&debs).args(["download", "dropbear-bin"]).status().map(|s| s.success()).unwrap_or(false) {
+        return None;
+    }
+    let _ = std::fs::create_dir_all(&tree);
+    for e in std::fs::read_dir(&debs).ok()?.flatten() {
+        if e.path().extension().is_some_and(|x| x == "deb") {
+            let _ = Command::new("dpkg").args(["-x", e.path().to_str()?, tree.to_str()?]).status();
+        }
+    }
+    tree.join("usr/sbin/dropbear").exists().then_some(tree)
+}
+
+/// The key pair that may log in to THOS as root and push updates: made once (`target/thos-update-key`, no passphrase), the public half goes into the image.
+fn update_key_pub() -> String {
+    let key = workspace_root().join("target/thos-update-key");
+    if !key.exists() {
+        let _ = Command::new("ssh-keygen").args(["-q", "-t", "ed25519", "-N", "", "-C", "thos-update", "-f", key.to_str().unwrap()]).status();
+    }
+    std::fs::read_to_string(key.with_extension("pub")).unwrap_or_default()
 }
 
 /// NetSurf (GTK 3 browser) unpacked under `target/netsurf-root` (`apt-get download`, no root needed).

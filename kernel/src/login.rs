@@ -119,6 +119,15 @@ pub fn login(fs: &Ext2) -> Session {
 /// then authenticate.
 pub fn establish(fs: &Ext2) -> Session {
     crate::fbcon::theme_login();
+    // After an update pushed over SSH the machine restarts and the administrator is logged in again without a password, once:
+    // `thos-update` leaves /etc/thos/autologin-once, the marker is removed before the session starts.
+    if cred::exists(fs) && fs.path_lookup("/etc/thos/autologin-once").is_some() {
+        let _ = fs.unlink_path("/etc/thos/autologin-once");
+        if let Some(c) = cred::load(fs) {
+            crate::kprintln!("THOS: update           restarted after an update: logging {} in again", c.name);
+            return Session { name: c.name.clone(), uid: cred::ADMIN_UID };
+        }
+    }
     // A system just installed from a stick carries the stick's account. /etc/thos/fresh-install (put into the release image) says: on the
     // first start from the internal disk, forget that account and ask for a new one. The stick itself (USB) ignores the marker.
     if !crate::blk::is_usb() && !crate::blk::is_ram() && fs.path_lookup("/etc/thos/fresh-install").is_some() {
