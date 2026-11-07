@@ -85,6 +85,18 @@ pub fn send_ipi(lapic_id: u32, vector: u8) {
     write(REG_ICR_LOW, vector as u32 | (1 << 14)); // fixed, physical destination, level assert
 }
 
+/// Send a non-maskable interrupt to the CPU with local APIC id `lapic_id` (reaches a CPU stuck with interrupts off).
+pub fn send_nmi(lapic_id: u32) {
+    for _ in 0..100_000 {
+        if read(REG_ICR_LOW) & (1 << 12) == 0 {
+            break;
+        }
+        core::hint::spin_loop();
+    }
+    write(REG_ICR_HIGH, lapic_id << 24);
+    write(REG_ICR_LOW, (0b100 << 8) | (1 << 14)); // NMI delivery, physical destination, level assert
+}
+
 static BSP_TICKS: AtomicU64 = AtomicU64::new(0);
 pub fn on_timer_tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);

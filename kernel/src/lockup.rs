@@ -12,6 +12,10 @@ const STUCK_TICKS: u32 = 3000; // ~3 s at the 1 kHz tick
 static WIN: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static CNT: [AtomicU32; N] = [const { AtomicU32::new(0) }; N];
 static RIP: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
+static SEEN: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];       // timer ticks each CPU has taken
+static CHK: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];        // ... as last seen by a checking CPU
+static STALE: [AtomicU32; N] = [const { AtomicU32::new(0) }; N];      // checks in a row that saw no new tick
+static NMI_ASKED: [AtomicU32; N] = [const { AtomicU32::new(0) }; N];
 static REPORTED: [AtomicU32; N] = [const { AtomicU32::new(0) }; N];
 
 struct Buf([u8; 400], usize);
@@ -33,9 +37,27 @@ pub fn sample(cpu: usize, rip: u64, cs: u64) {
         return;
     }
     RIP[cpu].store(rip, Ordering::Relaxed);
+    // A CPU that stopped taking timer ticks has interrupts off (stuck in a syscall or an interrupt handler): another CPU notices and sends
+    // it an NMI, whose handler reports where it is (`nmi`).
+    let mine = SEEN[cpu].fetch_add(1, Ordering::Relaxed) + 1;
+    if mine % 1000 == 0 {
+        for c in 0..N {
+            let seen = SEEN[c].load(Ordering::Relaxed);
+            if c == cpu || seen == 0 {
+                continue;
+            }
+            if seen != CHK[c].swap(seen, Ordering::Relaxed) {
+                STALE[c].store(0, Ordering::Relaxed);
+            } else if STALE[c].fetch_add(1, Ordering::Relaxed) + 1 == 3 && NMI_ASKED[c].fetch_add(1, Ordering::Relaxed) == 0 {
+                crate::apic::send_nmi(crate::smp::lapic_id_of(c));
+            }
+        }
+    }
     let kernel = cs & 3 == 0 && rip >= 0xffff_8000_0000_0000;
     let idle = crate::sched::idle_addr();
-    if !kernel || (rip >= idle && rip < idle + 0x80) {
+    // a CPU asleep in `hlt` is interrupted right after the instruction: the byte before rip is 0xF4 (idle loops exist in several places)
+    let asleep = kernel && unsafe { *((rip - 1) as *const u8) } == 0xF4;
+    if !kernel || asleep || (rip >= idle && rip < idle + 0x80) {
         CNT[cpu].store(0, Ordering::Relaxed);
         return;
     }
@@ -58,4 +80,16 @@ pub fn sample(cpu: usize, rip: u64, cs: u64) {
         crate::serial::emergency(&b.0[..b.1]);
         crate::fbcon::emergency(&b.0[..b.1]);
     }
+}
+
+/// The NMI handler: if a CPU asked for it (see `sample`), report this CPU's address; returns whether the NMI was ours.
+pub fn nmi(cpu: usize, rip: u64) -> bool {
+    if cpu >= N || NMI_ASKED[cpu].load(Ordering::Relaxed) == 0 {
+        return false;
+    }
+    let mut b = Buf([0; 400], 0);
+    let _ = write!(b, "\r\nTHOS: LOCKUP? cpu {} takes no timer ticks (interrupts off) and was at kernel address {:#x}\r\n", cpu, rip);
+    crate::serial::emergency(&b.0[..b.1]);
+    crate::fbcon::emergency(&b.0[..b.1]);
+    true
 }

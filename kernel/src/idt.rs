@@ -218,6 +218,9 @@ extern "x86-interrupt" fn apic_spurious(_frame: InterruptStackFrame) {
 // --- fatal ---
 
 extern "x86-interrupt" fn nmi(frame: InterruptStackFrame) {
+    if crate::sched::is_started() && crate::lockup::nmi(crate::smp::this_cpu() as usize, frame.instruction_pointer.as_u64()) {
+        return; // the lock-up detector asked for this one
+    }
     kprintln!("THOS trap: NMI\n{:#?}", frame);
     exit_qemu(ExitCode::Failed);
     hcf();
