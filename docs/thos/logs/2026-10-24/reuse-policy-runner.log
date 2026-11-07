@@ -1,0 +1,87 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1962:17
+     |
+1962 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winpolicy-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1116
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1117
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1118
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1119
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1120
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1121
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1122
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1123
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1124
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1125
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1126
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1127
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1128
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1129
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1130
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1131
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1132
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1132/32768 files (2.9% non-contiguous), 103930/524288 blocks
+winpolicy-start
+winpolicy-ok real-policy-export
+winpolicy-ok system32-policy
+winpolicy-ok application-policy
+winpolicy-ok default-order
+winpolicy-ok explicit-application-overrides-default
+winpolicy-ok explicit-system32-overrides-default
+winpolicy-ok full-path-honoured
+winpolicy-ok full-path-dll-load-dir
+winpolicy-ok cache-seed
+winpolicy-ok cache-keeps-first-loaded-module
+winpolicy-ok cache-release-two
+winpolicy-ok valid-policy-before-errors
+winpolicy-ok zero-policy-invalid
+winpolicy-ok unknown-policy-invalid
+winpolicy-ok dll-load-dir-not-default
+winpolicy-ok invalid-policy-preserves-selection
+winpolicy-ok empty-user-directory-policy
+winpolicy-ok user-dirs-do-not-search-system-or-app
+winpolicy-ok parent-policy-for-isolation
+winpolicy-child=PASS
+winpolicy-ok policy-is-process-local
+winpolicy-ok parent-policy-retained
+winpolicy-ok dll-load-dir-needs-full-path
+winpolicy-ok resource-mode-still-unsupported
+winpolicy-result=PASS
+winpolicy-done

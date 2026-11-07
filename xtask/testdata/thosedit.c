@@ -14,12 +14,13 @@
 #include <time.h>
 #include <unistd.h>
 #include "thoswl.h"
+#include "thosresize.h"
 #include "thosgfx.h"
 #include "thosui.h"
 #include "thosnotify.h"
 
-#define EW 760
-#define EH 520
+static int EW=760;
+static int EH=520;
 #define HEAD 44
 #define STATUS 28
 #define GUT 56
@@ -28,6 +29,7 @@
 #define MAXLINES 200000
 static uint32_t *px;
 static int sock;
+static struct thos_resize resize;
 static uint32_t **ln;                /* the lines as code points, without newlines (German umlauts and the rest of Unicode just work) */
 static int *ll, *lc;                 /* lengths and capacities */
 static int nl;
@@ -216,10 +218,11 @@ int main(int argc, char **argv) {
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
     if (connect(sock, (void *)&a, 2 + WL_SOCK_LEN) != 0) { puts("edit FAIL: connect"); return 1; }
-    struct wl_msg m = { WL_CREATE, EW, EH, (uint32_t)key, 0 };
+    struct wl_msg m = { WL_CREATE, EW, EH, (uint32_t)key, WL_RESIZABLE };
     (void)!write(sock, &m, sizeof m);
-    if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("edit FAIL: no CREATED"); return 1; }
+    if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("edit FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);
+    thos_resize_limits(sock,480,280);
     set_title();
     ui_cursor(sock, 1);
     spring_init(&scroll, 0, SP_SOFT);
@@ -231,7 +234,7 @@ int main(int argc, char **argv) {
     for (;;) {
         int busy = spring_busy(&scroll);
         struct pollfd pf = { sock, POLLIN, 0 };
-        poll(&pf, 1, busy ? MO_FRAME_MS : 250);
+        poll(&pf, 1, ui_have_held ? 0 : busy ? MO_FRAME_MS : 250);
         long long now = mo_now_ms();
         float dt = (float)(now - clk) / 1000.0f;
         clk = now;
@@ -239,8 +242,13 @@ int main(int argc, char **argv) {
         int redraw = 0;
         if (on != blink_on) { blink_on = on; redraw = 1; }
         if (busy) { spring_step(&scroll, dt); redraw = 1; }
-        if (!(pf.revents & POLLIN)) { if (redraw) render(); continue; }
-        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (!(pf.revents & POLLIN) && !ui_have_held) { if (redraw) render(); continue; }
+        if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        int resized=thos_resize_event(sock,&m,&resize,&px,&EW,&EH);
+        if(resized) {
+            if(resized==2) {render();thos_resize_continue(sock,&resize);}
+            continue;
+        }
         if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_KEY && m.b) edit_key(&m);
         else if (m.op == WL_POINTER && m.c == 3) { top_t -= (float)(int32_t)m.d * 3; if (top_t > nl - 1) top_t = (float)(nl - 1); if (top_t < 0) top_t = 0; spring_to(&scroll, top_t); }
@@ -255,5 +263,6 @@ int main(int argc, char **argv) {
         render();
     }
     printf("edit done\n");
+    thos_resize_dispose(&resize);
     return 0;
 }

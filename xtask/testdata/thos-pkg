@@ -14,15 +14,23 @@ APPS=$OPT/apps.conf
 B=/busybox
 ELF=$($B printf '\177ELF')
 die() { echo "thos-pkg: $*" >&2; exit 1; }
+quote() { $B printf "'"; $B printf '%s' "$1" | $B sed "s/'/'\\\\''/g"; $B printf "'"; }
+entry() {
+    label=$($B printf '%s' "$1" | $B tr '\n|' '__')
+    catalog_line="$label|LD_LIBRARY_PATH=$(quote "$libs") $(quote "$2")${3:-}"
+    if [ -f "$APPS" ] && $B grep -qxF "$catalog_line" "$APPS"; then return; fi
+    $B printf '%s\n' "$catalog_line" >> "$APPS"
+}
 
 # label|command lines for what was unpacked into $1 (name $2)
 register() {
-    dir=$1 name=$2
+    dir=$1 name=$2 owned=${3:-}
     libs="$dir/usr/lib:$dir/usr/lib/x86_64-linux-gnu:$dir/lib:$dir/lib/x86_64-linux-gnu:$dir/lib64"
     n=0
     # 1. proper desktop entries
     for d in "$dir"/usr/share/applications/*.desktop; do
         [ -f "$d" ] || continue
+        [ -z "$owned" ] || $B grep -qxF "${d#"$dir"/}" "$owned" || continue
         label=$($B sed -n 's/^Name=//p' "$d" | $B head -n 1)
         exe=$($B sed -n 's/^Exec=//p' "$d" | $B head -n 1 | $B sed 's/ *%[a-zA-Z]//g')
         prog=${exe%% *}
@@ -31,7 +39,7 @@ register() {
         base=${prog##*/}
         for cand in "$dir/usr/bin/$base" "$dir/bin/$base" "$dir/usr/games/$base" "$dir$prog"; do
             if [ -f "$cand" ]; then
-                echo "${label:-$base}|LD_LIBRARY_PATH=$libs $cand$rest" >> $APPS
+                entry "${label:-$base}" "$cand" "$rest"
                 n=$((n+1)); break
             fi
         done
@@ -42,20 +50,28 @@ register() {
         [ -d "$d" ] || continue
         for f in "$d"/*; do
             [ -f "$f" ] || continue
+            [ -z "$owned" ] || $B grep -qxF "${f#"$dir"/}" "$owned" || continue
             case "$f" in *.so|*.so.*|*.txt|*.md|*.html|*.conf|*.json|*.png|*.dll) continue ;; esac
             if [ "$($B head -c4 "$f")" = "$ELF" ]; then $B chmod +x "$f"; fi     # unzip does not keep the mode
-            if [ -x "$f" ] || [ "${f##*.}" = exe ]; then
-                echo "${f##*/}|LD_LIBRARY_PATH=$libs $f" >> $APPS
+            suffix=$($B printf '%s' "${f##*.}" | $B tr 'A-Z' 'a-z')
+            [ "$suffix" != exe ] || $B chmod u+x "$f"
+            if [ -x "$f" ] || [ "$suffix" = exe ]; then
+                entry "${f##*/}" "$f"
                 n=$((n+1))
                 [ $n -ge 5 ] && return
             fi
         done
         [ $n -gt 0 ] && return
     done
-    if [ $n -eq 0 ]; then                                  # deeper trees (MSI "Program Files/Vendor/App/x.exe")
-        for f in $($B find "$dir" -type f -name '*.exe' | $B head -n 8); do
-            echo "${f##*/}|LD_LIBRARY_PATH=$libs $f" >> $APPS; n=$((n+1))
-        done
+    if [ $n -eq 0 ] && [ -z "$owned" ]; then                # deeper trees (MSI "Program Files/Vendor/App/x.exe")
+        found=$($B find "$dir" -type f -iname '*.exe' | $B head -n 1)
+        if [ -n "$found" ]; then
+            $B find "$dir" -type f -iname '*.exe' | $B head -n 8 | while IFS= read -r f; do
+                $B chmod u+x "$f"
+                entry "${f##*/}" "$f"
+            done
+            n=1
+        fi
     fi
     [ $n -gt 0 ] || echo "thos-pkg: no program found to put in the Start menu (files are in $dir)"
 }
@@ -73,7 +89,12 @@ cmd_install() {
         http://*|https://*|ftp://*)
             tmp=/tmp/thos-pkg.$$
             echo "downloading $src"
-            $B wget -q -O $tmp "$src" || { $B rm -f $tmp; die "download failed"; }
+            if [ -x /usr/bin/curl ]; then
+                /usr/bin/curl --fail --location --show-error --progress-bar --cacert /etc/ssl/certs/ca-certificates.crt --connect-timeout 20 --max-time 3600 --output "$tmp" --url "$src"
+            else
+                $B wget -q -O "$tmp" "$src"
+            fi
+            [ $? -eq 0 ] || { $B rm -f "$tmp"; die "download failed"; }
             file=$tmp; base=${src##*/}; base=${base%%\?*} ;;
         *) [ -f "$src" ] || die "no such file: $src"
            file=$src; base=${src##*/} ;;
@@ -81,7 +102,7 @@ cmd_install() {
     name=$2
     if [ -z "$name" ]; then
         name=${base%.deb}; name=${name%.rpm}; name=${name%.zip}; name=${name%.tar.gz}; name=${name%.tgz}
-        name=${name%.tar.xz}; name=${name%.txz}; name=${name%.tar.bz2}; name=${name%.exe}
+        name=${name%.tar.xz}; name=${name%.txz}; name=${name%.tar.bz2}; name=${name%.exe}; name=${name%.msi}
         name=${name%%_*}
     fi
     [ -n "$name" ] || die "cannot derive a name, give one"
@@ -100,6 +121,7 @@ cmd_install() {
         *.tar) $B tar -xf "$file" -C "$dir" ;;
         *.exe) $B cp "$file" "$dir/$base"; $B chmod +x "$dir/$base" ;;
         *.msi)
+            echo "Extracting MSI files only; registry, services and installer custom actions are not installed."
             # no Windows Installer here: msiextract (from the Debian package msitools) unpacks the files of the package;
             # installers whose work is done by custom actions (services, registry set-up) are not covered
             if [ ! -x $ROOT/usr/bin/msiextract ]; then
@@ -234,6 +256,10 @@ cmd_install_repo() {
         install_one "$cur" || return 1
         todo="$todo $deps"
     done
+    # A repository installation must be discoverable through the same UI as
+    # a downloaded archive. Only register files owned by the requested package,
+    # rather than unrelated programs from its shared /opt/root dependencies.
+    [ ! -f "$DB/$FIRST.list" ] || register "$ROOT" "$FIRST" "$DB/$FIRST.list"
     echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
 }
 

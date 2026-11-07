@@ -1,0 +1,85 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800eade5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1940 MiB in 496263 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496263 -> 496262 -> 496263 (phys 0x794ca000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62481 counts/ms
+THOS: clock            TSC 2490 MHz; RTC 1792791975 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 2 online     lapic 2
+THOS: AP 1 online     lapic 3
+THOS: AP 3 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /pewait
+pewait-fast children=72 failures=0
+pewait-delayed status=10752
+pewait-int32-wait-any pid=150 status=4352
+pewait-int32-kill rc=0
+pewait-kill-group pid=151 rc=0 errno=0
+THOS: pid 151 killed by signal 15
+THOS: pid 152 killed by signal 15
+pewait-signal status=15
+pewait-done failures=0
+thos$ 

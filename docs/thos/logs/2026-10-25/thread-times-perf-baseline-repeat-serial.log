@@ -1,0 +1,130 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800f47c5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1940 MiB in 496243 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496243 -> 496242 -> 496243 (phys 0x794b6000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62455 counts/ms
+THOS: clock            TSC 2487 MHz; RTC 1792954550 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 2 online     lapic 2
+THOS: AP 3 online     lapic 3
+THOS: AP 1 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          e1000 52:54:00:12:34:56
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thTHOS: net dhcp         lease 10.0.2.15/24 via 10.0.2.2 dns [[10, 0, 2, 3]]
+THOS: net ok           ping 10.0.2.2 answered in 22 ms (ARP + ICMP over virtio-net + smoltcp)
+os
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ PERF_ONLY_FILES=1 /busybox sh /perf.sh
+desk: ready 1280x800
+panel ready
+desk: window 1 created 1280x64 at 0,0
+perf scene: n=2 avg=1611us max=2666us
+perf present: n=2 avg=652us max=1238us
+perf compose: n=2 avg=3923us max=3927us
+panel tasks:
+desk: window 2 created 780x500 at 190,106
+files ready
+perf scene: n=163 avg=1156us max=8942us
+perf present: n=163 avg=235us max=2469us
+perf compose: n=163 avg=1418us max=11247us
+perf frame: n=142 avg=1710us max=12588us
+panel tasks: Files*=624-714
+perf frame: n=16 avg=620us max=1131us
+perf scene: n=16 avg=530us max=1004us
+perf files-render: n=2 avg=3113us max=5043us
+perf present: n=16 avg=75us max=178us
+perf compose: n=16 avg=957us max=5607us
+perfscript ready
+perf frame: n=58 avg=1653us max=7205us
+perf files-render: n=68 avg=1259us max=4196us
+perf scene: n=70 avg=1064us max=3317us
+perf present: n=70 avg=562us max=1647us
+perf compose: n=70 avg=1684us max=5947us
+perf frame: n=315 avg=880us max=7547us
+perf files-render: n=151 avg=1311us max=5559us
+perf scene: n=156 avg=1153us max=3436us
+perf present: n=156 avg=639us max=2065us
+perf compose: n=156 avg=1823us max=4785us
+perf frame: n=310 avg=1270us max=19582us
+perf files-render: n=144 avg=1946us max=10513us
+perf scene: n=146 avg=1655us max=14395us
+perf present: n=146 avg=1254us max=10763us
+perf compose: n=146 avg=3067us max=22213us
+perf frame: n=80 avg=2009us max=31554us
+perf files-render: n=11 avg=1881us max=3474us
+perf scene: n=11 avg=2546us max=5354us
+perf present: n=11 avg=1247us max=3244us
+perf compose: n=11 avg=4118us max=6669us
+perf frame: n=137 avg=1926us max=5686us
+perf scene: n=390 avg=460us max=3045us
+perf present: n=390 avg=100us max=956us
+perf compose: n=390 avg=573us max=4309us
+perf move-copy: n=118 avg=326us max=941us
+perf scene: n=463 avg=492us max=3792us
+perf present: n=463 avg=80us max=1415us
+perf compose: n=463 avg=577us max=4509us
+perf frame: n=141 avg=2290us max=10497us
+perf move-copy: n=75 avg=303us max=1149us
+desk: loop end idle=0 quit=1
+desk ok: 2 window(s) at exit
+files done

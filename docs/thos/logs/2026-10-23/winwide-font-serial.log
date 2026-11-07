@@ -1,0 +1,125 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800eaad5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1940 MiB in 496265 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496265 -> 496264 -> 496265 (phys 0x794cc000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 64620 counts/ms
+THOS: clock            TSC 2574 MHz; RTC 1792790768 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 2 online     lapic 2
+THOS: AP 3 online     lapic 3
+THOS: AP 1 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /desk-gdi-font.sh
+desk: ready 1280x800
+gdi-font-ok real-font-objects
+desk: win32 window 1 created 640x360 at 100,80
+gdi-font-ok default-font-selection
+gdi-font-ok unsupported-monospace-not-proportional-fake
+gdi-font-ok font-current-object
+gdi-font-ok bitmap-selection-independent
+gdi-font-ok selected-font-cannot-delete
+gdi-font-ok unknown-font-cannot-select
+gdi-font-ok actual-text-metrics
+gdi-font-ok actual-fallback-face-query
+gdi-font-ok actual-fallback-face-name
+gdi-font-ok face-name-truncation-bounded
+gdi-font-ok empty-extent-zero
+gdi-font-ok measured-positive-extent
+gdi-font-ok latin-euro-extent
+gdi-font-ok surrogate-pair-one-fallback
+gdi-font-ok invalid-surrogate-safe-fallback
+gdi-font-ok text-color-default-and-set
+gdi-font-ok bk-color-default-and-set
+gdi-font-ok mode-default-opaque
+gdi-font-ok opaque-text-render
+gdi-font-ok opaque-cell-background-and-border
+gdi-font-ok transparent-mode-change
+gdi-font-ok transparent-space-preserves-pixel
+gdi-font-ok invalid-mode-preserves-state
+gdi-font-ok negative-origin-clips
+gdi-font-ok invalid-input-pointer
+gdi-font-ok invalid-count
+gdi-font-ok invalid-metrics-pointer
+gdi-font-ok invalid-dc-no-text
+gdi-font-ok unsupported-width-explicit-fail
+gdi-font-ok unsupported-rotation-explicit-fail
+gdi-font-ok window-state-independent
+gdi-font-ok font-selection-multiple-dcs-valid
+gdi-font-ok window-selected-font-not-delete
+gdi-font-ok window-selection-still-retains-font
+gdi-font-ok unselected-font-delete
+gdi-font-ok stale-font-refused
+gdi-font-ok independent-ansi-font-delete
+gdi-font-result=PASS
+gdi-font-ready-close
+gdi-font-close
+gdi-font-exit:0
+desk: win32 window 1 closed
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 0 window(s) at exit
+gdi-font-done
+thos$ 

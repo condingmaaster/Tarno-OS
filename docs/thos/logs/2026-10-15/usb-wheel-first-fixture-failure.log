@@ -1,0 +1,20 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1594:17
+     |
+1594 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.72s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask desk-menu-scroll-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 980
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1092
+
+thread 'main' (685) panicked at xtask/src/main.rs:8880:5:
+Start viewport/pin/launch regression failed; see target/menuscroll-serial.log
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -1,0 +1,116 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800bfa85
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       409 MiB in 104387 frames
+THOS: largest region   409 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   104387 -> 104386 -> 104387 (phys 0x19a06000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             2 (2 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62332 counts/ms
+THOS: clock            TSC 2459 MHz; RTC 1792022334 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 1
+THOS: SMP              2/2 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: usb              2 EHCI controller(s) on PCI bus 0
+THOS: usb              EHCI at 00:05.0 BAR 0xfebf2000, 6 ports, port power control no
+THOS: usb              port 1: device 0627:0001 class 0
+THOS: usb              EHCI at 00:06.0 BAR 0xfebf3000, 6 ports, port power control no
+THOS: usb              port 1: device 0627:0001 class 0
+THOS: usb              boot mouse addr 1 endpoint 1 periodic input
+THOS: usb              no storage yet, waiting 2 s
+THOS: usb              no storage yet, waiting 2 s
+THOS: usb              1 auxiliary input controller(s)
+THOS: ehci ok          USB HID input attached (poll thread up)
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          e1000 52:54:00:12:34:56
+THOS: ps2              no i8042 controller
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thoTHOS: net dhcp         lease 10.0.2.15/24 via 10.0.2.2 dns [[10, 0, 2, 3]]
+THOS: net ok           ping 10.0.2.2 answered in 35 ms (ARP + ICMP over virtio-net + smoltcp)
+s
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ PERF_ONLY_FILES=1 /busybox sh /perf.sh
+desk: ready 1280x800
+desk: window 1 created 1280x64 at 0,0
+panel ready
+perf scene: n=2 avg=7543us max=11406us
+perf present: n=2 avg=2292us max=4267us
+perf compose: n=2 avg=10613us max=16552us
+panel tasks:
+desk: window 2 created 780x500 at 190,106
+files ready
+perf scene: n=85 avg=6864us max=33684us
+perf present: n=85 avg=768us max=3906us
+perf compose: n=85 avg=7679us max=35918us
+perf frame: n=77 avg=8616us max=38902us
+panel tasks: Files*=624-714
+perfscript ready
+perf frame: n=19 avg=4273us max=6467us
+perf scene: n=19 avg=3726us max=5013us
+perf present: n=19 avg=511us max=1472us
+perf compose: n=19 avg=4387us max=6393us
+perf files-render: n=2 avg=50498us max=69152us
+perf frame: n=47 avg=7248us max=45003us
+perf scene: n=68 avg=5567us max=36461us
+perf present: n=68 avg=1697us max=8261us
+perf compose: n=68 avg=7339us max=44864us
+perf frame: n=25 avg=19576us max=41972us
+perf scene: n=67 avg=3257us max=9778us
+perf present: n=67 avg=523us max=2748us
+perf compose: n=67 avg=3817us max=10840us
+perf frame: n=1 avg=278us max=278us
+perf move-copy: n=24 avg=2425us max=4722us
+desk: loop end idle=0 quit=1
+desk ok: 2 window(s) at exit
+files done

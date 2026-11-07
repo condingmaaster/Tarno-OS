@@ -145,6 +145,75 @@ pub fn map_mmio(phys: u64, len: u64) -> u64 {
     hhdm + phys
 }
 
+/// Framebuffer only: split the boot direct/identity maps down to 4 KiB
+/// and set identical WC attributes on both aliases. Run before AP startup.
+/// Adjacent RAM and device registers retain their original attributes.
+pub fn map_framebuffer(phys: u64, len: u64) -> u64 {
+    if !crate::pat::configured() { return map_mmio(phys, len); }
+    let hhdm = mm::hhdm_offset();
+    let end = phys.checked_add(len).expect("framebuffer range overflow");
+    let mut p = phys & !4095;
+    x86_64::instructions::interrupts::without_interrupts(|| unsafe {
+        core::arch::asm!("wbinvd", options(nostack));
+        while p < end {
+            framebuffer_pte(hhdm + p, p);
+            if p < 4 * GIB { framebuffer_pte(p, p); }
+            p += 4096;
+        }
+        core::arch::asm!("wbinvd", options(nostack));
+        x86_64::instructions::tlb::flush_all();
+    });
+    let pt = unsafe { &mut *mm::phys_to_virt(PhysAddr::new(kernel_pml4_phys())).as_mut_ptr::<PageTable>() };
+    let mapper = unsafe { OffsetPageTable::new(pt, VirtAddr::new(hhdm)) };
+    let mut p = phys & !4095;
+    while p < end {
+        for va in [hhdm + p, p] {
+            if va == p && p >= 4 * GIB { continue; }
+            match mapper.translate(VirtAddr::new(va)) {
+                x86_64::structures::paging::mapper::TranslateResult::Mapped { frame, offset, flags } => {
+                    assert_eq!(frame.start_address().as_u64() + offset, p);
+                    assert!(flags.contains(F::WRITE_THROUGH) && !flags.intersects(F::NO_CACHE | F::HUGE_PAGE));
+                }
+                _ => panic!("framebuffer alias not mapped"),
+            }
+        }
+        p += 4096;
+    }
+    crate::kprintln!("THOS: framebuffer      WC aliases verified ({} pages)", (end - (phys & !4095) + 4095) / 4096);
+    hhdm + phys
+}
+
+unsafe fn framebuffer_pte(virt: u64, phys: u64) {
+    // Splitting a huge mapping preserves all its child addresses and flags.
+    // THOS creates these boot mappings with PAT=0 and no global pages.
+    const ADDR: u64 = 0x000f_ffff_ffff_f000;
+    let mut table = kernel_pml4_phys();
+    for shift in [39u32, 30, 21, 12] {
+        let pt = &mut *mm::phys_to_virt(PhysAddr::new(table)).as_mut_ptr::<PageTable>();
+        let index = ((virt >> shift) & 511) as usize;
+        let raw = pt[index].addr().as_u64() | pt[index].flags().bits();
+        if shift == 12 {
+            let flags = F::PRESENT | F::WRITABLE | F::NO_EXECUTE | F::WRITE_THROUGH;
+            pt[index].set_addr(PhysAddr::new(phys), flags);
+            return;
+        }
+        if raw & 1 == 0 || (shift != 39 && raw & (1 << 7) != 0) {
+            let child = FRAME_ALLOC.lock().alloc().expect("no frame for framebuffer table");
+            let next = &mut *mm::phys_to_virt(child.start_address()).as_mut_ptr::<PageTable>();
+            *next = PageTable::new();
+            if raw & 1 != 0 {
+                let stride = 1u64 << (shift - 9);
+                let base = (raw & ADDR) & !((1u64 << shift) - 1);
+                let mut flags = pt[index].flags();
+                if shift == 21 { flags.remove(F::HUGE_PAGE); }
+                for i in 0..512 { next[i].set_addr(PhysAddr::new(base + i as u64 * stride), flags); }
+            }
+            pt[index].set_addr(child.start_address(), F::PRESENT | F::WRITABLE);
+        }
+        table = pt[index].addr().as_u64();
+    }
+}
+
 /// Unmap a 4 KiB page from an *arbitrary* PML4 (given by physical base) —
 /// `NtUnmapViewOfSection` tearing down a section view. Unlike `map_page_in`,
 /// this `invlpg`s immediately: the caller may keep running on this same CR3
@@ -194,14 +263,14 @@ pub fn protect_page_in(pml4_phys: u64, virt: u64, writable: bool, exec: bool) ->
     let mut m = unsafe { OffsetPageTable::new(pml4, VirtAddr::new(hhdm)) };
     let page = Page::<Size4KiB>::containing_address(VirtAddr::new(virt));
 
-    let old = match m.translate(VirtAddr::new(virt)) {
+    let (old, retained) = match m.translate(VirtAddr::new(virt)) {
         x86_64::structures::paging::mapper::TranslateResult::Mapped { flags, .. } => {
-            (flags.contains(F::WRITABLE), !flags.contains(F::NO_EXECUTE))
+            ((flags.contains(F::WRITABLE), !flags.contains(F::NO_EXECUTE)), flags & (DEVICE_PAGE | F::WRITE_THROUGH | F::NO_CACHE))
         }
         _ => return None,
     };
 
-    let mut f = F::PRESENT | F::USER_ACCESSIBLE;
+    let mut f = F::PRESENT | F::USER_ACCESSIBLE | retained;
     if writable {
         f |= F::WRITABLE;
     }
@@ -233,6 +302,7 @@ pub fn map_device_page_in(pml4_phys: u64, virt: u64, phys: u64, writable: bool) 
     let mut m = unsafe { OffsetPageTable::new(pml4, VirtAddr::new(hhdm)) };
     let page = Page::<Size4KiB>::containing_address(VirtAddr::new(virt));
     let mut f = F::PRESENT | F::USER_ACCESSIBLE | F::NO_EXECUTE | DEVICE_PAGE;
+    if crate::pat::configured() { f |= F::WRITE_THROUGH; }
     if writable {
         f |= F::WRITABLE;
     }

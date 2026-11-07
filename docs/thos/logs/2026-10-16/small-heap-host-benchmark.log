@@ -1,0 +1,4 @@
+   Compiling thos-small-heap-probe v0.0.0 (/home/router/Projekte/Tarno-OS/xtask/heap-probe)
+    Finished `release` profile [optimized] target(s) in 0.40s
+     Running `xtask/heap-probe/target/x86_64-unknown-linux-gnu/release/thos-small-heap-probe`
+fragmented mixed-size churn, 200000 replacements: linked_us=1945506 cached_us=9256 ratio=210.19

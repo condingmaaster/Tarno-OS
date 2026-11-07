@@ -1,0 +1,50 @@
+{
+  "source": "/dev/disk/by-id/usb-Mass_Storage_Device_121220160204-0:0",
+  "target": "/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0",
+  "source_bytes": 31266439168,
+  "target_bytes": 63333990400,
+  "source_modified": false,
+  "ssd_image_created": false,
+  "expand_root_authorized": true,
+  "status": "complete_verified_expanded",
+  "started_utc": "2026-10-17T12:16:50.669801+00:00",
+  "copied_bytes": 31266439168,
+  "source_sha256": "9e55f4f28e75eeff3601a9b0dfefa233b76fe166b72a30448b41bd9e41062359",
+  "verified_bytes": 31266439168,
+  "target_clone_sha256": "9e55f4f28e75eeff3601a9b0dfefa233b76fe166b72a30448b41bd9e41062359",
+  "first_expansion_attempt": "sfdisk kept original size when size omitted; strict postcondition stopped before resize2fs. Retry with explicit target sector count.",
+  "final_partition_table": {
+    "label": "dos",
+    "id": "0x12ef633f",
+    "device": "/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0",
+    "unit": "sectors",
+    "sectorsize": 512,
+    "partitions": [
+      {
+        "node": "/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part1",
+        "start": 16384,
+        "size": 1048576,
+        "type": "c"
+      },
+      {
+        "node": "/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2",
+        "start": 1064960,
+        "size": 122634240,
+        "type": "83"
+      }
+    ]
+  },
+  "boot_file_sha256": {
+    "cmdline.txt": "6f4e905053ae5de55d3ccab99a72121319b079c778471fbc208403fcec341141",
+    "config.txt": "09528477f27bf83ceee4fa8a04911a3af5feb263fc7c3d30c4ed3ac28cb2e731",
+    "kernel8.img": "c9f5af153236ec42eb012700e39ff43d02bc7c5f2ab71abad6da1f20880343e0",
+    "start4.elf": "560ead37044d849325755d3684ac1f74654b3ce6450604a42df6dd832cda9ede",
+    "fixup4.dat": "d181d5055daebac22513d6904fa9ce21d1e99b852cc391af095ade6f0b45c400",
+    "etc/fstab": "3067af5327e3428e49e79929dc26b500ae57354d9cfef36ccf83b8022cd42b9b"
+  },
+  "root_fs_bytes": 61731901440,
+  "root_available_bytes": 42372849664,
+  "finished_utc": "2026-10-17T13:13:51.412065+00:00",
+  "unmounted": true,
+  "boot_test_on_pi": false
+}

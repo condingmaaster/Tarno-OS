@@ -1,0 +1,16 @@
+[
+  {
+    "path": "target/thos-browser-download-qa-2026-10-15.img",
+    "sha256": "c934a339836c79bd40ec9c6e0008ca3948abe91f84d49eea1a03aabe1508795c",
+    "bytes": 1687158784,
+    "allocated_before": 1687162880,
+    "allocated_after": 705093632
+  },
+  {
+    "path": "target/thos-browser-regions-qa-2026-10-16.img",
+    "sha256": "41dd5a462bb4a2c6d487cd6dff9e0a7078556416405efd5417986f9c179c4484",
+    "bytes": 1687158784,
+    "allocated_before": 1679998976,
+    "allocated_after": 712183808
+  }
+]

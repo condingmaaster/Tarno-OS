@@ -1,0 +1,11 @@
+{
+  "source": "https://dlcdnets.asus.com/pub/ASUS/mb/14Utilities/ArmouryCrateInstallTool.zip",
+  "support_page": "https://www.asus.com/supportonly/armoury%20crate/helpdesk_download/",
+  "version": "3.3.6.0",
+  "zip_sha256": "a0c3181b135c0439f12338d6d6b77181b54a62bc44c1fe95c57945f1735d54e1",
+  "installer_sha256": "00b4cd2146df250989a63f3be4a30a2efe5b068a9e2a930182a9715a323c83d6",
+  "installer_bytes": 4309912,
+  "host_executed": false,
+  "physical_usb_passthrough": false,
+  "external_guest_network": false
+}

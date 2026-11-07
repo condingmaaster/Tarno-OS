@@ -1,0 +1,714 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800c9795
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1945 MiB in 497552 frames
+THOS: largest region   1944 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   497552 -> 497551 -> 497552 (phys 0x799d3000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62555 counts/ms
+THOS: clock            TSC 2448 MHz; RTC 1792111062 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    7 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 512 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 3
+THOS: AP 3 online     lapic 1
+THOS: AP 2 online     lapic 2
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /gtk-input.sh
+THOS: vm fork begin parent=2 free=496271
+THOS: vm fork end parent=2 child=3 free_before=496271 free_after=495708
+THOS: vm fork begin parent=3 free=495708
+THOS: vm fork end parent=3 child=4 free_before=495708 free_after=495145
+THOS: vm fork begin parent=3 free=495145
+THOS: vm fork end parent=3 child=5 free_before=495145 free_after=494582
+THOS: vm mmap pid=4 base=0x700416004000 len=0xcf010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=4 base=0x700416012000 len=0x8e000 off=0xe000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=4 base=0x7004160a0000 len=0x2b000 off=0x9c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=4 base=0x7004160cb000 len=0x9000 off=0xc6000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=4 base=0x7004160d5000 len=0xef018 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=4 base=0x7004160e6000 len=0x7d000 off=0x11000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=4 base=0x700416163000 len=0x60000 off=0x8e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=4 base=0x7004161c3000 len=0x2000 off=0xed000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=4 base=0x7004161c6000 len=0x1f3e50 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=4 base=0x7004161ee000 len=0x163000 off=0x28000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=4 base=0x700416351000 len=0x56000 off=0x18b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=4 base=0x7004163a7000 len=0x6000 off=0x1e0000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=4 base=0x7004163bb000 len=0x1f190 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=4 base=0x7004163be000 len=0x14000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=4 base=0x7004163d2000 len=0x7000 off=0x17000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=4 base=0x7004163d9000 len=0x2000 off=0x1d000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=4 base=0x7004163dc000 len=0x12c28 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=4 base=0x7004163de000 len=0xd000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=4 base=0x7004163eb000 len=0x2000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=4 base=0x7004163ed000 len=0x2000 off=0x10000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=4 base=0x7004163f0000 len=0x38010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=4 base=0x7004163f6000 len=0x26000 off=0x6000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=4 base=0x70041641c000 len=0xb000 off=0x2c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=4 base=0x700416427000 len=0x2000 off=0x37000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=4 base=0x70041642d000 len=0xd078 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=4 base=0x70041642e000 len=0x8000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=4 base=0x700416436000 len=0x3000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=4 base=0x700416439000 len=0x2000 off=0xb000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=4 base=0x70041643c000 len=0x22038 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=4 base=0x70041643d000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=4 base=0x70041643e000 len=0x1f000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=4 base=0x70041645d000 len=0x2000 off=0x21000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=4 base=0x700416464000 len=0xa073c off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Regular.ttf
+THOS: vm mmap pid=4 base=0x700416506000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=4 base=0x7004165a8000 len=0x286ac off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/icons.ttf
+THOS: vm mmap pid=4 base=0x7004165d2000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+desk: ready 1280x800
+THOS: vm fork begin parent=4 free=491326
+THOS: vm fork end parent=4 child=6 free_before=491326 free_after=487507
+THOS: vm mmap pid=6 base=0x700139a04000 len=0xcf010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=6 base=0x700139a12000 len=0x8e000 off=0xe000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=6 base=0x700139aa0000 len=0x2b000 off=0x9c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=6 base=0x700139acb000 len=0x9000 off=0xc6000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=6 base=0x700139ad5000 len=0x1f3e50 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=6 base=0x700139afd000 len=0x163000 off=0x28000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=6 base=0x700139c60000 len=0x56000 off=0x18b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=6 base=0x700139cb6000 len=0x6000 off=0x1e0000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=6 base=0x700139cca000 len=0x1f190 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=6 base=0x700139ccd000 len=0x14000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=6 base=0x700139ce1000 len=0x7000 off=0x17000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=6 base=0x700139ce8000 len=0x2000 off=0x1d000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=6 base=0x700139ceb000 len=0x12c28 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=6 base=0x700139ced000 len=0xd000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=6 base=0x700139cfa000 len=0x2000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=6 base=0x700139cfc000 len=0x2000 off=0x10000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=6 base=0x700139cff000 len=0x38010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=6 base=0x700139d05000 len=0x26000 off=0x6000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=6 base=0x700139d2b000 len=0xb000 off=0x2c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=6 base=0x700139d36000 len=0x2000 off=0x37000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=6 base=0x700139d39000 len=0xd078 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=6 base=0x700139d3a000 len=0x8000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=6 base=0x700139d42000 len=0x3000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=6 base=0x700139d45000 len=0x2000 off=0xb000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=6 base=0x700139d4b000 len=0xef018 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x700139d5c000 len=0x7d000 off=0x11000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x700139dd9000 len=0x60000 off=0x8e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x700139e39000 len=0x2000 off=0xed000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x700139e3c000 len=0x22038 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=6 base=0x700139e3d000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=6 base=0x700139e3e000 len=0x1f000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=6 base=0x700139e5d000 len=0x2000 off=0x21000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm fork begin parent=4 free=490093
+THOS: vm fork end parent=4 child=7 free_before=490093 free_after=486274
+THOS: vm mmap pid=6 base=0x700139f59000 len=0xa073c off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Regular.ttf
+THOS: vm mmap pid=7 base=0x7002dda04000 len=0xcf010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=7 base=0x7002dda12000 len=0x8e000 off=0xe000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=7 base=0x7002ddaa0000 len=0x2b000 off=0x9c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=7 base=0x7002ddacb000 len=0x9000 off=0xc6000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=7 base=0x7002ddad5000 len=0xef018 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=7 base=0x7002ddae6000 len=0x7d000 off=0x11000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x700139ffb000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=7 base=0x7002ddb63000 len=0x60000 off=0x8e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=7 base=0x7002ddbc3000 len=0x2000 off=0xed000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=6 base=0x70013a09d000 len=0x286ac off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/icons.ttf
+THOS: vm mmap pid=6 base=0x70013a0c7000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+THOS: vm mmap pid=7 base=0x7002ddbc6000 len=0x1f3e50 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=7 base=0x7002ddbee000 len=0x163000 off=0x28000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=7 base=0x7002ddd51000 len=0x56000 off=0x18b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=7 base=0x7002ddda7000 len=0x6000 off=0x1e0000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm fork begin parent=3 free=488899
+THOS: vm mmap pid=7 base=0x7002dddbb000 len=0x1f190 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=7 base=0x7002dddbe000 len=0x14000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=7 base=0x7002dddd2000 len=0x7000 off=0x17000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=7 base=0x7002dddd9000 len=0x2000 off=0x1d000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm fork end parent=3 child=8 free_before=488899 free_after=488303
+desk: window 1 created 1280x64 at 0,0
+THOS: vm mmap pid=7 base=0x7002ddddc000 len=0x12c28 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=7 base=0x7002dddde000 len=0xd000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+panel ready
+THOS: vm mmap pid=7 base=0x7002dddeb000 len=0x2000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=7 base=0x7002ddded000 len=0x2000 off=0x10000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=7 base=0x7002dddf0000 len=0x38010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=7 base=0x7002dddf6000 len=0x26000 off=0x6000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=7 base=0x7002dde1c000 len=0xb000 off=0x2c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=7 base=0x7002dde27000 len=0x2000 off=0x37000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=7 base=0x7002dde2d000 len=0xd078 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=7 base=0x7002dde2e000 len=0x8000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=7 base=0x7002dde36000 len=0x3000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=7 base=0x7002dde39000 len=0x2000 off=0xb000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=7 base=0x7002dde3c000 len=0x22038 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=7 base=0x7002dde3d000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=7 base=0x7002dde3e000 len=0x1f000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=7 base=0x7002dde5d000 len=0x2000 off=0x21000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=7 base=0x7002dde64000 len=0xa073c off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Regular.ttf
+THOS: vm mmap pid=7 base=0x7002ddf06000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=7 base=0x7002ddfa8000 len=0x286ac off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/icons.ttf
+THOS: vm mmap pid=7 base=0x7002ddfd2000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+desk: window 2 created 744x504 at 208,104
+THOS: vm fork begin parent=7 free=486623
+THOS: vm fork end parent=7 child=9 free_before=486623 free_after=484531
+term ready
+THOS: vm mmap pid=8 base=0x700130a04000 len=0x7fd548 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgtk-3.so.0
+THOS: vm mmap pid=8 base=0x700130a91000 len=0x392000 off=0x8d000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgtk-3.so.0
+THOS: vm mmap pid=8 base=0x700130e23000 len=0x3c4000 off=0x41f000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgtk-3.so.0
+THOS: vm mmap pid=8 base=0x7001311e7000 len=0x16000 off=0x7e3000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgtk-3.so.0
+THOS: vm mmap pid=8 base=0x700131203000 len=0x62c08 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgobject-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131213000 len=0x35000 off=0x10000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgobject-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131248000 len=0x1a000 off=0x45000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgobject-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131262000 len=0x4000 off=0x5f000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgobject-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131267000 len=0x1581e8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libglib-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131286000 len=0xa1000 off=0x1f000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libglib-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131327000 len=0x96000 off=0xc0000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libglib-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001313bd000 len=0x2000 off=0x155000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libglib-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001313c1000 len=0x1f3e50 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=8 base=0x7001313e9000 len=0x163000 off=0x28000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=8 base=0x70013154c000 len=0x56000 off=0x18b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=8 base=0x7001315a2000 len=0x6000 off=0x1e0000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=8 base=0x7001315b6000 len=0x10fe30 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgdk-3.so.0
+THOS: vm mmap pid=8 base=0x7001315e4000 len=0x87000 off=0x2e000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk-3.so.0
+THOS: vm mmap pid=8 base=0x70013166b000 len=0x4f000 off=0xb5000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk-3.so.0
+THOS: vm mmap pid=8 base=0x7001316ba000 len=0xc000 off=0x103000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk-3.so.0
+THOS: vm mmap pid=8 base=0x7001316c7000 len=0x6088 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgmodule-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001316c9000 len=0x2000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgmodule-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001316cb000 len=0x1000 off=0x4000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgmodule-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001316cc000 len=0x2000 off=0x4000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgmodule-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001316d2000 len=0x1f7528 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgio-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131710000 len=0x11e000 off=0x3e000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgio-2.0.so.0
+THOS: vm mmap pid=8 base=0x70013182e000 len=0x8f000 off=0x15c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgio-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001318bd000 len=0xb000 off=0x1ea000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgio-2.0.so.0
+THOS: vm mmap pid=8 base=0x7001318cb000 len=0x100b0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0
+THOS: vm mmap pid=8 base=0x7001318d0000 len=0x7000 off=0x5000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0
+THOS: vm mmap pid=8 base=0x7001318d7000 len=0x3000 off=0xc000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0
+THOS: vm mmap pid=8 base=0x7001318da000 len=0x2000 off=0xe000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpangocairo-1.0.so.0
+THOS: vm mmap pid=8 base=0x7001318dd000 len=0x70a40 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpango-1.0.so.0
+THOS: vm mmap pid=8 base=0x7001318f0000 len=0x3d000 off=0x13000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpango-1.0.so.0
+THOS: vm mmap pid=8 base=0x70013192d000 len=0x1c000 off=0x50000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpango-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131949000 len=0x5000 off=0x6b000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpango-1.0.so.0
+THOS: vm mmap pid=8 base=0x70013194f000 len=0x140ae8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libharfbuzz.so.0
+THOS: vm mmap pid=8 base=0x70013195c000 len=0xf1000 off=0xd000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libharfbuzz.so.0
+THOS: vm mmap pid=8 base=0x700131a4d000 len=0x40000 off=0xfe000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libharfbuzz.so.0
+THOS: vm mmap pid=8 base=0x700131a8d000 len=0x3000 off=0x13d000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libharfbuzz.so.0
+THOS: vm mmap pid=8 base=0x700131a91000 len=0x14db28 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libcairo.so.2
+THOS: vm mmap pid=8 base=0x700131aa5000 len=0xec000 off=0x14000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo.so.2
+THOS: vm mmap pid=8 base=0x700131b91000 len=0x47000 off=0x100000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo.so.2
+THOS: vm mmap pid=8 base=0x700131bd8000 len=0x6000 off=0x147000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo.so.2
+THOS: vm mmap pid=8 base=0x700131be0000 len=0x1c208 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpangoft2-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131be8000 len=0xe000 off=0x8000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpangoft2-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131bf6000 len=0x5000 off=0x16000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpangoft2-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131bfb000 len=0x2000 off=0x1b000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpangoft2-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131c01000 len=0x4d288 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfontconfig.so.1
+THOS: vm mmap pid=8 base=0x700131c09000 len=0x2a000 off=0x8000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfontconfig.so.1
+THOS: vm mmap pid=8 base=0x700131c33000 len=0x19000 off=0x32000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfontconfig.so.1
+THOS: vm mmap pid=8 base=0x700131c4c000 len=0x3000 off=0x4b000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfontconfig.so.1
+THOS: vm mmap pid=8 base=0x700131c50000 len=0x1e118 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfribidi.so.0
+THOS: vm mmap pid=8 base=0x700131c52000 len=0x4000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfribidi.so.0
+THOS: vm mmap pid=8 base=0x700131c56000 len=0x17000 off=0x6000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfribidi.so.0
+THOS: vm mmap pid=8 base=0x700131c6d000 len=0x2000 off=0x1c000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfribidi.so.0
+THOS: vm mmap pid=8 base=0x700131c70000 len=0xa128 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libcairo-gobject.so.2
+THOS: vm mmap pid=8 base=0x700131c74000 len=0x2000 off=0x4000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo-gobject.so.2
+THOS: vm mmap pid=8 base=0x700131c76000 len=0x2000 off=0x6000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo-gobject.so.2
+THOS: vm mmap pid=8 base=0x700131c78000 len=0x3000 off=0x8000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libcairo-gobject.so.2
+THOS: vm mmap pid=8 base=0x700131c7c000 len=0x2d1b8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131c84000 len=0x1a000 off=0x8000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131c9e000 len=0xa000 off=0x22000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131ca8000 len=0x2000 off=0x2c000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgdk_pixbuf-2.0.so.0
+THOS: vm mmap pid=8 base=0x700131cab000 len=0x294b8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libatk-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131cb6000 len=0xf000 off=0xb000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131cc5000 len=0xc000 off=0x1a000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131cd1000 len=0x4000 off=0x25000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-1.0.so.0
+THOS: vm mmap pid=8 base=0x700131cd6000 len=0x12ff98 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libepoxy.so.0
+THOS: vm mmap pid=8 base=0x700131d35000 len=0x65000 off=0x5f000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libepoxy.so.0
+THOS: vm mmap pid=8 base=0x700131d9a000 len=0x5d000 off=0xc4000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libepoxy.so.0
+THOS: vm mmap pid=8 base=0x700131df7000 len=0xf000 off=0x121000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libepoxy.so.0
+THOS: vm mmap pid=8 base=0x700131e0a000 len=0xef018 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=8 base=0x700131e1b000 len=0x7d000 off=0x11000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=8 base=0x700131e98000 len=0x60000 off=0x8e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=8 base=0x700131ef8000 len=0x2000 off=0xed000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libm.so.6
+THOS: vm mmap pid=8 base=0x700131efb000 len=0x131a8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXi.so.6
+THOS: vm mmap pid=8 base=0x700131efe000 len=0xc000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXi.so.6
+THOS: vm mmap pid=8 base=0x700131f0a000 len=0x3000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXi.so.6
+THOS: vm mmap pid=8 base=0x700131f0d000 len=0x2000 off=0x11000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXi.so.6
+THOS: vm mmap pid=8 base=0x700131f10000 len=0x147d48 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libX11.so.6
+THOS: vm mmap pid=8 base=0x700131f2c000 len=0x90000 off=0x1c000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libX11.so.6
+THOS: vm mmap pid=8 base=0x700131fbc000 len=0x96000 off=0xac000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libX11.so.6
+THOS: vm mmap pid=8 base=0x700132052000 len=0x6000 off=0x142000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libX11.so.6
+THOS: vm mmap pid=8 base=0x700132059000 len=0x3d388 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libatk-bridge-2.0.so.0
+THOS: vm mmap pid=8 base=0x700132065000 len=0x19000 off=0xc000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-bridge-2.0.so.0
+THOS: vm mmap pid=8 base=0x70013207e000 len=0x15000 off=0x25000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-bridge-2.0.so.0
+THOS: vm mmap pid=8 base=0x700132093000 len=0x4000 off=0x39000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libatk-bridge-2.0.so.0
+THOS: vm mmap pid=8 base=0x700132098000 len=0x17238 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libcloudproviders.so.0
+THOS: vm mmap pid=8 base=0x70013209f000 len=0xa000 off=0x7000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libcloudproviders.so.0
+THOS: vm mmap pid=8 base=0x7001320a9000 len=0x5000 off=0x11000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libcloudproviders.so.0
+THOS: vm mmap pid=8 base=0x7001320ae000 len=0x2000 off=0x16000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libcloudproviders.so.0
+THOS: vm mmap pid=8 base=0x7001320b1000 len=0x70f8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXfixes.so.3
+THOS: vm mmap pid=8 base=0x7001320b3000 len=0x3000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXfixes.so.3
+THOS: vm mmap pid=8 base=0x7001320b6000 len=0x1000 off=0x5000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXfixes.so.3
+THOS: vm mmap pid=8 base=0x7001320b7000 len=0x2000 off=0x5000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXfixes.so.3
+THOS: vm mmap pid=8 base=0x7001320bd000 len=0xc668 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libffi.so.8
+THOS: vm mmap pid=8 base=0x7001320bf000 len=0x7000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libffi.so.8
+THOS: vm mmap pid=8 base=0x7001320c6000 len=0x2000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libffi.so.8
+THOS: vm mmap pid=8 base=0x7001320c8000 len=0x2000 off=0xa000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libffi.so.8
+THOS: vm mmap pid=8 base=0x7001320cb000 len=0x9088 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libatomic.so.1
+THOS: vm mmap pid=8 base=0x7001320cd000 len=0x3000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libatomic.so.1
+THOS: vm mmap pid=8 base=0x7001320d0000 len=0x2000 off=0x5000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libatomic.so.1
+THOS: vm mmap pid=8 base=0x7001320d2000 len=0x2000 off=0x6000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libatomic.so.1
+THOS: vm mmap pid=8 base=0x7001320d6000 len=0xae348 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpcre2-8.so.0
+THOS: vm mmap pid=8 base=0x7001320d9000 len=0x7b000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpcre2-8.so.0
+THOS: vm mmap pid=8 base=0x700132154000 len=0x2f000 off=0x7e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpcre2-8.so.0
+THOS: vm mmap pid=8 base=0x700132183000 len=0x2000 off=0xac000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpcre2-8.so.0
+THOS: vm mmap pid=8 base=0x700132186000 len=0x4a290 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libxkbcommon.so.0
+THOS: vm mmap pid=8 base=0x70013218b000 len=0x1f000 off=0x5000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libxkbcommon.so.0
+THOS: vm mmap pid=8 base=0x7001321aa000 len=0x24000 off=0x24000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libxkbcommon.so.0
+THOS: vm mmap pid=8 base=0x7001321ce000 len=0x3000 off=0x47000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libxkbcommon.so.0
+THOS: vm mmap pid=8 base=0x7001321d2000 len=0x125a8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libwayland-client.so.0
+THOS: vm mmap pid=8 base=0x7001321d8000 len=0x7000 off=0x6000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-client.so.0
+THOS: vm mmap pid=8 base=0x7001321df000 len=0x3000 off=0xd000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-client.so.0
+THOS: vm mmap pid=8 base=0x7001321e2000 len=0x3000 off=0x10000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-client.so.0
+THOS: vm mmap pid=8 base=0x7001321e9000 len=0x93a8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libwayland-cursor.so.0
+THOS: vm mmap pid=8 base=0x7001321eb000 len=0x2000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-cursor.so.0
+THOS: vm mmap pid=8 base=0x7001321ed000 len=0x1000 off=0x4000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-cursor.so.0
+THOS: vm mmap pid=8 base=0x7001321ee000 len=0x5000 off=0x4000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-cursor.so.0
+THOS: vm mmap pid=8 base=0x7001321f4000 len=0x4020 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libwayland-egl.so.1
+THOS: vm mmap pid=8 base=0x7001321f5000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-egl.so.1
+THOS: vm mmap pid=8 base=0x7001321f6000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-egl.so.1
+THOS: vm mmap pid=8 base=0x7001321f7000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libwayland-egl.so.1
+THOS: vm mmap pid=8 base=0x7001321fa000 len=0x14918 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXext.so.6
+THOS: vm mmap pid=8 base=0x7001321fe000 len=0xb000 off=0x4000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXext.so.6
+THOS: vm mmap pid=8 base=0x700132209000 len=0x4000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXext.so.6
+THOS: vm mmap pid=8 base=0x70013220d000 len=0x2000 off=0x12000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXext.so.6
+THOS: vm mmap pid=8 base=0x700132210000 len=0xc318 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXcursor.so.1
+THOS: vm mmap pid=8 base=0x700132213000 len=0x6000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXcursor.so.1
+THOS: vm mmap pid=8 base=0x700132219000 len=0x2000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXcursor.so.1
+THOS: vm mmap pid=8 base=0x70013221b000 len=0x2000 off=0xa000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXcursor.so.1
+THOS: vm mmap pid=8 base=0x70013221e000 len=0x4098 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXdamage.so.1
+THOS: vm mmap pid=8 base=0x70013221f000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXdamage.so.1
+THOS: vm mmap pid=8 base=0x700132220000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXdamage.so.1
+THOS: vm mmap pid=8 base=0x700132221000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXdamage.so.1
+THOS: vm mmap pid=8 base=0x700132224000 len=0x4078 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXcomposite.so.1
+THOS: vm mmap pid=8 base=0x700132225000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXcomposite.so.1
+THOS: vm mmap pid=8 base=0x700132226000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXcomposite.so.1
+THOS: vm mmap pid=8 base=0x700132227000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXcomposite.so.1
+THOS: vm mmap pid=8 base=0x70013222d000 len=0xc1a8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXrandr.so.2
+THOS: vm mmap pid=8 base=0x70013222f000 len=0x7000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXrandr.so.2
+THOS: vm mmap pid=8 base=0x700132236000 len=0x2000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXrandr.so.2
+THOS: vm mmap pid=8 base=0x700132238000 len=0x2000 off=0xa000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXrandr.so.2
+THOS: vm mmap pid=8 base=0x70013223b000 len=0x4128 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXinerama.so.1
+THOS: vm mmap pid=8 base=0x70013223c000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXinerama.so.1
+THOS: vm mmap pid=8 base=0x70013223d000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXinerama.so.1
+THOS: vm mmap pid=8 base=0x70013223e000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXinerama.so.1
+THOS: vm mmap pid=8 base=0x700132241000 len=0x1f190 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=8 base=0x700132244000 len=0x14000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=8 base=0x700132258000 len=0x7000 off=0x17000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=8 base=0x70013225f000 len=0x2000 off=0x1d000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libz.so.1
+THOS: vm mmap pid=8 base=0x700132262000 len=0x7b288 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libmount.so.1
+THOS: vm mmap pid=8 base=0x70013226f000 len=0x51000 off=0xd000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libmount.so.1
+THOS: vm mmap pid=8 base=0x7001322c0000 len=0x1a000 off=0x5e000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libmount.so.1
+THOS: vm mmap pid=8 base=0x7001322da000 len=0x4000 off=0x77000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libmount.so.1
+THOS: vm mmap pid=8 base=0x7001322df000 len=0x336d0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libselinux.so.1
+THOS: vm mmap pid=8 base=0x7001322e6000 len=0x20000 off=0x7000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libselinux.so.1
+THOS: vm mmap pid=8 base=0x700132306000 len=0x9000 off=0x27000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libselinux.so.1
+THOS: vm mmap pid=8 base=0x70013230f000 len=0x2000 off=0x30000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libselinux.so.1
+THOS: vm mmap pid=8 base=0x700132317000 len=0xa890 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libthai.so.0
+THOS: vm mmap pid=8 base=0x700132319000 len=0x4000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libthai.so.0
+THOS: vm mmap pid=8 base=0x70013231d000 len=0x3000 off=0x6000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libthai.so.0
+THOS: vm mmap pid=8 base=0x700132320000 len=0x2000 off=0x8000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libthai.so.0
+THOS: vm mmap pid=8 base=0x700132323000 len=0xcf010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=8 base=0x700132331000 len=0x8e000 off=0xe000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=8 base=0x7001323bf000 len=0x2b000 off=0x9c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=8 base=0x7001323ea000 len=0x9000 off=0xc6000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libfreetype.so.6
+THOS: vm mmap pid=8 base=0x7001323f4000 len=0x290c0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libgraphite2.so.3
+THOS: vm mmap pid=8 base=0x7001323f7000 len=0x1f000 off=0x3000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libgraphite2.so.3
+THOS: vm mmap pid=8 base=0x700132416000 len=0x5000 off=0x22000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libgraphite2.so.3
+THOS: vm mmap pid=8 base=0x70013241b000 len=0x3000 off=0x26000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libgraphite2.so.3
+THOS: vm mmap pid=8 base=0x70013241f000 len=0x38010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=8 base=0x700132425000 len=0x26000 off=0x6000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=8 base=0x70013244b000 len=0xb000 off=0x2c000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=8 base=0x700132456000 len=0x2000 off=0x37000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpng16.so.16
+THOS: vm mmap pid=8 base=0x700132459000 len=0xc290 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXrender.so.1
+THOS: vm mmap pid=8 base=0x70013245b000 len=0x7000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXrender.so.1
+THOS: vm mmap pid=8 base=0x700132462000 len=0x2000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXrender.so.1
+THOS: vm mmap pid=8 base=0x700132464000 len=0x2000 off=0xa000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXrender.so.1
+THOS: vm mmap pid=8 base=0x70013246a000 len=0x2a4a8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libxcb.so.1
+THOS: vm mmap pid=8 base=0x700132476000 len=0x14000 off=0xc000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb.so.1
+THOS: vm mmap pid=8 base=0x70013248a000 len=0x9000 off=0x20000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb.so.1
+THOS: vm mmap pid=8 base=0x700132493000 len=0x2000 off=0x28000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb.so.1
+THOS: vm mmap pid=8 base=0x700132496000 len=0xe128 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libxcb-render.so.0
+THOS: vm mmap pid=8 base=0x70013249b000 len=0x6000 off=0x5000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-render.so.0
+THOS: vm mmap pid=8 base=0x7001324a1000 len=0x2000 off=0xb000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-render.so.0
+THOS: vm mmap pid=8 base=0x7001324a3000 len=0x2000 off=0xd000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-render.so.0
+THOS: vm mmap pid=8 base=0x7001324a6000 len=0x4058 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libxcb-shm.so.0
+THOS: vm mmap pid=8 base=0x7001324a7000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-shm.so.0
+THOS: vm mmap pid=8 base=0x7001324a8000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-shm.so.0
+THOS: vm mmap pid=8 base=0x7001324a9000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libxcb-shm.so.0
+panel tasks: Terminal*=613-725
+THOS: vm mmap pid=8 base=0x7001324ac000 len=0xac150 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libpixman-1.so.0
+THOS: vm mmap pid=8 base=0x7001324b7000 len=0x87000 off=0xb000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libpixman-1.so.0
+THOS: vm mmap pid=8 base=0x70013253e000 len=0x12000 off=0x92000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libpixman-1.so.0
+THOS: vm mmap pid=8 base=0x700132550000 len=0x9000 off=0xa4000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libpixman-1.so.0
+THOS: vm mmap pid=8 base=0x70013255a000 len=0x2d0b8 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libexpat.so.1
+THOS: vm mmap pid=8 base=0x70013255e000 len=0x1e000 off=0x4000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libexpat.so.1
+THOS: vm mmap pid=8 base=0x70013257c000 len=0x9000 off=0x22000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libexpat.so.1
+THOS: vm mmap pid=8 base=0x700132585000 len=0x3000 off=0x2b000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libexpat.so.1
+THOS: vm mmap pid=8 base=0x70013258c000 len=0x96010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libjpeg.so.62
+THOS: vm mmap pid=8 base=0x700132590000 len=0x4f000 off=0x4000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libjpeg.so.62
+THOS: vm mmap pid=8 base=0x7001325df000 len=0x42000 off=0x53000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libjpeg.so.62
+THOS: vm mmap pid=8 base=0x700132621000 len=0x2000 off=0x95000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libjpeg.so.62
+THOS: vm mmap pid=8 base=0x700132624000 len=0x3d4c0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libatspi.so.0
+THOS: vm mmap pid=8 base=0x700132635000 len=0x1a000 off=0x11000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libatspi.so.0
+THOS: vm mmap pid=8 base=0x70013264f000 len=0xe000 off=0x2b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libatspi.so.0
+THOS: vm mmap pid=8 base=0x70013265d000 len=0x5000 off=0x39000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libatspi.so.0
+THOS: vm mmap pid=8 base=0x700132663000 len=0x562c0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libdbus-1.so.3
+THOS: vm mmap pid=8 base=0x700132671000 len=0x31000 off=0xe000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libdbus-1.so.3
+THOS: vm mmap pid=8 base=0x7001326a2000 len=0x15000 off=0x3f000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libdbus-1.so.3
+THOS: vm mmap pid=8 base=0x7001326b7000 len=0x3000 off=0x53000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libdbus-1.so.3
+THOS: vm mmap pid=8 base=0x7001326bb000 len=0x60380 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libblkid.so.1
+THOS: vm mmap pid=8 base=0x7001326c5000 len=0x3d000 off=0xa000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libblkid.so.1
+THOS: vm mmap pid=8 base=0x700132702000 len=0x13000 off=0x47000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libblkid.so.1
+THOS: vm mmap pid=8 base=0x700132715000 len=0x7000 off=0x5a000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libblkid.so.1
+THOS: vm mmap pid=8 base=0x700132720000 len=0x9010 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libdatrie.so.1
+THOS: vm mmap pid=8 base=0x700132722000 len=0x4000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libdatrie.so.1
+THOS: vm mmap pid=8 base=0x700132726000 len=0x2000 off=0x6000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libdatrie.so.1
+THOS: vm mmap pid=8 base=0x700132728000 len=0x2000 off=0x7000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libdatrie.so.1
+THOS: vm mmap pid=8 base=0x70013272b000 len=0x12c28 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=8 base=0x70013272d000 len=0xd000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=8 base=0x70013273a000 len=0x2000 off=0xf000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=8 base=0x70013273c000 len=0x2000 off=0x10000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbz2.so.1.0
+THOS: vm mmap pid=8 base=0x70013273f000 len=0xd078 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=8 base=0x700132740000 len=0x8000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=8 base=0x700132748000 len=0x3000 off=0x9000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=8 base=0x70013274b000 len=0x2000 off=0xb000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlidec.so.1
+THOS: vm mmap pid=8 base=0x70013274e000 len=0x4108 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXau.so.6
+THOS: vm mmap pid=8 base=0x70013274f000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXau.so.6
+THOS: vm mmap pid=8 base=0x700132750000 len=0x1000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXau.so.6
+THOS: vm mmap pid=8 base=0x700132751000 len=0x2000 off=0x2000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXau.so.6
+THOS: vm mmap pid=8 base=0x700132754000 len=0x70d0 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libXdmcp.so.6
+THOS: vm mmap pid=8 base=0x700132756000 len=0x2000 off=0x2000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libXdmcp.so.6
+THOS: vm mmap pid=8 base=0x700132758000 len=0x2000 off=0x4000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libXdmcp.so.6
+THOS: vm mmap pid=8 base=0x70013275a000 len=0x2000 off=0x5000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libXdmcp.so.6
+THOS: vm mmap pid=8 base=0x700132760000 len=0x22038 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=8 base=0x700132761000 len=0x1000 off=0x1000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=8 base=0x700132762000 len=0x1f000 off=0x2000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=8 base=0x700132781000 len=0x2000 off=0x21000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libbrotlicommon.so.1
+THOS: vm mmap pid=8 base=0x70013278e000 len=0x102 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_IDENTIFICATION
+THOS: vm mmap pid=8 base=0x700132790000 len=0x17 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_MEASUREMENT
+THOS: vm mmap pid=8 base=0x700132792000 len=0x2f off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_TELEPHONE
+THOS: vm mmap pid=8 base=0x700132794000 len=0x7f off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_ADDRESS
+THOS: vm mmap pid=8 base=0x700132796000 len=0x3e off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_NAME
+THOS: vm mmap pid=8 base=0x700132798000 len=0x22 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_PAPER
+THOS: vm mmap pid=8 base=0x70013279a000 len=0x30 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_MESSAGES/SYS_LC_MESSAGES
+THOS: vm mmap pid=8 base=0x70013279c000 len=0x10e off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_MONETARY
+THOS: vm mmap pid=8 base=0x70013279e000 len=0x57e off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_COLLATE
+THOS: vm mmap pid=8 base=0x7001327a0000 len=0xd20 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_TIME
+THOS: vm mmap pid=8 base=0x7001327a2000 len=0x32 off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_NUMERIC
+THOS: vm mmap pid=8 base=0x7001327a4000 len=0x59c5c off=0x0 prot=0x1 flags=0x2 path=/usr/lib/locale/C.utf8/LC_CTYPE
+THOS: unhandled syscall 435 (further calls suppressed in release)
+THOS: vm mmap pid=8 base=0x70013b804000 len=0x2ad7d off=0x0 prot=0x1 flags=0x2 path=/usr/share/glib-2.0/schemas/gschemas.compiled
+[1616083.593] {Default Queue}  -> wl_display#1.get_registry(new id wl_registry#2)
+[1616088.156] {Default Queue}  -> wl_display#1.sync(new id wl_callback#3)
+[1616096.401] {Display Queue} wl_display#1.delete_id(3)
+[1616098.767] {Default Queue} wl_registry#2.global(1, "wl_compositor", 4)
+[1616099.403] {Default Queue}  -> wl_registry#2.bind(1, "wl_compositor", 3, new id [unknown]#4)
+[1616100.092] {Default Queue} wl_registry#2.global(2, "wl_shm", 1)
+[1616100.584] {Default Queue}  -> wl_registry#2.bind(2, "wl_shm", 1, new id [unknown]#5)
+[1616100.921] {Default Queue} wl_registry#2.global(3, "wl_seat", 5)
+[1616101.382] {Default Queue} wl_registry#2.global(4, "wl_output", 2)
+[1616101.808] {Default Queue}  -> wl_registry#2.bind(4, "wl_output", 2, new id [unknown]#6)
+[1616105.829] {Default Queue}  -> wl_display#1.sync(new id wl_callback#7)
+[1616106.183] {Default Queue} wl_registry#2.global(5, "xdg_wm_base", 3)
+[1616106.599] {Default Queue} wl_registry#2.global(6, "wl_data_device_manager", 3)
+[1616107.034] {Default Queue}  -> wl_registry#2.bind(6, "wl_data_device_manager", 3, new id [unknown]#8)
+[1616107.427] {Default Queue} wl_registry#2.global(7, "wl_subcompositor", 1)
+[1616107.761] {Default Queue}  -> wl_registry#2.bind(7, "wl_subcompositor", 1, new id [unknown]#9)
+[1616108.018] {Default Queue} wl_callback#3.done(18087)
+[1616112.861] {Default Queue}  -> wl_shm#5.create_pool(new id wl_shm_pool#3, fd 7, 2304)
+[1616122.055] {Default Queue}  -> wl_shm_pool#3.resize(5568)
+[1616123.310] {Default Queue}  -> wl_shm_pool#3.resize(12096)
+[1616123.595] {Default Queue}  -> wl_shm_pool#3.resize(25216)
+[1616124.554] {Default Queue}  -> wl_registry#2.bind(3, "wl_seat", 5, new id [unknown]#10)
+THOS: vm mmap pid=8 base=0x70013b841000 len=0x8d08 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/rules/evdev
+THOS: vm mmap pid=8 base=0x70013b84b000 len=0x63b3 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/keycodes/evdev
+THOS: vm mmap pid=8 base=0x70013b853000 len=0x880 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/keycodes/aliases
+THOS: vm mmap pid=8 base=0x70013b855000 len=0xb3 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/complete
+THOS: vm mmap pid=8 base=0x70013b857000 len=0x254 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/basic
+THOS: vm mmap pid=8 base=0x70013b859000 len=0x453 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/pc
+THOS: vm mmap pid=8 base=0x70013b85b000 len=0x1b0 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/iso9995
+THOS: vm mmap pid=8 base=0x70013b85d000 len=0x114f off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/extra
+THOS: vm mmap pid=8 base=0x70013b860000 len=0x1dfa off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/level5
+THOS: vm mmap pid=8 base=0x70013b863000 len=0x67a off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/numpad
+THOS: vm mmap pid=8 base=0x70013b865000 len=0xda off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/types/mousekeys
+THOS: vm mmap pid=8 base=0x70013b867000 len=0xe4 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/complete
+THOS: vm mmap pid=8 base=0x70013b869000 len=0x3e4 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/basic
+THOS: vm mmap pid=8 base=0x70013b86b000 len=0x1d5 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/ledcaps
+THOS: vm mmap pid=8 base=0x70013b86d000 len=0x1d2 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/lednum
+THOS: vm mmap pid=8 base=0x70013b86f000 len=0x5d4 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/iso9995
+THOS: vm mmap pid=8 base=0x70013b871000 len=0x11e2 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/mousekeys
+THOS: vm mmap pid=8 base=0x70013b874000 len=0x461 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/accessx
+THOS: vm mmap pid=8 base=0x70013b876000 len=0xbed off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/misc
+THOS: vm mmap pid=8 base=0x70013b878000 len=0x1e6 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/ledscroll
+THOS: vm mmap pid=8 base=0x70013b87a000 len=0xbed off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/misc
+THOS: vm mmap pid=8 base=0x70013b87c000 len=0xbed off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/misc
+THOS: vm mmap pid=8 base=0x70013b87e000 len=0x732 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/xfree86
+THOS: vm mmap pid=8 base=0x70013b880000 len=0x4f9 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/level5
+THOS: vm mmap pid=8 base=0x70013b882000 len=0x249 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/compat/caps
+THOS: vm mmap pid=8 base=0x70013b884000 len=0xaa6 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/pc
+THOS: vm mmap pid=8 base=0x70013b886000 len=0x70b off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/srvr_ctrl
+THOS: vm mmap pid=8 base=0x70013b888000 len=0x5db6 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/keypad
+THOS: vm mmap pid=8 base=0x70013b88f000 len=0x5db6 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/keypad
+THOS: vm mmap pid=8 base=0x70013b896000 len=0x1b82a off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/us
+THOS: vm mmap pid=8 base=0x70013b8b3000 len=0x139d4 off=0x0 prot=0x1 flags=0x1 path=/usr/share/X11/xkb/symbols/inet
+[1616297.814] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#11)
+[1616299.848] {Default Queue}  -> wl_data_device_manager#8.get_data_device(new id wl_data_device#12, wl_seat#10)
+[1616310.025] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#13)
+[1616310.964] {Default Queue}  -> wl_display#1.sync(new id wl_callback#14)
+[1616317.705] {Display Queue} wl_display#1.delete_id(7)
+[1616317.990] {Display Queue} wl_display#1.delete_id(14)
+[1616318.162] {Default Queue} wl_shm#5.format(0)
+[1616318.429] {Default Queue} wl_shm#5.format(1)
+[1616318.590] {Default Queue} wl_output#6.geometry(0, 0, 340, 190, 0, "THOS", "framebuffer", 0)
+[1616323.713] {Default Queue} wl_output#6.mode(3, 1280, 800, 60000)
+[1616324.333] {Default Queue} wl_output#6.scale(1)
+[1616324.711] {Default Queue} wl_output#6.done()
+[1616325.044] {Default Queue} wl_callback#7.done(18310)
+[1616325.403] {Default Queue} wl_seat#10.capabilities(3)
+[1616325.749] {Default Queue}  -> wl_seat#10.get_pointer(new id wl_pointer#7)
+[1616327.375] {Default Queue}  -> wl_seat#10.get_keyboard(new id wl_keyboard#15)
+[1616328.209] {Default Queue} wl_seat#10.name("seat0")
+[1616328.402] {Default Queue} wl_callback#14.done(18311)
+[1616328.810] {Default Queue}  -> wl_registry#2.bind(5, "xdg_wm_base", 3, new id [unknown]#14)
+THOS: vm mmap pid=8 base=0x7001441b5000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+THOS: vm mmap pid=8 base=0x700144201000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+THOS: vm mmap pid=8 base=0x70014424d000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=8 base=0x7001442ef000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=8 base=0x700144391000 len=0xa073c off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Regular.ttf
+THOS: vm mmap pid=8 base=0x700144433000 len=0xa073c off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Regular.ttf
+THOS: vm mmap pid=8 base=0x7001444d5000 len=0x286ac off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/icons.ttf
+THOS: vm mmap pid=8 base=0x7001444ff000 len=0x286ac off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/icons.ttf
+THOS: vm mmap pid=8 base=0x700144529000 len=0xb97a8 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+THOS: vm mmap pid=8 base=0x7001445e4000 len=0xb97a8 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+THOS: vm mmap pid=8 base=0x70014469f000 len=0x53c64 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+THOS: vm mmap pid=8 base=0x7001446f4000 len=0x53c64 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf
+THOS: vm mmap pid=8 base=0x700144749000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Hack-Regular.ttf
+THOS: vm mmap pid=8 base=0x700144795000 len=0x4a8a4 off=0x0 prot=0x1 flags=0x4002 path=/usr/share/fonts/thos/Hack-Regular.ttf
+THOS: vm mmap pid=8 base=0x7001447e1000 len=0x2ab4c off=0x0 prot=0x1 flags=0x1 path=/usr/share/mime/mime.cache
+THOS: vm mmap pid=8 base=0x70014480d000 len=0xa0724 off=0x0 prot=0x1 flags=0x2 path=/usr/share/fonts/thos/Lato-Bold.ttf
+THOS: vm mmap pid=8 base=0x7001448af000 len=0xa0724 off=0x0 prot=0x1 flags=0x4002 path=/usr/share/fonts/thos/Lato-Bold.ttf
+[1618538.752] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#16)
+[1618586.717] {Default Queue}  -> xdg_wm_base#14.get_xdg_surface(new id xdg_surface#17, wl_surface#16)
+[1618587.203] {Default Queue}  -> xdg_surface#17.get_toplevel(new id xdg_toplevel#18)
+[1618587.702] {Default Queue}  -> xdg_toplevel#18.set_parent(nil)
+[1618588.095] {Default Queue}  -> xdg_toplevel#18.set_title("THOS GTK input check")
+[1618588.497] {Default Queue}  -> xdg_toplevel#18.set_app_id("gtk-input")
+[1618589.015] {Default Queue}  -> wl_surface#16.commit()
+gtk-input-ready
+[1618638.939] {Default Queue} wl_keyboard#15.keymap(1, fd 7, 66514)
+[1618682.042] {Default Queue} wl_keyboard#15.repeat_info(25, 600)
+[1618683.027] {Default Queue} xdg_toplevel#18.configure(0, 0, array[0])
+[1618683.865] {Default Queue} xdg_surface#17.configure(1)
+[1618686.490] {Default Queue}  -> xdg_surface#17.ack_configure(1)
+[1618717.588] {Default Queue}  -> wl_shm#5.create_pool(new id wl_shm_pool#19, fd 8, 621152)
+[1618718.211] {Default Queue}  -> wl_shm_pool#19.create_buffer(new id wl_buffer#20, 0, 472, 329, 1888, 0)
+[1618885.933] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1618886.421] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1618887.005] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[1618887.527] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[1618887.903] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1618888.394] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1618889.095] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#21)
+[1618890.044] {Default Queue}  -> wl_region#21.add(34, 23, 404, 8)
+[1618890.545] {Default Queue}  -> wl_region#21.add(26, 31, 420, 269)
+[1618890.821] {Default Queue}  -> wl_surface#16.set_opaque_region(wl_region#21)
+[1618891.081] {Default Queue}  -> wl_region#21.destroy()
+[1618891.404] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[1618891.636] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[1618891.871] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[1618892.117] {Default Queue}  -> wl_region#22.destroy()
+[1618893.547] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[1618893.866] {Default Queue}  -> wl_surface#16.commit()
+desk: wayland window 3 mapped 472x329
+[1618905.359] {Display Queue} wl_display#1.delete_id(21)
+[1618906.786] {Display Queue} wl_display#1.delete_id(22)
+panel tasks: Terminal*=613-725
+[1618908.002] {Default Queue} wl_buffer#20.release()
+[1618908.686] {Default Queue} wl_keyboard#15.enter(2, wl_surface#16, array[0])
+[1618910.614] {Default Queue} wl_keyboard#15.modifiers(3, 0, 0, 0, 0)
+[1618913.749] {Default Queue} wl_data_device#12.selection(nil)
+[1618928.400] {Display Queue} wl_display#1.delete_id(23)
+[1618928.880] {Default Queue} wl_callback#23.done(20901)
+[1618974.010] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1618974.437] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1618974.672] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[1618974.893] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[1618975.231] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1618975.480] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1618975.751] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[1618976.006] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[1618976.211] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[1618976.453] {Default Queue}  -> wl_region#23.destroy()
+[1618976.798] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[1618977.096] {Default Queue}  -> wl_surface#16.commit()
+[1619005.330] {Display Queue} wl_display#1.delete_id(23)
+[1619005.768] {Default Queue} wl_buffer#20.release()
+[1619029.415] {Display Queue} wl_display#1.delete_id(22)
+[1619029.721] {Default Queue} wl_callback#22.done(21022)
+[1619047.060] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1619047.608] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1619047.984] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[1619048.320] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[1619048.638] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1619049.007] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1619049.396] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[1619049.887] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[1619050.187] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[1619051.575] {Default Queue}  -> wl_region#22.destroy()
+[1619052.115] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[1619052.394] {Default Queue}  -> wl_surface#16.commit()
+[1619063.223] {Display Queue} wl_display#1.delete_id(22)
+[1619063.535] {Default Queue} wl_buffer#20.release()
+[1619086.295] {Display Queue} wl_display#1.delete_id(23)
+[1619086.724] {Default Queue} wl_callback#23.done(21079)
+[1619098.316] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1619098.710] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1619098.929] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[1619099.150] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[1619099.409] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1619099.609] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1619099.934] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[1619100.167] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[1619100.449] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[1619100.707] {Default Queue}  -> wl_region#23.destroy()
+[1619101.059] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[1619101.288] {Default Queue}  -> wl_surface#16.commit()
+[1619109.308] {Display Queue} wl_display#1.delete_id(23)
+[1619109.644] {Default Queue} wl_buffer#20.release()
+[1619130.972] {Display Queue} wl_display#1.delete_id(22)
+[1619131.350] {Default Queue} wl_callback#22.done(21124)
+[1619146.862] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1619147.424] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1619147.673] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[1619147.898] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[1619148.099] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1619148.470] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1619148.924] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[1619149.369] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[1619149.783] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[1619150.158] {Default Queue}  -> wl_region#22.destroy()
+[1619150.960] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[1619151.480] {Default Queue}  -> wl_surface#16.commit()
+[1619162.391] {Display Queue} wl_display#1.delete_id(22)
+[1619162.998] {Default Queue} wl_buffer#20.release()
+[1619181.457] {Display Queue} wl_display#1.delete_id(23)
+[1619181.811] {Default Queue} wl_callback#23.done(21175)
+[1619764.619] {Default Queue} wl_pointer#7.enter(4, wl_surface#16, 235.00000000, 179.00000000)
+[1619766.743] {Default Queue} wl_pointer#7.frame()
+[1619771.408] {Default Queue}  -> wl_shm_pool#3.create_buffer(new id wl_buffer#23, 16064, 10, 16, 40, 0)
+[1619771.925] {Default Queue}  -> wl_pointer#7.set_cursor(4, wl_surface#13, 1, 1)
+[1619772.254] {Default Queue}  -> wl_surface#13.attach(wl_buffer#23, 0, 0)
+[1619772.494] {Default Queue}  -> wl_surface#13.set_buffer_scale(1)
+[1619772.745] {Default Queue}  -> wl_surface#13.damage(0, 0, 10, 16)
+[1619772.954] {Default Queue}  -> wl_surface#13.commit()
+[1619773.428] {Default Queue} wl_pointer#7.motion(21758, 235.00000000, 179.00000000)
+[1619774.021] {Default Queue} wl_pointer#7.frame()
+[1619811.272] {Default Queue} discarded wl_buffer#23.release()
+wl-pointer surface=16 x=235 y=179 button=1
+[1620168.765] {Default Queue} wl_pointer#7.button(5, 22158, 272, 1)
+[1620172.968] {Default Queue} wl_pointer#7.frame()
+gtk-input-press button=1 x=209.0 y=119.0
+wl-pointer surface=16 x=235 y=179 button=0
+[1620621.009] {Default Queue} wl_pointer#7.button(6, 22610, 272, 0)
+[1620622.637] {Default Queue} wl_pointer#7.frame()
+gtk-input-clicked
+[1620681.357] {Default Queue}  -> xdg_toplevel#18.set_min_size(194, 69)
+[1620682.465] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1620694.523] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[1620695.385] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[1620695.774] {Default Queue}  -> wl_surface#16.damage(26, 60, 420, 240)
+[1620696.195] {Default Queue}  -> xdg_toplevel#18.set_min_size(194, 69)
+[1620696.486] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[1620696.801] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[1620697.331] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[1620697.668] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[1620698.215] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[1620698.498] {Default Queue}  -> wl_region#22.destroy()
+[1620698.943] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#21)
+[1620699.308] {Default Queue}  -> wl_surface#16.commit()
+[1620701.879] {Display Queue} wl_display#1.delete_id(22)
+[1620702.280] {Default Queue} wl_buffer#20.release()
+[1620719.049] {Display Queue} wl_display#1.delete_id(21)
+[1620719.834] {Default Queue} wl_callback#21.done(22712)
+[1621261.157] {Default Queue}  -> wl_display#1.sync(new id wl_callback#21)
+[1621262.259] {Display Queue} wl_display#1.delete_id(21)
+[1621262.631] {Default Queue} wl_callback#21.done(23256)
+[1621265.957] {Default Queue}  -> xdg_toplevel#18.destroy()
+[1621266.556] {Default Queue}  -> xdg_surface#17.destroy()
+[1621266.987] {Default Queue}  -> wl_surface#16.destroy()
+[1621267.355] {Default Queue}  -> wl_buffer#20.destroy()
+[1621267.602] {Default Queue}  -> wl_shm_pool#19.destroy()
+gtk-input-exit
+panel tasks: Terminal*=613-725
+THOS: vm fork begin parent=3 free=486693
+THOS: vm fork end parent=3 child=13 free_before=486693 free_after=486130
+THOS: vm mmap pid=13 base=0x7002fd604000 len=0x1f3e50 off=0x0 prot=0x1 flags=0x802 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=13 base=0x7002fd62c000 len=0x163000 off=0x28000 prot=0x5 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=13 base=0x7002fd78f000 len=0x56000 off=0x18b000 prot=0x1 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm mmap pid=13 base=0x7002fd7e5000 len=0x6000 off=0x1e0000 prot=0x3 flags=0x812 path=/lib/x86_64-linux-gnu/libc.so.6
+THOS: vm fork begin parent=3 free=486693
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 2 window(s) at exit
+THOS: pid 9 killed by signal 1
+term done
+THOS: vm fork end parent=3 child=14 free_before=486693 free_after=493095
+gtk-input-done:0
+thos$ 

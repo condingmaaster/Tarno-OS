@@ -56,6 +56,7 @@ thos_ctx_switch:
 .globl thos_thread_trampoline
 // entered via `ret` from thos_ctx_switch with r12=entry, r13=arg
 thos_thread_trampoline:
+    sub rsp, 8                    // SysV caller alignment
     call thos_finish_switch        // release the thread that yielded to us
     mov rdi, r13
     call r12
@@ -70,7 +71,9 @@ thos_thread_trampoline:
 // stubs (`crate::idt`) makes a ring-3 preemption of a PE thread (with
 // `%gs` = TEB) safe, which it wasn't when PE threads had to run IF=0.
 thos_user_thread_start:
+    sub rsp, 8                    // SysV caller alignment
     call thos_finish_switch        // release the thread that yielded to us
+    call thos_cpu_enter_user
     push r15
     push r13
     push 0x202          // RFLAGS with IF=1 -> the user thread is preemptible
@@ -153,6 +156,7 @@ enum State {
 
 #[allow(dead_code)] // id/name/proc are for debugging, lifetime, /proc-style views
 pub struct Thread {
+    pub cpu_usage:Option<crate::thread_cpu::Shared>,
     pub id: u64,
     pub name: &'static str,
     state: Mutex<State>,
@@ -184,8 +188,7 @@ pub struct Thread {
     /// constantly. 0 for kernel threads and for a fresh image before its
     /// first `arch_prctl(SET_FS)`.
     fsbase: AtomicU64,
-    /// User `%gs` base (the Win64 TEB pointer for PE threads). `0` = use the
-    /// per-CPU pointer, i.e. behave exactly as a POSIX/kernel thread. Loaded
+    /// User `%gs` base (Win64 TEB or Linux arch_prctl base). Loaded
     /// into `IA32_KERNEL_GS_BASE` on every switch in, so the exit `swapgs`
     /// brings it live for ring 3.
     gsbase: AtomicU64,
@@ -238,6 +241,7 @@ impl Thread {
             gsbase: AtomicU64::new(0),
             wake_pending: AtomicBool::new(false),
             fpu: FpuState::boxed(),
+            cpu_usage:None,
         })
     }
 
@@ -292,6 +296,7 @@ impl Thread {
             gsbase: AtomicU64::new(0),
             wake_pending: AtomicBool::new(false),
             fpu: FpuState::boxed(),
+            cpu_usage:None,
         })
     }
 
@@ -302,7 +307,9 @@ impl Thread {
         entry: u64,
         user_rsp: u64,
         gsbase: u64,
+        usage:Option<crate::thread_cpu::Shared>,
     ) -> Arc<Self> {
+        let usage=usage.or_else(||task.is_pe().then(crate::thread_cpu::new));
         let s = gdt::selectors();
         let cr3 = task.space().pml4_phys();
         let (stack, sp, top) = Self::build_stack(
@@ -328,6 +335,7 @@ impl Thread {
             gsbase: AtomicU64::new(gsbase),
             wake_pending: AtomicBool::new(false),
             fpu: FpuState::boxed(),
+            cpu_usage:usage,
         })
     }
 
@@ -361,9 +369,10 @@ impl Thread {
             _uframe: Some(uframe),
             running: AtomicBool::new(false),
             fsbase: AtomicU64::new(fsbase),
-            gsbase: AtomicU64::new(0),
+            gsbase: AtomicU64::new(current().gsbase()),
             wake_pending: AtomicBool::new(false),
             fpu: FpuState::boxed(),
+            cpu_usage:None,
         })
     }
 
@@ -441,9 +450,12 @@ impl Thread {
     pub fn set_fsbase(&self, v: u64) {
         self.fsbase.store(v, Ordering::Relaxed);
     }
-    /// This thread's user `%gs` base (Win64 TEB pointer, `0` for non-PE).
+    /// This thread's user `%gs` base, separate from the kernel per-CPU base.
     pub fn gsbase(&self) -> u64 {
         self.gsbase.load(Ordering::Relaxed)
+    }
+    pub fn set_gsbase(&self,v:u64) {
+        self.gsbase.store(v,Ordering::Relaxed);
     }
 }
 
@@ -459,6 +471,7 @@ pub fn init_bsp() {
     let idle = Thread::spawned(idle_tid(0), "cpu0/idle", idle_entry, 0, true);
     {
         let mut s = SCHED.lock();
+        crate::thread_cpu::set_current(0,boot.cpu_usage.as_ref());
         s.cpus[0].current = Some(boot);
         s.cpus[0].idle = Some(idle);
     }
@@ -473,6 +486,7 @@ pub fn cpu_enter() -> ! {
     {
         let mut s = SCHED.lock();
         s.cpus[cpu].idle = Some(me.clone());
+        crate::thread_cpu::set_current(cpu,me.cpu_usage.as_ref());
         s.cpus[cpu].current = Some(me);
     }
     interrupts::enable();
@@ -507,7 +521,7 @@ pub fn spawn_user(name: &'static str, task: Arc<Task>, entry: u64, user_rsp: u64
     let id = NEXT_TID.fetch_add(1, Ordering::Relaxed);
     task.thread_spawned();
     let tk = task.clone();
-    let t = Thread::spawned_user(id, name, task, entry, user_rsp, 0);
+    let t = Thread::spawned_user(id, name, task, entry, user_rsp, 0,None);
     tk.set_thread(Arc::downgrade(&t));
     SCHED.lock().ready.push_back(t);
     id
@@ -517,11 +531,16 @@ pub fn spawn_user(name: &'static str, task: Arc<Task>, entry: u64, user_rsp: u64
 /// thread — the timer / AHCI IRQ entry stubs carry the conditional `swapgs` —
 /// and carrying `teb` as its `%gs` base.
 pub fn spawn_user_pe(name: &'static str, task: Arc<Task>, entry: u64, user_rsp: u64, teb: u64) -> u64 {
+    spawn_user_pe_with_exit(name,task,entry,user_rsp,teb,None)
+}
+/// A PE worker's completion event must exist before another CPU can run it.
+pub fn spawn_user_pe_with_exit(name:&'static str,task:Arc<Task>,entry:u64,user_rsp:u64,teb:u64,exit:Option<Arc<crate::nt_thread::Thread>>)->u64 {
     let id = NEXT_TID.fetch_add(1, Ordering::Relaxed);
     task.thread_spawned();
     let tk = task.clone();
-    let t = Thread::spawned_user(id, name, task, entry, user_rsp, teb);
+    let t = Thread::spawned_user(id, name, task, entry, user_rsp, teb,exit.as_ref().map(|e|e.usage.clone()));
     tk.set_thread(Arc::downgrade(&t));
+    if let Some(event)=exit {crate::process::register_thread_exit(id,event);}
     SCHED.lock().ready.push_back(t);
     id
 }
@@ -565,11 +584,11 @@ fn apply_cpu_state(cpu: usize, cr3: u64, kstack_top: Option<u64>, fsbase: u64, g
     // parent's — or a stale — `%fs` and faults on its first TLS access.
     FsBase::write(VirtAddr::new(fsbase));
     // The thread's user `%gs` base goes into KERNEL_GS_BASE; the exit `swapgs`
-    // makes it live for ring 3. `0` = the per-CPU pointer, so POSIX/kernel
-    // threads keep `gs` == per-CPU. Skip the `wrmsr` unless the value actually
+    // makes it live for ring 3. The live kernel GS remains the per-CPU pointer,
+    // even when the saved user base is zero. Skip `wrmsr` unless it actually
     // changes — the common POSIX→POSIX switch then costs nothing (and behaves
     // exactly as before PE support).
-    let want = if gsbase != 0 { gsbase } else { smp::this_cpu_ptr() };
+    let want = gsbase;
     if smp::user_gs(cpu) != want {
         KernelGsBase::write(VirtAddr::new(want));
         smp::set_user_gs(cpu, want);
@@ -661,6 +680,7 @@ pub fn exit() -> ! {
         let mut s = SCHED.lock();
         let cpu = smp::this_cpu() as usize;
         let prev = s.cpus[cpu].current.take().expect("exit: no current thread");
+        if let Some(usage)=prev.cpu_usage.as_ref(){usage.lock().finish(crate::timer::monotonic_ns(),crate::timer::realtime_ns());}
         prev.set_state(State::Exited);
         let next = pick_next(&mut s, cpu);
         next.set_state(State::Running);
@@ -755,6 +775,8 @@ fn reschedule(block: bool) {
             return;
         }
 
+        if let Some(usage)=prev.cpu_usage.as_ref(){usage.lock().pause(crate::timer::monotonic_ns());}
+
         // Commit only now that we know a real switch is happening.
         if block {
             prev.set_state(State::Blocked);
@@ -838,6 +860,10 @@ fn finish_switch() {
         prev.set_state(State::Ready);
         s.ready.push_back(prev.clone());
     }
+    if let Some(current)=s.cpus[cpu].current.as_ref(){
+        crate::thread_cpu::set_current(cpu,current.cpu_usage.as_ref());
+        if let Some(usage)=current.cpu_usage.as_ref(){usage.lock().resume(crate::timer::monotonic_ns());}
+    }
     prev.running.store(false, Ordering::Release);
 }
 
@@ -855,21 +881,22 @@ fn finish_switch() {
 /// whole life, since `TASKS` holds a permanent reference until some parent
 /// `wait4`s it, which plenty of THOS's test-spawned processes never get.)
 pub fn reap() {
-    let mut s = SCHED.lock();
-    let mut i = 0;
-    while i < s.graveyard.len() {
-        let dead =
-            !s.graveyard[i].running.load(Ordering::Acquire) && Arc::strong_count(&s.graveyard[i]) == 1;
-        if dead {
-            let corpse = s.graveyard.swap_remove(i); // about to be the last reference
-            if let Some(task) = &corpse.task {
-                if task.thread_exited() {
-                    task.teardown_space_if_unreferenced();
-                }
+    loop {
+        let corpse={
+            let mut s=SCHED.lock();
+            let ready=s.graveyard.iter().position(|t|!t.running.load(Ordering::Acquire)&&Arc::strong_count(t)==1);
+            ready.map(|i|s.graveyard.swap_remove(i))
+        };
+        let Some(corpse)=corpse else{break};
+        // Cleanup emits window events and may flush mapped files. Both may wake
+        // threads, so neither may run while SCHED is locked.
+        crate::window::cleanup_thread(corpse.id);
+        if let Some(task)=&corpse.task {
+            if task.thread_exited() {
+                crate::window::cleanup_process(task.pid);
+                task.teardown_space_if_unreferenced();
             }
-            drop(corpse); // Arc drops -> the Box<[u8]> stack (and now-unreferenced Task) freed
-        } else {
-            i += 1;
         }
+        drop(corpse);
     }
 }

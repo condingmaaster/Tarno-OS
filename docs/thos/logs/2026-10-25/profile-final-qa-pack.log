@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/home/router/Projekte/Tarno-OS/docs/thos/logs/2026-10-25/profile-final-qa-pack.py", line 6, in <module>
+    assert not kernel.exists() and not image.exists()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

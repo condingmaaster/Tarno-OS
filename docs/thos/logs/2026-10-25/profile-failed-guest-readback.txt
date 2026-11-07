@@ -1,0 +1,17 @@
+;keep
+[Settings]
+name=Changed
+[NewSection]
+Key=new
+[Threads]
+W0=yes
+W1=yes
+W2=yes
+W3=yes
+W6=yes
+W4=yes
+W5=yes
+W7=yes
+[Processes]
+P00000007=child
+P00000008=child

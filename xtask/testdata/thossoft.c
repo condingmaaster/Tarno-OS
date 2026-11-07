@@ -15,12 +15,13 @@
 #include <time.h>
 #include <unistd.h>
 #include "thoswl.h"
+#include "thosresize.h"
 #include "thosgfx.h"
 #include "thosui.h"
 #include "thosnotify.h"
 
-#define SW 760
-#define SH 520
+static int SW=760;
+static int SH=520;
 #define HEAD 78
 #define ROW 58
 #define FOOT 30
@@ -30,6 +31,7 @@
 #define LIST_H (SH - HEAD - FOOT - 12)
 static uint32_t *px;
 static int sock;
+static struct thos_resize resize;
 static char *index_buf;
 static size_t index_len;
 static char query[64];
@@ -158,6 +160,9 @@ static void render(void) {
     for (int x = 0; x < SW; x++) px[(HEAD - 1) * SW + x] = UI_LINE;
     ui_text(px, SW, SH, 20, 28, "Software", UI_BOLD, 17, UI_TEXT);
     ui_text(px, SW, SH, 20 + ui_text_width(UI_BOLD, 17, "Software") + 10, 28, "Debian archive", UI_REG, 12, UI_MUTED);
+    ui_rrect(px,SW,SH,SW-164,6,148,28,8,0x283b63);
+    ui_icon(px,SW,SH,SW-145,20,IC_DOWNLOAD,12,UI_TEXT);
+    ui_text(px,SW,SH,SW-127,25,"Downloads",UI_REG,13,UI_TEXT);
     ui_card(px, SW, SH, 16, 38, SW - 32, 32, 10, 0x131722, query[0] ? ui_mix(0x2d3448u, UI_ACCENT, 130) : 0x2d3448);
     ui_icon(px, SW, SH, 34, 54, IC_SEARCH, 13, UI_MUTED);
     char q[90]; snprintf(q, sizeof q, "%s%s", query, "|");
@@ -241,10 +246,11 @@ int main(void) {
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
     if (connect(sock, (void *)&a, 2 + WL_SOCK_LEN) != 0) { puts("soft FAIL: connect"); return 1; }
-    struct wl_msg m = { WL_CREATE, SW, SH, (uint32_t)key, 0 };
+    struct wl_msg m = { WL_CREATE, SW, SH, (uint32_t)key, WL_RESIZABLE };
     (void)!write(sock, &m, sizeof m);
-    if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("soft FAIL: no CREATED"); return 1; }
+    if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("soft FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);
+    thos_resize_limits(sock,600,300);
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "Software", 8);
     (void)!write(sock, &t, sizeof t);
@@ -262,18 +268,27 @@ int main(void) {
     for (;;) {
         int busy = ui_list_busy(&list) || job_fd >= 0;
         struct pollfd pf[2] = { { sock, POLLIN, 0 }, { job_fd, POLLIN, 0 } };
-        poll(pf, 2, busy ? MO_FRAME_MS : -1);
+        poll(pf, 2, ui_have_held ? 0 : busy ? MO_FRAME_MS : -1);
         if (job_fd >= 0 && (pf[1].revents & (POLLIN | POLLHUP))) { job_read(); render(); }
-        int pr = (pf[0].revents & POLLIN) ? 1 : 0;
+        int pr = ((pf[0].revents & POLLIN) || ui_have_held) ? 1 : 0;
         long long nowt = mo_now_ms();
         float dt = (float)(nowt - clk) / 1000.0f;
         clk = nowt;
         if (busy) { ui_list_step(&list, dt); render(); }
         if (!pr && pf[0].revents & (POLLHUP | POLLERR)) break;
         if (pr <= 0) continue;
-        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        int resized=thos_resize_event(sock,&m,&resize,&px,&SW,&SH);
+        if(resized) {
+            if(resized==2) {list.view_h=LIST_H;ui_list_clamp(&list);render();thos_resize_continue(sock,&resize);}
+            continue;
+        }
         if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_POINTER && m.c == 1) {
+            if((int)m.a>=SW-164 && (int)m.a<SW-16 && (int)m.b>=6 && (int)m.b<34) {
+                if(fork()==0) {execl("/thosdownloads","thosdownloads",(char*)0);_exit(127);}
+                continue;
+            }
             long long now = mo_now_ms();
             if (!index_buf && (int)m.b > HEAD + 70 && (int)m.b < HEAD + 130) act();
             else if ((int)m.b >= HEAD) {
@@ -305,5 +320,6 @@ int main(void) {
         }
     }
     printf("soft done\n");
+    thos_resize_dispose(&resize);
     return 0;
 }

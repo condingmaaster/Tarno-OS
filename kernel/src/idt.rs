@@ -64,7 +64,11 @@ core::arch::global_asm!(
     mov  rbp, rsp
     mov  rdi, rbp                   // arg 0: the saved register frame (rip at +120, cs at +128)
     and  rsp, -16                   // dynamic 16-byte align for the SysV call
+    call thos_cpu_irq_enter
+    mov  rdi, rbp
     call \body
+    mov  rdi, rbp
+    call thos_cpu_irq_leave
     mov  rsp, rbp
     pop  r15
     pop  r14
@@ -110,15 +114,18 @@ extern "C" fn thos_irq_timer_body(frame: *const u64) {
     crate::random::add_event(apic::ticks());
     apic::eoi();
     crate::timer::tick(); // advance the monotonic clock + wake timed sleepers (CPU 0 only; 1 kHz)
-    // Everything else runs at the old 100 Hz: the time slice stays 10 ms.
-    static SLICE: [core::sync::atomic::AtomicU32; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicU32::new(0) }; crate::gdt::MAX_CPUS];
+    // Keep a 10-ms slice in elapsed time. Ten delivered IRQs can represent
+    // much longer when an interrupt-disabled syscall coalesces timer ticks.
+    static SLICE: [core::sync::atomic::AtomicU64; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicU64::new(0) }; crate::gdt::MAX_CPUS];
     if !crate::sched::is_started() {
         return; // per-CPU state (gs) is not live yet
     }
     let cpu = crate::smp::this_cpu() as usize;
-    if SLICE[cpu].fetch_add(1, core::sync::atomic::Ordering::Relaxed) % 10 != 9 {
+    let now = crate::timer::monotonic_ns();
+    if now.saturating_sub(SLICE[cpu].load(core::sync::atomic::Ordering::Relaxed)) < 10_000_000 {
         return;
     }
+    SLICE[cpu].store(now, core::sync::atomic::Ordering::Relaxed);
     crate::ahci::poll_wake(); // safety net for a dropped AHCI completion IRQ
     // Interrupted ring 3 (saved CS.RPL == 3, 16th slot after the 15 pushed GPRs)?
     // Then a fatal signal ends the process even if it never makes a syscall.
@@ -168,8 +175,10 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
             .set_handler_fn(nmi)
             .set_stack_index(gdt::NMI_IST_INDEX);
         idt.page_fault
-            .set_handler_addr(a(seh::thos_pf_entry))
-            .set_stack_index(gdt::PAGE_FAULT_IST_INDEX);
+            .set_handler_addr(a(seh::thos_pf_entry));
+        // Demand faults can park. A per-CPU IST would be overwritten by
+        // another task's fault while the first task sleeps. User faults use
+        // the thread's TSS RSP0; double faults keep an emergency IST stack.
     }
 
     // APIC vectors (>= 32). Timer + AHCI use hand-rolled entry stubs with a
@@ -232,8 +241,8 @@ fn fatal(name: &str, frame: &InterruptStackFrame, code: Option<u64>) -> ! {
     }
     if from_user {
         kprintln!("  killed user rip={:#x}", frame.instruction_pointer.as_u64());
-        crate::process::set_term_signal(11); // SIGSEGV
         crate::syscall::note_user_exit();
+        crate::process::set_term_signal(11); // SIGSEGV
         crate::sched::exit();
     }
     kprintln!("{:#?}", frame);

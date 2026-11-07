@@ -1,0 +1,186 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800bff05
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1945 MiB in 497603 frames
+THOS: largest region   1945 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   497603 -> 497602 -> 497603 (phys 0x79a06000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             2 (2 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62220 counts/ms
+THOS: clock            TSC 2459 MHz; RTC 1792009689 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    7 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 512 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 1
+THOS: SMP              2/2 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          e1000 52:54:00:12:34:56
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thoTHOS: net dhcp         lease 10.0.2.15/24 via 10.0.2.2 dns [[10, 0, 2, 3]]
+THOS: net ok           ping 10.0.2.2 answered in 25 ms (ARP + ICMP over virtio-net + smoltcp)
+s
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ THOS_FIREFOX_WAIT=180  /busybox sh /firefox.sh
+desk: ready 1280x800
+THOS: unhandled syscall 435
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+Mozilla Firefox 153.4.0esr
+THOS: unhandled syscall 435
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 187
+THOS: unhandled syscall 435
+THOS: unhandled syscall 435
+THOS: ipc pid=10 nr=319 a=0x700425bd20f5,0xb,0x3,0x52,0x2,2929211024523756309 wayland-cursor ret=-22
+THOS: ipc pid=10 nr=319 a=0x700425bd20f5,0x3,0x3,0x52,0x2,2929211024523756309 wayland-cursor ret=16
+THOS: ipc pid=10 nr=72 a=0x10,0x409,0x3,0x52,0x2,2929211024523756309  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x900,0x3,0x1,0x10,0  ret=123163340808192
+THOS: ipc pid=10 nr=72 a=0x10,0x406,0x0,0x7004233f31c8,0x51868400000000,1  ret=17
+THOS: ipc pid=10 nr=9 a=0x0,0x15c0,0x3,0x1,0x10,0  ret=123163340816384
+THOS: ipc pid=10 nr=9 a=0x0,0x2f40,0x3,0x1,0x10,0  ret=123163340828672
+THOS: ipc pid=10 nr=9 a=0x0,0x6280,0x3,0x1,0x10,0  ret=123163340845056
+THOS: ipc pid=10 nr=3 a=0x11,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=3 a=0x11,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=4 nr=9 a=0x0,0x900,0x3,0x1,0xb,0  ret=123159900639232
+THOS: ipc pid=4 nr=9 a=0x0,0x15c0,0x3,0x1,0xb,0  ret=123159900647424
+THOS: ipc pid=4 nr=9 a=0x0,0x2f40,0x3,0x1,0xb,0  ret=123159900659712
+THOS: ipc pid=4 nr=9 a=0x0,0x6280,0x3,0x1,0xb,0  ret=123159900676096
+THOS: unhandled syscall 435
+THOS: ipc pid=4 nr=319 a=0x5555f01eb304,0x0,0xb,0xa,0x0,0 keymap ret=12
+THOS: ipc pid=4 nr=77 a=0xc,0x103d2,0xb,0xa,0x0,0  ret=0
+THOS: ipc pid=4 nr=9 a=0x0,0x103d2,0x3,0x1,0xc,0  ret=123159900708864
+THOS: ipc pid=4 nr=3 a=0xc,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=3 a=0x14,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x103d2,0x1,0x1,0x14,0  ret=123163353047040
+THOS: ipc pid=10 nr=3 a=0x14,0x0,0x0,0x0,0x0,0  ret=0
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: ipc pid=10 nr=319 a=0x7004264ed05b,0xb,0x100,0x700412f02e80,0x1c,123163462733440 mozilla-ipc-test ret=-22
+THOS: ipc pid=10 nr=319 a=0x7004264ed05b,0x3,0x100,0x700412f02e80,0x1c,123163462733440 mozilla-ipc-test ret=35
+THOS: ipc pid=10 nr=257 a=0xffffffffffffff9c,0x70043a703bc0,0x80000,0x0,0x0,0 /proc/self/fd/35 ret=36
+THOS: ipc pid=10 nr=3 a=0x24,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=319 a=0x7004262bc517,0x100000003,0x3,0x0,0x0,0 mozilla-ipc ret=35
+THOS: ipc pid=10 nr=257 a=0xffffffffffffff9c,0x70043a703900,0x80000,0x0,0x0,0 /proc/self/fd/35 ret=36
+THOS: ipc pid=10 nr=77 a=0x23,0x2624c,0x5556017e81be,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x2624c,0x3,0x1,0x23,0  ret=123165904748544
+THOS: ipc pid=10 nr=72 a=0x23,0x409,0x17,0xfffffffffffff9c4,0x0,4  ret=0
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x2624c,0x1,0x1,0x24,0  ret=123165904912384
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: ipc pid=10 nr=319 a=0x7004262bc517,0x100000003,0x7004127fb670,0x700412f02e80,0xd,17206680983544800998 mozilla-ipc ret=38
+THOS: ipc pid=10 nr=257 a=0xffffffffffffff9c,0x70043a7d5b80,0x80000,0x0,0x0,0 /proc/self/fd/38 ret=39
+THOS: ipc pid=10 nr=77 a=0x26,0x8,0x5556017e81be,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x8,0x3,0x1,0x26,0  ret=123167114620928
+THOS: ipc pid=10 nr=72 a=0x26,0x409,0x17,0x1,0x0,0  ret=0
+THOS: ipc pid=10 nr=3 a=0x26,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x8,0x1,0x1,0x27,0  ret=123167114629120
+THOS: ipc pid=10 nr=72 a=0x27,0x406,0x0,0x196b05e5,0x7004127fb748,1621232540  ret=38
+THOS: ipc pid=10 nr=9 a=0x0,0x8,0x1,0x1,0x26,0  ret=123167114637312
+THOS: ipc pid=10 nr=3 a=0x26,0x0,0x0,0x0,0x0,0  ret=0
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: ipc pid=4 nr=319 a=0x5555f01eb304,0x0,0xb,0x0,0x0,0 keymap ret=12
+THOS: ipc pid=4 nr=77 a=0xc,0x103d2,0xb,0x0,0x0,0  ret=0
+THOS: ipc pid=4 nr=9 a=0x0,0x103d2,0x3,0x1,0xc,0  ret=123159900782592
+THOS: ipc pid=4 nr=3 a=0xc,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0x103d2,0x1,0x2,0x23,0  ret=123167122612224
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=319 a=0x7004262bc517,0x100000003,0x7004127fc910,0x700412f02e80,0x70043bb272a8,17774159903225463225 mozilla-ipc ret=35
+THOS: ipc pid=10 nr=257 a=0xffffffffffffff9c,0x7004340d0860,0x80000,0x0,0x0,0 /proc/self/fd/35 ret=37
+THOS: ipc pid=10 nr=77 a=0x23,0xb6,0x5556017e81be,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0xb6,0x3,0x1,0x23,0  ret=123167122685952
+THOS: ipc pid=10 nr=72 a=0x23,0x409,0x17,0x1,0x7004340c5670,123163180237952  ret=0
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: ipc pid=10 nr=9 a=0x0,0xb6,0x1,0x1,0x25,0  ret=123167122694144
+THOS: ipc pid=10 nr=72 a=0x25,0x406,0x0,0x1,0x25,0  ret=35
+THOS: ipc pid=10 nr=3 a=0x23,0x0,0x0,0x0,0x0,0  ret=0
+THOS: unhandled syscall 140
+THOS trap: kernel #PF on user address 0x7005145d8cf0 rip=0x7005145d8cf0 — process killed
+THOS: pid 10 killed by signal 11
+THOS: ipc pid=4 nr=3 a=0xb,0x0,0x0,0x0,0x0,0  ret=0
+desk: loop end idle=1200 quit=0
+desk ok: 0 window(s) at exit
+firefox-test-done
+thos$ 

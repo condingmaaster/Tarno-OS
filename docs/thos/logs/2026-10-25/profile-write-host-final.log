@@ -1,0 +1,1 @@
+profile C bridge HOST actual /tmp IO: short writes, ACP1252/UTF16 persistence, injected ENOSPC/fsync/rename/mmap failures preserve original, temp cleanup,8threads/2process updates PASS; separate THOS PE proof required

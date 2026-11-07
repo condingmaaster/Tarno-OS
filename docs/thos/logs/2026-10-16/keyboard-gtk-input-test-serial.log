@@ -1,0 +1,364 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800c99c5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1945 MiB in 497559 frames
+THOS: largest region   1944 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   497559 -> 497558 -> 497559 (phys 0x799da000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62493 counts/ms
+THOS: clock            TSC 2491 MHz; RTC 1792170097 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 2
+THOS: AP 3 online     lapic 1
+THOS: AP 2 online     lapic 3
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /gtk-input.sh
+desk: ready 1280x800
+desk: window 1 created 1280x64 at 0,0
+panel ready
+desk: window 2 created 744x504 at 208,104
+term ready
+THOS: unhandled syscall 435 (further calls suppressed in release)
+[ 518329.995] {Default Queue}  -> wl_display#1.get_registry(new id wl_registry#2)
+[ 518332.271] {Default Queue}  -> wl_display#1.sync(new id wl_callback#3)
+[ 518334.789] {Display Queue} wl_display#1.delete_id(3)
+[ 518336.742] {Default Queue} wl_registry#2.global(1, "wl_compositor", 4)
+[ 518339.206] {Default Queue}  -> wl_registry#2.bind(1, "wl_compositor", 3, new id [unknown]#4)
+[ 518342.830] {Default Queue} wl_registry#2.global(2, "wl_shm", 1)
+[ 518345.289] {Default Queue}  -> wl_registry#2.bind(2, "wl_shm", 1, new id [unknown]#5)
+[ 518348.563] {Default Queue} wl_registry#2.global(3, "wl_seat", 5)
+[ 518351.323] {Default Queue} wl_registry#2.global(4, "wl_output", 2)
+[ 518353.916] {Default Queue}  -> wl_registry#2.bind(4, "wl_output", 2, new id [unknown]#6)
+[ 518356.724] {Default Queue}  -> wl_display#1.sync(new id wl_callback#7)
+[ 518358.730] {Default Queue} wl_registry#2.global(5, "xdg_wm_base", 3)
+[ 518360.740] {Default Queue} wl_registry#2.global(6, "wl_data_device_manager", 3)
+[ 518362.891] {Default Queue}  -> wl_registry#2.bind(6, "wl_data_device_manager", 3, new id [unknown]#8)
+[ 518365.607] {Default Queue} wl_registry#2.global(7, "wl_subcompositor", 1)
+[ 518367.745] {Default Queue}  -> wl_registry#2.bind(7, "wl_subcompositor", 1, new id [unknown]#9)
+[ 518370.449] {Default Queue} wl_callback#3.done(14871)
+[ 518371.966] {Default Queue}  -> wl_shm#5.create_pool(new id wl_shm_pool#3, fd 7, 2304)
+[ 518376.398] {Default Queue}  -> wl_shm_pool#3.resize(5568)
+[ 518378.257] {Default Queue}  -> wl_shm_pool#3.resize(12096)
+[ 518380.319] {Default Queue}  -> wl_shm_pool#3.resize(25216)
+[ 518382.552] {Default Queue}  -> wl_registry#2.bind(3, "wl_seat", 5, new id [unknown]#10)
+[ 518413.887] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#11)
+[ 518416.241] {Default Queue}  -> wl_data_device_manager#8.get_data_device(new id wl_data_device#12, wl_seat#10)
+[ 518419.451] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#13)
+[ 518422.543] {Default Queue}  -> wl_display#1.sync(new id wl_callback#14)
+[ 518425.644] {Display Queue} wl_display#1.delete_id(7)
+[ 518427.608] {Display Queue} wl_display#1.delete_id(14)
+[ 518429.618] {Default Queue} wl_shm#5.format(0)
+[ 518431.267] {Default Queue} wl_shm#5.format(1)
+[ 518432.849] {Default Queue} wl_output#6.geometry(0, 0, 340, 190, 0, "THOS", "framebuffer", 0)
+[ 518435.935] {Default Queue} wl_output#6.mode(3, 1280, 800, 60000)
+[ 518438.134] {Default Queue} wl_output#6.scale(1)
+[ 518439.553] {Default Queue} wl_output#6.done()
+[ 518440.905] {Default Queue} wl_callback#7.done(14961)
+[ 518442.417] {Default Queue} wl_seat#10.capabilities(3)
+[ 518443.915] {Default Queue}  -> wl_seat#10.get_pointer(new id wl_pointer#7)
+[ 518446.036] {Default Queue}  -> wl_seat#10.get_keyboard(new id wl_keyboard#15)
+[ 518448.178] {Default Queue} wl_seat#10.name("seat0")
+[ 518449.637] {Default Queue} wl_callback#14.done(14961)
+[ 518451.124] {Default Queue}  -> wl_registry#2.bind(5, "xdg_wm_base", 3, new id [unknown]#14)
+panel tasks: Terminal*=613-725
+[ 518737.635] {Default Queue}  -> wl_compositor#4.create_surface(new id wl_surface#16)
+[ 518740.769] {Default Queue}  -> xdg_wm_base#14.get_xdg_surface(new id xdg_surface#17, wl_surface#16)
+[ 518743.450] {Default Queue}  -> xdg_surface#17.get_toplevel(new id xdg_toplevel#18)
+[ 518745.828] {Default Queue}  -> xdg_toplevel#18.set_parent(nil)
+[ 518747.872] {Default Queue}  -> xdg_toplevel#18.set_title("THOS GTK input check")
+[ 518750.408] {Default Queue}  -> xdg_toplevel#18.set_app_id("gtk-input")
+[ 518752.348] {Default Queue}  -> wl_surface#16.commit()
+gtk-input-ready
+wl-pointer-created id=7 version=5
+[ 518757.675] {Default Queue} wl_keyboard#15.keymap(1, fd 7, 66514)
+[ 518765.884] {Default Queue} wl_keyboard#15.repeat_info(25, 600)
+[ 518768.248] {Default Queue} xdg_toplevel#18.configure(0, 0, array[0])
+[ 518770.401] {Default Queue} xdg_surface#17.configure(1)
+[ 518772.102] {Default Queue}  -> xdg_surface#17.ack_configure(1)
+[ 518775.180] {Default Queue}  -> wl_shm#5.create_pool(new id wl_shm_pool#19, fd 8, 621152)
+[ 518777.715] {Default Queue}  -> wl_shm_pool#19.create_buffer(new id wl_buffer#20, 0, 472, 329, 1888, 0)
+[ 518782.932] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 518785.046] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 518786.902] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[ 518788.825] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 518790.777] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 518792.730] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 518795.585] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#21)
+[ 518798.622] {Default Queue}  -> wl_region#21.add(34, 23, 404, 8)
+[ 518800.536] {Default Queue}  -> wl_region#21.add(26, 31, 420, 269)
+[ 518802.493] {Default Queue}  -> wl_surface#16.set_opaque_region(wl_region#21)
+[ 518805.245] {Default Queue}  -> wl_region#21.destroy()
+[ 518807.212] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[ 518810.302] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[ 518812.763] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[ 518815.231] {Default Queue}  -> wl_region#22.destroy()
+[ 518817.150] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[ 518819.189] {Default Queue}  -> wl_surface#16.commit()
+desk: wayland window 3 mapped 472x329
+[ 518823.219] {Display Queue} wl_display#1.delete_id(21)
+[ 518824.856] {Display Queue} wl_display#1.delete_id(22)
+[ 518826.322] {Default Queue} wl_buffer#20.release()
+[ 518827.721] {Default Queue} wl_keyboard#15.enter(2, wl_surface#16, array[0])
+panel tasks: Terminal*=613-725
+[ 518829.901] {Default Queue} wl_keyboard#15.modifiers(3, 0, 0, 0, 0)
+[ 518832.992] {Default Queue} wl_data_device#12.selection(nil)
+[ 518835.020] {Display Queue} wl_display#1.delete_id(23)
+[ 518836.622] {Default Queue} wl_callback#23.done(15365)
+[ 518843.115] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 518845.975] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 518848.061] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[ 518851.198] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 518853.635] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 518855.940] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 518858.686] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 518861.215] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 518863.217] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 518865.511] {Default Queue}  -> wl_region#23.destroy()
+[ 518867.258] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[ 518869.476] {Default Queue}  -> wl_surface#16.commit()
+[ 518871.816] {Display Queue} wl_display#1.delete_id(23)
+[ 518873.812] {Default Queue} wl_buffer#20.release()
+[ 518880.051] {Display Queue} wl_display#1.delete_id(22)
+[ 518882.207] {Default Queue} wl_callback#22.done(15416)
+[ 518887.992] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 518890.207] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 518892.131] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[ 518894.370] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 518896.407] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 518899.359] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 518903.892] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[ 518907.122] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[ 518909.059] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[ 518911.153] {Default Queue}  -> wl_region#22.destroy()
+[ 518912.802] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[ 518915.375] {Default Queue}  -> wl_surface#16.commit()
+[ 518918.765] {Display Queue} wl_display#1.delete_id(22)
+[ 518921.108] {Default Queue} wl_buffer#20.release()
+[ 518930.148] {Display Queue} wl_display#1.delete_id(23)
+[ 518933.591] {Default Queue} wl_callback#23.done(15466)
+[ 518942.572] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 518944.751] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 518946.619] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[ 518948.642] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 518951.234] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 518962.097] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 518965.096] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 518968.223] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 518970.723] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 518973.697] {Default Queue}  -> wl_region#23.destroy()
+[ 518975.839] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[ 518978.558] {Default Queue}  -> wl_surface#16.commit()
+[ 518981.759] {Display Queue} wl_display#1.delete_id(23)
+[ 518984.069] {Default Queue} wl_buffer#20.release()
+[ 518997.873] {Display Queue} wl_display#1.delete_id(22)
+[ 519000.217] {Default Queue} wl_callback#22.done(15534)
+[ 519005.282] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519008.011] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519010.379] {Default Queue}  -> wl_surface#16.damage(0, 0, 472, 329)
+[ 519012.894] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519015.823] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519018.703] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519021.990] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[ 519024.681] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[ 519026.595] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[ 519028.645] {Default Queue}  -> wl_region#22.destroy()
+[ 519030.242] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[ 519032.267] {Default Queue}  -> wl_surface#16.commit()
+[ 519037.061] {Display Queue} wl_display#1.delete_id(22)
+[ 519039.028] {Default Queue} wl_buffer#20.release()
+[ 519049.601] {Display Queue} wl_display#1.delete_id(23)
+[ 519051.713] {Default Queue} wl_callback#23.done(15585)
+[ 519054.609] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519057.324] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519059.740] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[ 519062.317] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519065.004] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519067.454] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519070.379] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 519072.870] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 519074.707] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 519076.834] {Default Queue}  -> wl_region#23.destroy()
+[ 519078.364] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[ 519080.384] {Default Queue}  -> wl_surface#16.commit()
+[ 519082.230] {Display Queue} wl_display#1.delete_id(23)
+[ 519083.761] {Default Queue} wl_buffer#20.release()
+[ 519085.402] {Display Queue} wl_display#1.delete_id(22)
+[ 519087.073] {Default Queue} wl_callback#22.done(15620)
+[ 519089.685] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519091.985] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519093.929] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[ 519095.911] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519097.872] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519099.726] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519102.110] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[ 519104.884] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[ 519107.364] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[ 519110.094] {Default Queue}  -> wl_region#22.destroy()
+[ 519112.089] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[ 519114.765] {Default Queue}  -> wl_surface#16.commit()
+[ 519117.292] {Display Queue} wl_display#1.delete_id(22)
+[ 519119.244] {Default Queue} wl_buffer#20.release()
+[ 519121.075] {Display Queue} wl_display#1.delete_id(23)
+[ 519122.919] {Default Queue} wl_callback#23.done(15655)
+[ 519125.163] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519127.129] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519129.150] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[ 519131.661] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519134.219] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519136.643] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519139.783] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 519142.745] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 519144.733] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 519147.020] {Default Queue}  -> wl_region#23.destroy()
+[ 519148.806] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[ 519151.505] {Default Queue}  -> wl_surface#16.commit()
+[ 519158.880] {Display Queue} wl_display#1.delete_id(23)
+[ 519161.088] {Default Queue} wl_buffer#20.release()
+[ 519169.843] {Display Queue} wl_display#1.delete_id(22)
+[ 519172.134] {Default Queue} wl_callback#22.done(15706)
+[ 519174.977] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519177.785] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519180.698] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[ 519183.839] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519187.592] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519189.958] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519193.062] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#22)
+[ 519196.073] {Default Queue}  -> wl_region#22.add(16, 13, 440, 297)
+[ 519198.426] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#22)
+[ 519201.032] {Default Queue}  -> wl_region#22.destroy()
+[ 519202.967] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#23)
+[ 519205.529] {Default Queue}  -> wl_surface#16.commit()
+[ 519207.518] {Display Queue} wl_display#1.delete_id(22)
+[ 519209.464] {Default Queue} wl_buffer#20.release()
+[ 519225.213] {Display Queue} wl_display#1.delete_id(23)
+[ 519227.367] {Default Queue} wl_callback#23.done(15761)
+[ 519230.911] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 519233.894] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 519236.485] {Default Queue}  -> wl_surface#16.damage(415, 28, 26, 26)
+[ 519238.941] {Default Queue}  -> xdg_toplevel#18.set_min_size(302, 69)
+[ 519241.201] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 519243.659] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 519246.658] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 519249.052] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 519251.005] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 519253.213] {Default Queue}  -> wl_region#23.destroy()
+[ 519255.423] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#22)
+[ 519260.743] {Default Queue}  -> wl_surface#16.commit()
+[ 519263.308] {Display Queue} wl_display#1.delete_id(23)
+[ 519267.204] {Default Queue} wl_buffer#20.release()
+[ 519276.541] {Display Queue} wl_display#1.delete_id(22)
+[ 519278.365] {Default Queue} wl_callback#22.done(15812)
+[ 520124.726] {Default Queue} wl_pointer#7.enter(4, wl_surface#16, 235.00000000, 179.00000000)
+[ 520127.415] {Default Queue} wl_pointer#7.frame()
+[ 520128.809] {Default Queue}  -> wl_shm_pool#3.create_buffer(new id wl_buffer#22, 16064, 10, 16, 40, 0)
+[ 520131.801] {Default Queue}  -> wl_pointer#7.set_cursor(4, wl_surface#13, 1, 1)
+[ 520134.376] {Default Queue}  -> wl_surface#13.attach(wl_buffer#22, 0, 0)
+[ 520136.706] {Default Queue}  -> wl_surface#13.set_buffer_scale(1)
+[ 520139.226] {Default Queue}  -> wl_surface#13.damage(0, 0, 10, 16)
+[ 520141.712] {Default Queue}  -> wl_surface#13.commit()
+[ 520143.849] {Default Queue} wl_pointer#7.motion(16661, 235.00000000, 179.00000000)
+[ 520146.939] {Default Queue} wl_pointer#7.frame()
+[ 520150.259] {Default Queue} discarded wl_buffer#22.release()
+wl-pointer surface=16 x=235 y=179 button=1
+[ 520518.561] {Default Queue} wl_pointer#7.button(5, 17053, 272, 1)
+[ 520521.127] {Default Queue} wl_pointer#7.frame()
+gtk-input-press button=1 x=209.0 y=119.0
+wl-pointer surface=16 x=235 y=179 button=0
+[ 520965.472] {Default Queue} wl_pointer#7.button(6, 17500, 272, 0)
+[ 520967.603] {Default Queue} wl_pointer#7.frame()
+gtk-input-clicked
+[ 520970.712] {Default Queue}  -> xdg_toplevel#18.set_min_size(194, 69)
+[ 520973.116] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 520977.216] {Default Queue}  -> wl_surface#16.attach(wl_buffer#20, 0, 0)
+[ 520980.273] {Default Queue}  -> wl_surface#16.set_buffer_scale(1)
+[ 520982.864] {Default Queue}  -> wl_surface#16.damage(26, 60, 420, 240)
+[ 520985.422] {Default Queue}  -> xdg_toplevel#18.set_min_size(194, 69)
+[ 520988.416] {Default Queue}  -> xdg_toplevel#18.set_max_size(0, 0)
+[ 520991.322] {Default Queue}  -> xdg_surface#17.set_window_geometry(26, 23, 420, 277)
+[ 520993.783] {Default Queue}  -> wl_compositor#4.create_region(new id wl_region#23)
+[ 520996.787] {Default Queue}  -> wl_region#23.add(16, 13, 440, 297)
+[ 520999.204] {Default Queue}  -> wl_surface#16.set_input_region(wl_region#23)
+[ 521001.961] {Default Queue}  -> wl_region#23.destroy()
+[ 521003.984] {Default Queue}  -> wl_surface#16.frame(new id wl_callback#21)
+[ 521006.656] {Default Queue}  -> wl_surface#16.commit()
+[ 521009.101] {Display Queue} wl_display#1.delete_id(23)
+[ 521011.115] {Default Queue} wl_buffer#20.release()
+[ 521020.590] {Display Queue} wl_display#1.delete_id(21)
+[ 521022.336] {Default Queue} wl_callback#21.done(17556)
+[ 521570.991] {Default Queue}  -> wl_display#1.sync(new id wl_callback#21)
+[ 521573.417] {Display Queue} wl_display#1.delete_id(21)
+[ 521575.389] {Default Queue} wl_callback#21.done(18109)
+[ 521577.582] {Default Queue}  -> xdg_toplevel#18.destroy()
+[ 521579.713] {Default Queue}  -> xdg_surface#17.destroy()
+[ 521581.683] {Default Queue}  -> wl_surface#16.destroy()
+[ 521583.806] {Default Queue}  -> wl_buffer#20.destroy()
+[ 521585.724] {Default Queue}  -> wl_shm_pool#19.destroy()
+gtk-input-exit
+panel tasks: Terminal*=613-725
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 2 window(s) at exit
+THOS: pid 8 killed by signal 1
+term done
+gtk-input-done:0
+thos$ 

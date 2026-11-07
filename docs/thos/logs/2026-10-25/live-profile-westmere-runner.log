@@ -1,0 +1,12 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2009:17
+     |
+2009 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask live-desktop-test`
+live-desktop-test PASSED: packaged image autostarts desktop, Controlbar and terminal; 1280x800 screenshot saved

@@ -1,0 +1,1 @@
+/home/router/Projekte/Tarno-OS/xtask/heap-probe/target/x86_64-unknown-linux-gnu/release/thos-small-heap-probe: /home/router/Projekte/Tarno-OS/xtask/heap-probe/src/../../../kernel/src/small_heap.rs /home/router/Projekte/Tarno-OS/xtask/heap-probe/src/main.rs

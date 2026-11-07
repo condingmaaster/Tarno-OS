@@ -97,7 +97,7 @@ static DEPTH: AtomicU32 = AtomicU32::new(1);
 static IRQ_ON: AtomicBool = AtomicBool::new(false);
 
 /// Held only for the ~µs command build+issue, never across a wait.
-static SUBMIT: Mutex<()> = Mutex::new(());
+static SUBMIT: crate::io_mutex::IoMutex<()> = crate::io_mutex::IoMutex::new(());
 /// One bit per free tag, populated from the drive's queue depth in `init`.
 static FREE_TAGS: AtomicU32 = AtomicU32::new(0);
 /// One bit per tag whose submitter is currently parked in `wait`.
@@ -546,7 +546,7 @@ fn recover(hba: &Hba) {
         PORT_ERR.store(false, Ordering::Release);
     }
 
-    let pend = PENDING.lock();
+    let pend = *PENDING.lock();
     for t in 0..MAX_TAGS {
         if aborted & (1u32 << t) == 0 {
             continue;
@@ -562,7 +562,6 @@ fn recover(hba: &Hba) {
             }
         }
     }
-    drop(pend);
     PORT_ERR.store(false, Ordering::Release);
     wake_parked();
     crate::kprintln!("THOS: ahci recover     port restarted; failing NCQ tag {:?}", failed);

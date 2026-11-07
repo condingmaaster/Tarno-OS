@@ -1,0 +1,51 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1839:17
+     |
+1839 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.66s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winunicode-probe`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1111/32768 files (2.9% non-contiguous), 104020/524288 blocks
+winunicode-FAIL mb-query-terminated error=0
+winunicode-FAIL mb-query-counted error=0
+winunicode-FAIL mb-utf8-supplementary error=0
+winunicode-FAIL wc-query-terminated error=0
+winunicode-FAIL wc-query-counted error=0
+winunicode-FAIL wc-utf8-supplementary error=0
+winunicode-FAIL mb-short-buffer error=0
+winunicode-FAIL wc-short-buffer error=0
+winunicode-ok mb-counted-embedded-nul
+winunicode-ok wc-counted-embedded-nul
+winunicode-FAIL mb-reject-truncated error=0
+winunicode-FAIL mb-replace-truncated error=0
+winunicode-FAIL wc-reject-surrogate error=0
+winunicode-FAIL wc-replace-surrogates error=0
+winunicode-FAIL mb-invalid-flags error=0
+winunicode-FAIL wc-invalid-flags error=0
+winunicode-FAIL wc-no-used-default error=0
+winunicode-FAIL wc-no-default-char error=0
+winunicode-FAIL mb-invalid-source-length error=0
+winunicode-FAIL wc-invalid-source-length error=0
+winunicode-FAIL mb-negative-capacity error=0
+winunicode-FAIL wc-negative-capacity error=0
+winunicode-FAIL mb-null-output error=0
+winunicode-FAIL wc-null-output error=0
+winunicode-FAIL mb-invalid-user-address error=0
+winunicode-FAIL wc-invalid-user-address error=0
+winunicode-FAIL mb-preserve-error error=56789
+winunicode-FAIL wc-preserve-error error=56789
+winunicode-failures=26
+winunicode-done

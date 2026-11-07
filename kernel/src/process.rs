@@ -41,6 +41,8 @@ pub struct Process {
     views: Mutex<Vec<SectionView>>,
     /// Demand-paged shared mappings of sparse memfds.
     lazy: Mutex<Vec<LazyView>>,
+    anon:crate::io_mutex::IoMutex<Anonymous>,
+    pub(crate) pe_runtime:crate::io_mutex::IoMutex<Option<crate::pe::RuntimeState>>,
     /// The main stack grows downwards on demand: `[stack_floor, stack_low)` is reserved but not mapped yet.
     stack_floor: AtomicU64,
     stack_low: AtomicU64,
@@ -52,11 +54,19 @@ pub struct Process {
     freed: AtomicBool,
 }
 
+struct SharedMapLease {file:Arc<dyn FileOps>,may_write:bool}
+#[derive(Default)]
+struct Anonymous {regions:crate::anon_regions::Regions,pages:BTreeMap<u64,u64>}
+impl Drop for SharedMapLease {fn drop(&mut self){self.file.unregister_mapping(self.may_write);}}
+#[derive(Clone)]
 struct LazyView {
     base: u64,
     pages: usize,
     off_pages: usize,
     file: Arc<dyn FileOps>,
+    lease:Arc<SharedMapLease>,
+    prot:u64,
+    protections:BTreeMap<usize,u64>,
 }
 
 struct SectionView {
@@ -137,6 +147,8 @@ impl Process {
             brk_base: AtomicU64::new(brk0),
             views: Mutex::new(Vec::new()),
             lazy: Mutex::new(Vec::new()),
+            anon:crate::io_mutex::IoMutex::new(Anonymous::default()),
+            pe_runtime:crate::io_mutex::IoMutex::new(None),
             stack_floor: AtomicU64::new(0),
             stack_low: AtomicU64::new(0),
             freed: AtomicBool::new(false),
@@ -155,6 +167,7 @@ impl Process {
         self.brk_base.store(other.brk_base.load(Ordering::Relaxed), Ordering::Relaxed);
         self.stack_floor.store(other.stack_floor.load(Ordering::Relaxed), Ordering::Relaxed);
         self.stack_low.store(other.stack_low.load(Ordering::Relaxed), Ordering::Relaxed);
+        *self.lazy.lock()=other.lazy.lock().clone();
     }
 
     /// A not-present fault just below the main stack: map zeroed pages down to the faulting page
@@ -291,6 +304,7 @@ impl Process {
             self.next_user_va.fetch_add(len + 0x1000, Ordering::Relaxed)
         };
         let (writable, exec) = (prot & 2 != 0, prot & 4 != 0);
+        if fixed {self.munmap(base,len);}
         let mut v = base;
         while v < base + len {
             if fixed {
@@ -311,15 +325,13 @@ impl Process {
                 if let Some((f, foff)) = file {
                     // Fill the page straight from the file: a 50 MiB library never exists as one buffer.
                     let page = unsafe { core::slice::from_raw_parts_mut(dst, 4096) };
-                    if f.seek((foff + (v - base)) as i64, 0) >= 0 {
-                        let mut got = 0;
-                        while got < 4096 {
-                            let n = f.read(&mut page[got..]);
-                            if n <= 0 {
-                                break;
-                            }
-                            got += n as usize;
+                    let mut got = 0;
+                    while got < 4096 {
+                        let n = f.read_at(foff + (v - base) + got as u64, &mut page[got..]);
+                        if n <= 0 {
+                            break;
                         }
+                        got += n as usize;
                     }
                 }
                 self.map(v, frame.start_address().as_u64(), writable, exec);
@@ -329,11 +341,54 @@ impl Process {
         base
     }
 
+    /// Private anonymous Linux mappings reserve space first; physical pages
+    /// are zero-filled only when touched. PROT_NONE retains touched contents.
+    pub fn mmap_anonymous(&self,addr:u64,fixed:bool,len:u64,prot:u64)->u64 {
+        let len=(len+4095)&!4095;
+        let base=if fixed {addr}else{
+            match self.next_user_va.fetch_update(Ordering::Relaxed,Ordering::Relaxed,|v|v.checked_add(len+4096).filter(|&end|end<crate::usercopy::USER_TOP)) {
+                Ok(v)=>v,Err(_)=>return(-12i64) as u64,
+            }
+        };
+        if fixed {self.munmap(base,len);}
+        self.anon.lock().regions.reserve(base,base+len,prot);base
+    }
+    fn fault_anonymous(&self,addr:u64)->bool {
+        let page=addr&!4095;let mut state=self.anon.lock();
+        let Some(prot)=state.regions.protection(page) else{return false;};
+        if prot==0{return false;}
+        if vmm::page_present_in(self.pml4_phys,page){return true;}
+        let phys=if let Some(&p)=state.pages.get(&page){p}else{
+            let Some(frame)=user_frame() else{return false;};
+            unsafe{core::ptr::write_bytes(phys_to_virt(frame.start_address()).as_mut_ptr::<u8>(),0,4096);}
+            let p=frame.start_address().as_u64();state.pages.insert(page,p);p
+        };
+        self.map(page,phys,prot&2!=0,prot&4!=0);true
+    }
+    pub fn anonymous_residency(&self,addr:u64)->Option<bool> {
+        let state=self.anon.lock();state.regions.protection(addr).map(|_|state.pages.contains_key(&(addr&!4095)))
+    }
+    pub fn anonymous_residency_run(&self,addr:u64,out:&mut [u8])->usize {
+        let state=self.anon.lock();let Some(end)=state.regions.end_at(addr) else{return 0;};
+        let count=out.len().min(((end-addr)/4096) as usize);out[..count].fill(0);
+        for(&v,_)in state.pages.range(addr..addr+count as u64*4096){out[((v-addr)/4096) as usize]=1;}
+        count
+    }
+    pub fn discard_anonymous(&self,start:u64,len:u64) {
+        let end=(start+len+4095)&!4095;let mut state=self.anon.lock();
+        let pages:Vec<_>=state.pages.range(start..end).map(|(&v,&p)|(v,p)).collect();
+        for(v,phys)in pages {
+            vmm::unmap_page_in(self.pml4_phys,v);state.pages.remove(&v);
+            FRAME_ALLOC.lock().dealloc(PhysFrame::containing_address(PhysAddr::new(phys)));
+        }
+    }
+
     /// Unmap one user page and give its frame back — unless it belongs to a shared section
     /// view (`NtMapViewOfSection`), whose frames are owned by the section, not by this process.
     fn release_page(&self, virt: u64) {
         let Some(phys) = self.translate(virt) else { return };
         let shared = vmm::is_device_page(self.pml4_phys, virt)
+            || self.anon.lock().pages.contains_key(&(virt&!4095))
             || self.lazy.lock().iter().any(|v| virt >= v.base && virt < v.base + v.pages as u64 * 4096)
             || self
                 .views
@@ -352,6 +407,7 @@ impl Process {
     pub fn mmap_device(&self, addr: u64, fixed: bool, len: u64, prot: u64, phys: u64) -> u64 {
         let len = (len + 0xFFF) & !0xFFF;
         let base = if fixed { addr } else { self.next_user_va.fetch_add(len + 0x1000, Ordering::Relaxed) };
+        if fixed {self.munmap(base,len);}
         let mut off = 0;
         while off < len {
             if fixed {
@@ -369,24 +425,64 @@ impl Process {
             return; // a shared-memory view: its frames belong to the section
         }
         let (start, end) = (addr & !0xFFF, (addr + len + 0xFFF) & !0xFFF);
+        let anonymous_ranges={
+            let mut state=self.anon.lock();
+            let ranges=state.regions.intersections(start,end);
+            let pages:Vec<_>=state.pages.range(start..end).map(|(&v,&p)|(v,p)).collect();
+            for(v,p)in pages {
+                vmm::unmap_page_in(self.pml4_phys,v);
+                state.pages.remove(&v);
+                FRAME_ALLOC.lock().dealloc(PhysFrame::containing_address(PhysAddr::new(p)));
+            }
+            state.regions.remove(start,end);
+            ranges
+        };
         let mut v = start;
         while v < end {
+            if let Some(&(_,stop))=anonymous_ranges.iter().find(|&&(first,last)|first<=v&&v<last){v=stop;continue;}
             self.release_page(v);
             v += 4096;
         }
         // a demand-paged memfd mapping that is gone entirely lets go of its file (the pages go with the last reference)
-        self.lazy.lock().retain(|l| !(l.base >= start && l.base + l.pages as u64 * 4096 <= end));
+        let mut views=self.lazy.lock();let old=core::mem::take(&mut *views);
+        for l in old {
+            let l_end=l.base+l.pages as u64*4096;
+            if end<=l.base||start>=l_end {views.push(l);continue;}
+            if start>l.base {
+                let mut left=l.clone();left.pages=((start-l.base)/4096) as usize;
+                left.protections.retain(|&p,_|p<left.pages);views.push(left);
+            }
+            if end<l_end {
+                let mut right=l.clone();let skip=((end-l.base)/4096) as usize;
+                right.base=end;right.pages=l.pages-skip;right.off_pages+=skip;
+                right.protections=l.protections.iter().filter_map(|(&p,&prot)|(p>=skip).then(||(p-skip,prot))).collect();views.push(right);
+            }
+        }
     }
 
-    /// `mprotect`. `PROT_NONE` removes the pages (their frames go back — decommitting is what
-    /// allocators use it for); a real protection on pages that are not mapped yet maps them
-    /// zeroed (a `PROT_NONE` reservation being committed, e.g. a thread stack); mapped pages
-    /// just change their writable / executable bits.
+    /// `mprotect`: private anonymous reservations keep their backing contents
+    /// through PROT_NONE and allocate untouched pages only on a later fault.
+    /// Other existing mapping types retain their separate protection paths.
     pub fn mprotect(&self, addr: u64, len: u64, prot: u64) -> i64 {
         let (start, end) = (addr & !0xFFF, (addr + len + 0xFFF) & !0xFFF);
         let (writable, exec) = (prot & 2 != 0, prot & 4 != 0);
+        if writable&&self.lazy.lock().iter().any(|v|v.base<end&&v.base+v.pages as u64*4096>start&&!v.lease.may_write){return -13;}
+        {
+            let mut state=self.anon.lock();state.regions.protect(start,end,prot);
+            for(&v,&phys)in state.pages.range(start..end) {
+                if prot==0 {vmm::unmap_page_in(self.pml4_phys,v);}
+                else if vmm::page_present_in(self.pml4_phys,v) {let _=self.protect(v,4096,writable,exec);}
+                else {self.map(v,phys,writable,exec);}
+            }
+        }
         let mut v = start;
         while v < end {
+            if let Some(stop)=self.anon.lock().regions.end_at(v){v=stop.min(end);continue;}
+            let lazy={let mut views=self.lazy.lock();if let Some(l)=views.iter_mut().find(|l|v>=l.base&&v<l.base+l.pages as u64*4096){l.protections.insert(((v-l.base)/4096) as usize,prot);true}else{false}};
+            if lazy {
+                if prot==0 {self.release_page(v);}else if vmm::page_present_in(self.pml4_phys,v){let _=self.protect(v,4096,writable,exec);}
+                v+=4096;continue;
+            }
             if prot == 0 {
                 self.release_page(v);
             } else if vmm::page_present_in(self.pml4_phys, v) {
@@ -433,26 +529,31 @@ impl Process {
     }
 
     /// `mmap(MAP_SHARED)` of a memfd: reserve the range; pages are mapped by [`Process::fault_lazy`] as they are touched.
-    pub fn map_lazy_view(&self, file: Arc<dyn FileOps>, offset: usize, len: usize) -> u64 {
+    pub fn map_lazy_view(&self, file: Arc<dyn FileOps>, offset: usize, len: usize,prot:u64) -> Result<u64,i64> {
+        let may_write=file.register_mapping(prot&2!=0,file.access_mode()!=0)?;
+        let lease=Arc::new(SharedMapLease {file:file.clone(),may_write});
         let pages = len.div_ceil(4096);
         let base = self.next_user_va.fetch_add(pages as u64 * 4096 + 0x1000, Ordering::Relaxed);
-        self.lazy.lock().push(LazyView { base, pages, off_pages: offset / 4096, file });
-        base
+        self.lazy.lock().push(LazyView { base, pages, off_pages: offset / 4096, file,lease,prot,protections:BTreeMap::new() });
+        Ok(base)
     }
 
     /// A not-present fault inside a lazy memfd mapping: map the page (allocated on first use). `true` if fixed.
     pub fn fault_lazy(&self, addr: u64) -> bool {
+        if self.fault_anonymous(addr){return true;}
         // The lock stays held across check + map: two threads faulting on the same page must not both map it.
         let lz = self.lazy.lock();
         let Some(v) = lz.iter().find(|v| addr >= v.base && addr < v.base + v.pages as u64 * 4096) else { return false };
         let idx = v.off_pages + ((addr - v.base) / 4096) as usize;
+        let local=((addr-v.base)/4096) as usize;let prot=v.protections.get(&local).copied().unwrap_or(v.prot);
+        if prot==0 {return false;}
         let page = addr & !0xFFF;
         if vmm::page_present_in(self.pml4_phys, page) {
             return true;
         }
         match v.file.lazy_page(idx) {
             Some(phys) => {
-                self.map(page, phys, true, false);
+                self.map(page, phys, prot&2!=0, prot&4!=0);
                 true
             }
             None => false,
@@ -542,6 +643,10 @@ impl Process {
                     vmm::unmap_page_in(self.pml4_phys, a); // the memfd owns the frame
                 }
             }
+        }
+        for(v,phys)in core::mem::take(&mut self.anon.lock().pages) {
+            vmm::unmap_page_in(self.pml4_phys,v);
+            FRAME_ALLOC.lock().dealloc(PhysFrame::containing_address(PhysAddr::new(phys)));
         }
         self.free_user_address_space();
     }
@@ -863,14 +968,20 @@ impl Section {
 
     /// A zero-filled section of `size` bytes.
     pub fn zeroed(size: usize) -> Self {
+        Self::try_zeroed(size).expect("no frame for section")
+    }
+
+    /// Fallible allocation for resize requests; partial allocations are reclaimed on failure.
+    pub fn try_zeroed(size: usize) -> Option<Self> {
         let pages = size.div_ceil(4096).max(1);
-        let mut frames = Vec::with_capacity(pages);
+        let mut section=Self {size,frames:Vec::with_capacity(pages),file:None};
         for _ in 0..pages {
-            let f = FRAME_ALLOC.lock().alloc().expect("no frame for section");
+            let allocated={FRAME_ALLOC.lock().alloc()};
+            let f=allocated?;
             unsafe { core::ptr::write_bytes(phys_to_virt(f.start_address()).as_mut_ptr::<u8>(), 0, 4096) };
-            frames.push(f);
+            section.frames.push(f);
         }
-        Self { size, frames, file: None }
+        Some(section)
     }
 
     /// Kernel pointer to byte `off` of the section (callers keep accesses inside one page).
@@ -920,6 +1031,8 @@ pub enum HandleObject {
     /// A registry key — the canonical `\`-joined path into [`crate::registry`]'s
     /// global tree (ops re-walk under that module's lock).
     RegKey(String),
+    Toolhelp(Arc<crate::nt_toolhelp::Snapshot>),
+    Thread(Arc<crate::nt_thread::Thread>),
 }
 
 /// A polymorphic view of the dispatcher objects a `NtWaitFor*` call can wait on.
@@ -1109,6 +1222,26 @@ impl Task {
         t
     }
 
+    pub(crate) fn snapshot_thread_count(&self)->u32 {self.live_threads.load(Ordering::Acquire)}
+    pub(crate) fn snapshot_exe_name(&self)->[u16;260] {crate::process_snapshot_layout::basename(&self.exe.lock())}
+    pub(crate) fn handle_toolhelp(&self,h:i32)->Option<Arc<crate::nt_toolhelp::Snapshot>> {
+        match &self.fds.lock().get(h as usize)?.as_ref()?.obj {
+            HandleObject::Toolhelp(s)=>Some(s.clone()),_=>None,
+        }
+    }
+    /// Fallible bounded allocation for new snapshot objects; other existing
+    /// object paths keep their current contract. Slot zero remains NULL.
+    pub(crate) fn try_handle_alloc(&self,obj:HandleObject,cloexec:bool,limit:usize)->Result<i32,()> {
+        let mut fds=self.fds.lock();
+        if let Some(i)=fds.iter().take(limit).enumerate().skip(1).find_map(|(i,e)|if e.is_none(){Some(i)}else{None}) {
+            fds[i]=Some(FdEntry{obj,cloexec});return Ok(i as i32);
+        }
+        if fds.len()>=limit{return Err(());}
+        let add=if fds.is_empty(){2}else{1};fds.try_reserve(add).map_err(|_|())?;
+        if fds.is_empty(){fds.push(None);}
+        let i=fds.len();fds.push(Some(FdEntry{obj,cloexec}));Ok(i as i32)
+    }
+
     pub fn exe(&self) -> alloc::string::String {
         self.exe.lock().clone()
     }
@@ -1183,6 +1316,8 @@ impl Task {
         self.exited.load(Ordering::Acquire)
     }
 
+    pub fn is_pe(&self)->bool {self.is_pe.load(Ordering::Relaxed)}
+
     pub fn mark_pe(&self) {
         self.is_pe.store(true, Ordering::Relaxed);
     }
@@ -1213,6 +1348,7 @@ impl Task {
     /// framebuffer / keyboard are handed back — without waiting for a parent to `wait4` the zombie.
     pub fn close_all_fds(&self) {
         let fds = core::mem::take(&mut *self.fds.lock());
+        crate::record_locks::exited(self.pid);
         drop(fds);
     }
 
@@ -1298,9 +1434,13 @@ impl Task {
     }
 
     /// The dispatcher object a HANDLE names, as a [`Waitable`], if it is one.
+    pub(crate) fn handle_thread(&self,h:i32)->Option<Arc<crate::nt_thread::Thread>> {
+        match &self.fds.lock().get(h as usize)?.as_ref()?.obj {HandleObject::Thread(t)=>Some(t.clone()),_=>None}
+    }
     pub fn handle_waitable(&self, h: i32) -> Option<Waitable> {
         match &self.fds.lock().get(h as usize)?.as_ref()?.obj {
             HandleObject::Event(e) => Some(Waitable::Event(e.clone())),
+            HandleObject::Thread(t) => Some(Waitable::Event(t.event.clone())),
             HandleObject::Semaphore(s) => Some(Waitable::Semaphore(s.clone())),
             HandleObject::Mutant(m) => Some(Waitable::Mutant(m.clone())),
             _ => None,
@@ -1353,14 +1493,8 @@ impl Task {
     }
 
     pub fn fd_close(&self, fd: i32) -> bool {
-        let mut fds = self.fds.lock();
-        match fds.get_mut(fd as usize) {
-            Some(slot @ Some(_)) => {
-                *slot = None;
-                true
-            }
-            _ => false,
-        }
+        let entry={let mut fds=self.fds.lock();fds.get_mut(fd as usize).and_then(Option::take)};
+        if let Some(entry)=entry {record_closed(self.pid,&entry);drop(entry);true}else{false}
     }
 
     /// `F_GETFD` / `F_SETFD` on the close-on-exec flag. Returns `0`/`1`, or
@@ -1383,10 +1517,14 @@ impl Task {
 
     /// execve: drop every descriptor marked close-on-exec.
     fn close_on_exec(&self) {
-        for slot in self.fds.lock().iter_mut() {
-            if slot.as_ref().map_or(false, |e| e.cloexec) {
-                *slot = None;
-            }
+        let mut cursor=0;
+        loop {
+            let entry={
+                let mut fds=self.fds.lock();let mut found=None;
+                while cursor<fds.len(){let i=cursor;cursor+=1;if fds[i].as_ref().is_some_and(|e|e.cloexec){found=fds[i].take();break;}}
+                found
+            };
+            let Some(entry)=entry else{break;};record_closed(self.pid,&entry);drop(entry);
         }
     }
 
@@ -1429,7 +1567,8 @@ impl Task {
         while fds.len() <= n {
             fds.push(None);
         }
-        fds[n] = Some(entry);
+        let replaced=fds[n].replace(entry);drop(fds);
+        if let Some(entry)=replaced {record_closed(self.pid,&entry);drop(entry);}
         newfd
     }
 
@@ -1563,10 +1702,11 @@ pub fn current_tid() -> u64 {
 /// Per-worker-thread exit events, keyed by thread id. A thread's
 /// `NtCreateThreadEx` registers one; `NtTerminateThread` signals + removes it,
 /// so a `NtWaitForSingleObject` on the returned handle completes on exit.
-static THREAD_EXITS: Mutex<BTreeMap<u64, Arc<Event>>> = Mutex::new(BTreeMap::new());
+static THREAD_EXITS: Mutex<BTreeMap<u64, Arc<crate::nt_thread::Thread>>> = Mutex::new(BTreeMap::new());
 
-pub fn register_thread_exit(tid: u64, ev: Arc<Event>) {
-    THREAD_EXITS.lock().insert(tid, ev);
+pub fn register_thread_exit(tid: u64, thread: Arc<crate::nt_thread::Thread>) {
+    thread.bind(tid);
+    THREAD_EXITS.lock().insert(tid, thread);
 }
 
 /// The ring-3 callback mechanism's save stack (`CallWindowProcA` /
@@ -1599,14 +1739,10 @@ pub fn pop_callback_frame(tid: u64) -> Option<crate::syscall::UserFrame> {
 
 /// Signal + forget `tid`'s exit event. `false` if none was registered (i.e. the
 /// caller is the process's original thread).
-pub fn signal_thread_exit(tid: u64) -> bool {
-    match THREAD_EXITS.lock().remove(&tid) {
-        Some(ev) => {
-            ev.signal();
-            true
-        }
-        None => false,
-    }
+pub fn signal_thread_exit(tid:u64,code:u32)->bool {
+    // Never keep the registry lock while signalling a scheduler wait queue.
+    let thread={THREAD_EXITS.lock().remove(&tid)};
+    if let Some(thread)=thread {thread.finish(code);true}else{false}
 }
 
 /// A `ps`-style dump of every spawned task (ELF and PE alike), for the
@@ -1630,11 +1766,27 @@ pub fn ps_dump() {
 }
 
 pub fn current_pid() -> u64 {
+    if !sched::is_started() {
+        return 0; // boot-time checks (before the scheduler exists) run as pid 0
+    }
     sched::current().task().map(|t| t.pid).unwrap_or(0)
 }
 
 pub fn current_ppid() -> u64 {
     sched::current().task().map(|t| t.ppid).unwrap_or(0)
+}
+
+fn record_closed(pid:u64,entry:&FdEntry) {
+    if let HandleObject::File(file)=&entry.obj {if let Some(ino)=file.flock_inode(){crate::record_locks::closed(pid,ino);}}
+}
+/// Hold the descriptor table only across a short, nonblocking lock-table update.
+/// The closure must not perform I/O, sleep or access another descriptor table.
+pub fn with_verified_fd<R>(fd:i32,expected:&Arc<dyn FileOps>,action:impl FnOnce()->R)->Option<R> {
+    let task=sched::current().task()?;let fds=task.fds.lock();
+    if task.is_exited(){return None;}
+    match &fds.get(fd as usize)?.as_ref()?.obj {
+        HandleObject::File(file) if Arc::ptr_eq(file,expected)=>Some(action()),_=>None
+    }
 }
 
 /// `dup` / `dup2` / `dup3` / `fcntl` on the current task's fd table.
@@ -1664,8 +1816,12 @@ pub fn set_exit_status(code: i32) {
         *t.exit_status.lock() = Some(code);
         // Take the table out before dropping it: closing the files can write to disk.
         let old = core::mem::take(&mut *t.fds.lock());
+        crate::record_locks::exited(t.pid);
         drop(old);
         t.exited.store(true, Ordering::Release);
+        // Serialize the final cleanup with any lock operation that acquired
+        // a descriptor immediately before exit began. Later calls see exited.
+        {let _fds=t.fds.lock();crate::record_locks::exited(t.pid);}
         notify_parent(&t);
         t.wake_all_threads(); // the other threads see `exited` and die
     }
@@ -1702,6 +1858,15 @@ pub fn tasks_in_pgrp(pgid: u64) -> Vec<Arc<Task>> {
     TASKS.lock().values().filter(|t| !t.is_exited() && t.pgid() == pgid).cloned().collect()
 }
 
+/// Bounded fallible task-reference capture for externally requested snapshots.
+/// No per-task locks are taken while holding the process registry lock.
+pub(crate) fn try_live_tasks(limit:usize)->Result<Vec<Arc<Task>>,()> {
+    let tasks=TASKS.lock();let n=tasks.values().filter(|t|!t.is_exited()).count();
+    if n>limit{return Err(());}
+    let mut out=Vec::new();out.try_reserve_exact(n).map_err(|_|())?;
+    for task in tasks.values().filter(|t|!t.is_exited()){out.push(task.clone());}Ok(out)
+}
+
 /// Every task that has not exited.
 pub fn all_live_tasks() -> Vec<Arc<Task>> {
     TASKS.lock().values().filter(|t| !t.is_exited()).cloned().collect()
@@ -1732,7 +1897,7 @@ fn should_block_in_wait4(me: u64, pid: i64, untraced: bool) -> bool {
 /// its own `elevate` call. Goes through the same native-exec gate every
 /// other entry point into the system does.
 #[cfg_attr(not(feature = "interactive"), allow(dead_code))] // only sys_elevate (interactive-only: needs cred.rs) calls this
-pub fn spawn_elevated(ppid: u64, bytes: &[u8], argv: &[&str], envp: &[&str], uid: u32, gid: u32) -> Result<u64, &'static str> {
+pub fn spawn_elevated(ppid: u64, bytes: &[u8], argv: &[&str], envp: &[&str], uid: u32, gid: u32,exe:&str) -> Result<u64, &'static str> {
     if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
         crate::kprintln!("THOS: exec gate        quarantined an elevated exec — {reason}");
         return Err("quarantined by the native-exec gate");
@@ -1743,6 +1908,14 @@ pub fn spawn_elevated(ppid: u64, bytes: &[u8], argv: &[&str], envp: &[&str], uid
     let rsp = space.init_stack(stack_top, argv, envp, &img);
     let task = Task::new_with_ids(ppid, space, uid, gid);
     task.set_cmdline(argv);
+    task.set_exe(exe);
+    if let Some(parent)=find_task(ppid) {
+        let inherited:Vec<Fd>=parent.fds.lock().iter().take(3).cloned().collect();
+        let mut fds=task.fds.lock();
+        for(i,entry)in inherited.into_iter().enumerate(){fds[i]=entry.map(|mut e|{e.cloexec=false;e});}
+        drop(fds);
+        task.set_cwd(parent.cwd());task.set_pgid(parent.pgid());task.set_sid(parent.sid());task.set_ctty(parent.ctty());
+    }
     sched::spawn_user("elevated", task.clone(), img.entry, rsp);
     Ok(task.pid)
 }
@@ -1816,40 +1989,74 @@ pub fn spawn_pe(bytes: &[u8]) -> Result<u64, &'static str> {
 
 /// [`spawn_pe`] for a program started from a POSIX shell: it gets the real command line, and the
 /// caller's open files and working directory (so redirections and pipes work).
-pub fn spawn_pe_args(bytes: &[u8], cmdline: &[u8], parent: &Arc<Task>) -> Result<u64, &'static str> {
+pub fn spawn_pe_args(bytes: &[u8], path: &str, cmdline: &[u8], parent: &Arc<Task>) -> Result<Arc<Task>, &'static str> {
     if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(bytes) {
         crate::kprintln!("THOS: exec gate        quarantined a PE — {reason}");
         return Err("quarantined by the native-exec gate");
     }
     let space = Process::new();
     let stack_top = space.new_user_stack();
-    let img = {
-        *crate::pe::NEXT_CMDLINE.lock() = Some(cmdline.to_vec());
-        let r = crate::pe::load(&space, bytes, stack_top);
-        *crate::pe::NEXT_CMDLINE.lock() = None;
-        r?
-    };
+    let img = crate::pe::load_named(&space, bytes, stack_top, path, cmdline)?;
     let rsp = (stack_top & !0xF) - 0x28; // a return address plus the 32-byte home space a Win64 entry point may store its registers in
     let task = Task::new_with_ids(parent.pid, space, parent.uid, parent.gid);
     *task.fds.lock() = parent.clone_fds();
     task.set_cwd(parent.cwd());
     task.set_pgid(parent.pgid());
     task.set_sid(parent.sid());
+    task.set_exe(path);
     task.mark_pe();
     sched::spawn_user_pe("pe", task.clone(), img.entry, rsp, img.teb);
-    Ok(task.pid)
+    // Keep the launch handle even if the child exits before the caller resumes.
+    Ok(task)
+}
+
+/// Wait on the actual child-exit event and reap the private PE proxy child.
+/// Holding the launch Arc also covers a very fast exit before this first wait.
+pub fn wait_pe_child(child:&Arc<Task>)->Result<i32,i64>{
+    if child.ppid!=current_pid(){return Err(-10);}
+    while !child.is_exited(){
+        if crate::signal::interrupted(){return Err(-4);}
+        CHILD_EXIT.wait_if_intr(||!child.is_exited());
+    }
+    let code=child.exit_code();
+    // Another thread may already have collected this child; the retained Arc
+    // still gives the completed launch's correct status in that case.
+    let _=wait4(child.pid as i64,0,0);
+    Ok(code)
 }
 
 /// `fork`: eager (non-COW) copy of the caller's address space; the child
 /// resumes at the same user instruction with `rax = 0`.
 pub fn fork(frame: &UserFrame) -> i64 {
     let parent = sched::current().task().expect("fork: not a user task");
+    #[cfg(feature="vm-diagnostics")]
+    let free_before=FRAME_ALLOC.lock().free_frames();
+    #[cfg(feature="vm-diagnostics")]
+    crate::kprintln!("THOS: vm fork begin parent={} free={}",parent.pid,free_before);
     let pspace = parent.space();
 
     let cspace = Process::new();
     cspace.copy_alloc_state_from(&pspace);
     let mut oom = false;
+    {
+        // Copy only touched anonymous pages. The per-space mutex keeps a
+        // concurrent fault/unmap from replacing frames while they are copied.
+        let source=pspace.anon.lock();let mut dest=cspace.anon.lock();
+        dest.regions=source.regions.clone();
+        for(&virt,&phys)in &source.pages {
+            let Some(frame)=user_frame() else{oom=true;break;};
+            let new=frame.start_address().as_u64();
+            unsafe{core::ptr::copy_nonoverlapping(phys_to_virt(PhysAddr::new(phys)).as_ptr::<u8>(),phys_to_virt(frame.start_address()).as_mut_ptr::<u8>(),4096);}
+            dest.pages.insert(virt,new);
+            let prot=dest.regions.protection(virt).unwrap_or(0);
+            if prot!=0 {cspace.map(virt,new,prot&2!=0,prot&4!=0);}
+        }
+    }
     pspace.for_each_user_page(|virt, phys, w, x, device| {
+        if cspace.anon.lock().regions.protection(virt).is_some(){return;}
+        if cspace.lazy.lock().iter().any(|v|virt>=v.base&&virt<v.base+v.pages as u64*4096) {
+            cspace.map(virt,phys,w,x);return;
+        }
         if device {
             // device memory is shared, never copied (and never freed by either process)
             vmm::map_device_page_in(cspace.pml4_phys, virt, phys, w);
@@ -1874,9 +2081,13 @@ pub fn fork(frame: &UserFrame) -> i64 {
 
     if oom {
         cspace.teardown(); // give back what was copied so far
+        #[cfg(feature="vm-diagnostics")]
+        {let free_after=FRAME_ALLOC.lock().free_frames();crate::kprintln!("THOS: vm fork oom parent={} free_before={} free_after={}",parent.pid,free_before,free_after);}
         return -12; // ENOMEM
     }
     let child = Task::new_with_ids(parent.pid, cspace, parent.uid, parent.gid); // a forked child keeps the parent's identity (an elevated shell's children stay elevated)
+    #[cfg(feature="vm-diagnostics")]
+    {let free_after=FRAME_ALLOC.lock().free_frames();crate::kprintln!("THOS: vm fork end parent={} child={} free_before={} free_after={}",parent.pid,child.pid,free_before,free_after);}
     *child.fds.lock() = parent.clone_fds();
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
@@ -1957,8 +2168,8 @@ pub fn execve(bytes: Vec<u8>, argv: Vec<String>, envp: Vec<String>) -> ! {
     // convention for "found but not executable"), kernel alive either way.
     if let crate::execgate::Verdict::Quarantine(reason) = crate::execgate::check(&bytes) {
         crate::kprintln!("THOS: exec gate        quarantined an ELF — {reason}");
-        set_exit_status(126);
         crate::syscall::note_user_exit();
+        set_exit_status(126);
         sched::exit();
     }
 
@@ -1985,6 +2196,7 @@ pub fn execve(bytes: Vec<u8>, argv: Vec<String>, envp: Vec<String>) -> ! {
     let old_space = task.swap_space(space);
     cur.set_cr3(new_cr3);
     cur.set_fsbase(0); // fresh image: TLS is re-established by its own arch_prctl
+    cur.set_gsbase(0);
 
     let (cs, ss) = user_selectors();
     let f = UserFrame {
@@ -2006,6 +2218,8 @@ pub fn execve(bytes: Vec<u8>, argv: Vec<String>, envp: Vec<String>) -> ! {
     drop(img);
 
     x86_64::registers::model_specific::FsBase::write(x86_64::VirtAddr::new(0));
+    x86_64::registers::model_specific::KernelGsBase::write(x86_64::VirtAddr::new(0));
+    crate::smp::set_user_gs(crate::smp::this_cpu() as usize,0);
     unsafe {
         Cr3::write(
             PhysFrame::from_start_address(PhysAddr::new(new_cr3)).unwrap(),
@@ -2037,6 +2251,9 @@ pub fn pid_exited(pid: u64) -> bool {
 pub fn wait4(pid: i64, status_ptr: u64, options: u64) -> i64 {
     let me = current_pid();
     loop {
+        // Parents already enter here to collect children; reclaim safe corpses
+        // before checking the process table, without holding TASKS or SCHED.
+        sched::reap();
         {
             let mut tasks = TASKS.lock();
             let hit = tasks
@@ -2139,6 +2356,8 @@ pub fn task_of_tid(tid: u64) -> Option<Arc<Task>> {
 /// its bookkeeping.
 pub fn thread_exit_cleanup() {
     let cur = sched::current();
+    CALLBACK_FRAMES.lock().remove(&cur.id);
+    crate::window::cleanup_thread(cur.id);
     let info = THREAD_INFO.lock().remove(&cur.id);
     if let Some((tid, clear)) = info {
         TID_TASKS.lock().remove(&tid);

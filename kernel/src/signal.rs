@@ -445,8 +445,8 @@ pub fn thread_die(task: &Arc<Task>) -> ! {
 
 /// End the process because of fatal signal `sig` (never returns).
 fn terminate(sig: u32) -> ! {
-    process::set_term_signal(sig);
     crate::syscall::note_user_exit();
+    process::set_term_signal(sig);
     sched::exit()
 }
 

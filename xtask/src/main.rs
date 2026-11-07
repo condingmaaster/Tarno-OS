@@ -12,6 +12,15 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{exit, Command};
+#[path = "../../kernel/src/brcm_firmware.rs"]
+mod brcm_firmware;
+mod test_scratch;
+static TEST_SCRATCH: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+fn test_scratch_path(name: &str) -> PathBuf {
+    assert!(Path::new(name).components().count() == 1 && name != "." && name != "..", "invalid scratch filename");
+    TEST_SCRATCH.get().cloned().unwrap_or_else(|| workspace_root().join("target")).join(name)
+}
 
 fn main() {
     // mkfs.fat, sfdisk, e2fsck ... live in /sbin and /usr/sbin, which a normal user's PATH often lacks
@@ -20,6 +29,12 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(String::as_str).unwrap_or("run");
     let gui = args.iter().any(|a| a == "--gui");
+    let _scratch = if cmd.ends_with("-test") || cmd.ends_with("-probe") {
+        test_scratch::require_space(&workspace_root(), 0);
+        let session = test_scratch::Session::start(&workspace_root().join("target"), std::env::var("THOS_KEEP_TEST_IMAGES").as_deref() == Ok("1"));
+        TEST_SCRATCH.set(session.root().to_owned()).unwrap();
+        Some(session)
+    } else { None };
 
     match cmd {
         "build" => {
@@ -40,9 +55,11 @@ fn main() {
             bios_image();
         }
         "release-image" => {
+            std::env::set_var("THOS_CURL", "1");
             // the image meant for a real machine: login build, the desktop starts by itself after login (`thos-autostart off` undoes it), room for programs
             std::env::set_var("THOS_AUTOSTART", "1");
             std::env::set_var("THOS_FRESH_INSTALL", "1");
+            std::env::set_var("THOS_BOOTMENU", "1");
             if std::env::var("THOS_FS_MIB").is_err() {
                 std::env::set_var("THOS_FS_MIB", "1536");
             }
@@ -56,6 +73,7 @@ fn main() {
             println!("release image: {} ({} MiB); write it with: sudo tools/make-stick.sh /dev/sdX {}", out.display(), std::fs::metadata(&out).map(|m| m.len() >> 20).unwrap_or(0), out.display());
         }
         "release-ram-image" => {
+            std::env::set_var("THOS_CURL", "1");
             // like release-image, but the root file system rides on the boot partition as a boot-loader module and runs from memory:
             // no USB or disk driver is needed to start (the stick is a live system; the account and files are gone at power-off)
             std::env::set_var("THOS_RAMROOT", "1");
@@ -75,7 +93,7 @@ fn main() {
             std::env::set_var("THOS_FS_MIB", "256");
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "ramroot", "echo ram-ok-$((9)); cat /proc/bootdisk; echo ram-end-$((9))", "ram-end-9", 300);
-            if out.contains("root file system module") && out.lines().any(|l| l.trim() == "ram-ok-9") && out.lines().any(|l| l.trim() == "ram") {
+            if out.contains("system disk image module") && out.lines().any(|l| l.trim() == "ram-ok-9") && out.lines().any(|l| l.trim() == "ram") {
                 println!("ramroot-test PASSED: with the root file system as a boot-loader module the system booted to the shell from memory (no USB, no disk root)");
             } else {
                 for l in out.lines().filter(|l| l.contains("THOS: boot") || l.contains("cannot continue") || l.contains("ram")).take(12) { eprintln!("  {l}"); }
@@ -92,8 +110,12 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let log = workspace_root().join("target/bios-run-serial.log");
             println!("serial log: {}", log.display());
+            // KVM when the host has it (the emulated CPU is far slower than the real one); a Westmere CPU model like the Acer's
+            let kvm = std::path::Path::new("/dev/kvm").exists() && std::env::var("THOS_NO_KVM").is_err();
+            let mem = std::env::var("THOS_MEM").unwrap_or_else(|_| "2048M".into());
             let _ = Command::new("qemu-system-x86_64")
-                .args(["-M", "pc", "-m", "512M", "-smp", "2", "-display", "gtk", "-vga", "std"])
+                .args(if kvm { vec!["-enable-kvm", "-cpu", "Westmere,-pdpe1gb"] } else { vec![] })
+                .args(["-M", "pc", "-m", &mem, "-smp", "2", "-display", "gtk", "-vga", "std"])
                 .args([
                     "-drive", &format!("id=disk0,if=none,format=raw,file={}", img.to_str().unwrap()),
                     "-device", "ahci,id=ahci0", "-device", "ide-hd,drive=disk0,bus=ahci0.0,bootindex=0",
@@ -282,7 +304,7 @@ fn main() {
                 && n("w1 1-2-9 42 ctype") == 1 && n("line-two") + n("w2 line-two") >= 1 && n("w3 rand-ok time-ok") == 1 && n("w4  3.14|ab   |00042|ff") == 1
                 && n("k1 year-ok tick-ok qpc-ok pid-ok") == 1 && n("k2 size-10 read-456 attr-dir") == 1 && n("k3 found-1 bytes-10 name-a.txt") == 1
                 && n("t1 counter-4000 wait-ok") == 1 && n("t2 event-ok sem1-ok sem2-ok") == 1 && n("t3 mutex-ok") == 1
-                && n("k4 moved-ok") == 1 && n("k5 gone-ok") == 1 && n("k6 heap") == 1 {
+                && n("k4 moved-ok") == 1 && n("k5 gone-ok") == 1 && n("k6 heap") == 1 && n("k7 find-ex-ok") == 1 {
                 println!("winc-test PASSED: an unmodified mingw console program (msvcrt printf/malloc/strcpy) gets its real argv, returns its exit status and honours pipes and redirection");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: ") || l.contains("msvcrt") || l.contains("PE")) {
@@ -508,12 +530,577 @@ fn main() {
                 exit(1);
             }
         }
+        "firefox-downloads-test" => {
+            std::env::set_var("THOS_FS_MIB","1536");std::env::set_var("THOS_FIREFOX","1");
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let (log,sock)=(root.join("target/firefox-downloads-serial.log"),root.join("target/firefox-downloads-mon.sock"));
+            let probe=root.join("target/firefox-download-probe.ppm");
+            for p in [&log,&sock,&probe]{let _=std::fs::remove_file(p);}
+            for name in ["firefox-download-links.ppm","firefox-download-win-clicked.ppm","firefox-download-linux-clicked.ppm","firefox-download-win-pressed.ppm","firefox-download-linux-pressed.ppm","firefox-download-linux-opened.ppm","firefox-download-windows-opened.ppm","firefox-download-failure.ppm"] {let _=std::fs::remove_file(root.join("target").join(name));}
+            let (tl,ts,tr,tp)=(log.clone(),sock.clone(),root.clone(),probe.clone());
+            let actions=std::thread::spawn(move||{
+                let fail=||{mon(&ts,&format!("screendump {}",tr.join("target/firefox-download-failure.ppm").display()));mon(&ts,"quit");false};
+                let center=|color:[u8;3]|->Option<(i32,i32)>{
+                    let (w,_,d)=read_ppm(&tp)?;let(mut minx,mut miny,mut maxx,mut maxy,mut count)=(usize::MAX,usize::MAX,0,0,0);
+                    for (i,p) in d.chunks_exact(3).enumerate(){if p==color{minx=minx.min(i%w);maxx=maxx.max(i%w);miny=miny.min(i/w);maxy=maxy.max(i/w);count+=1;}}
+                    (count>2000).then(||(((minx+maxx)/2) as i32,((miny+maxy)/2) as i32))
+                };
+                if !wait_for(&tl,"interactive hold",120){return fail();}
+                let phase_start=std::time::Instant::now();
+                if !wait_for(&tl,"desk: wayland window",240){return fail();}
+                eprintln!("firefox-phase window-ms={}",phase_start.elapsed().as_millis());
+                let mut links=None;
+                for _ in 0..70{
+                    mon(&ts,&format!("screendump {}",tp.display()));
+                    if let (Some(a),Some(b))=(center([45,201,192]),center([226,121,65])){links=Some((a,b));break;}
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                if links.is_none(){return fail();}
+                eprintln!("firefox-phase page-ms={}",phase_start.elapsed().as_millis());
+                let (mut script_ready,mut load_ready)=(false,false);
+                for _ in 0..120 {
+                    mon(&ts,&format!("screendump {}",tp.display()));
+                    let loaded=center([169,145,239]).is_some();
+                    if !script_ready && (loaded||center([120,213,156]).is_some()) {
+                        script_ready=true;eprintln!("firefox-phase script-ms={}",phase_start.elapsed().as_millis());
+                    }
+                    if loaded {load_ready=true;eprintln!("firefox-phase load-ms={}",phase_start.elapsed().as_millis());break;}
+                    std::thread::sleep(std::time::Duration::from_secs(1));
+                }
+                if !load_ready {eprintln!("firefox-readiness-failed script={script_ready} load={load_ready}");return fail();}
+                let _=std::fs::copy(&tp,tr.join("target/firefox-download-links.ppm"));let mut cur=(640,400);
+                // Startup info bars can move the document after its first paint.
+                // Refresh targets and require DOM click acknowledgement, not a guessed coordinate.
+                // The page suppresses duplicate default actions if a delayed click needs retrying.
+                let mut activate=|normal:[u8;3],clicked:[u8;3],pressed:[u8;3],name:&str|{
+                    for _ in 0..3 {
+                        mon(&ts,&format!("screendump {}",tp.display()));
+                        if center(clicked).is_some(){let _=std::fs::copy(&tp,tr.join(format!("target/firefox-download-{name}-clicked.ppm")));return true;}
+                        let Some(point)=center(normal) else{return false;};
+                        pointer_to(&ts,&mut cur,point.0,point.1);
+                        mon(&ts,&format!("screendump {}",tp.display()));
+                        if let Some(fresh)=center(normal) {if fresh!=point{pointer_to(&ts,&mut cur,fresh.0,fresh.1);}}
+                        // Keep the real button held until the DOM has an opportunity to paint.
+                        // This separates pointer routing from failures inside the default download action.
+                        mon(&ts,"mouse_button 1");
+                        for _ in 0..12 {
+                            mon(&ts,&format!("screendump {}",tp.display()));
+                            if center(pressed).is_some(){
+                                let _=std::fs::copy(&tp,tr.join(format!("target/firefox-download-{name}-pressed.ppm")));
+                                eprintln!("firefox-phase {name}-pointerdown-ms={}",phase_start.elapsed().as_millis());break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        mon(&ts,"mouse_button 0");
+                        for _ in 0..20 {
+                            mon(&ts,&format!("screendump {}",tp.display()));
+                            if center(clicked).is_some(){let _=std::fs::copy(&tp,tr.join(format!("target/firefox-download-{name}-clicked.ppm")));return true;}
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        }
+                    }
+                    false
+                };
+                if !activate([45,201,192],[90,156,221],[107,121,157],"win"){return fail();}
+                eprintln!("firefox-phase windows-click-ms={}",phase_start.elapsed().as_millis());
+                if !wait_for(&tl,"firefox-download-pe-bytes-ok",100){return fail();}
+                eprintln!("firefox-phase windows-complete-ms={}",phase_start.elapsed().as_millis());
+                if !activate([226,121,65],[158,118,220],[178,157,116],"linux"){return fail();}
+                if !wait_for(&tl,"firefox-download-elf-bytes-ok",100)||!wait_for(&tl,"files ready",30){return fail();}
+                std::thread::sleep(std::time::Duration::from_millis(1200));mon(&ts,"sendkey ret");
+                if !wait_for(&tl,"term-line: BusyBox v",40){return fail();}
+                mon(&ts,&format!("screendump {}",tr.join("target/firefox-download-linux-opened.ppm").display()));
+                mon(&ts,"sendkey alt-f4");if !wait_for(&tl,"term done",20){return fail();}
+                std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,"sendkey down");mon(&ts,"sendkey ret");
+                if !wait_for(&tl,"term-line: hello from win32 1 -",40){return fail();}
+                mon(&ts,&format!("screendump {}",tr.join("target/firefox-download-windows-opened.ppm").display()));true
+            });
+            let out=boot_and_run_args(&img,"firefox-downloads","/busybox sh /firefox-downloads.sh","\nfirefox-downloads-done",600,&["-nic","none","-netdev","user,id=local,restrict=on","-device","virtio-net-pci,netdev=local"]);
+            assert!(actions.join().unwrap_or(false)&&out.contains("firefox-download-pe-bytes-ok")&&out.contains("firefox-download-elf-bytes-ok")&&out.contains("firefox-download-no-auto-exec")&&out.contains("firefox-download-ui-opened"),"real Firefox download, complete bytes or explicit Files launch failed");
+            println!("firefox-downloads-test PASSED: actual Firefox downloads PE/ELF over isolated loopback HTTP, complete bytes match, no automatic execution; Files explicitly opens both in terminal/Controlbar (sandbox-disabled diagnostic only)");
+        }
+        "firefox-test" => {
+            std::env::set_var("THOS_FS_MIB","1536");
+            std::env::set_var("THOS_FIREFOX","1");
+            let img=prod_interactive_image(cmd);
+            let root=workspace_root();
+            let log=root.join("target/firefox-serial.log");let sock=root.join("target/firefox-mon.sock");
+            let shot_count=std::env::var("THOS_FIREFOX_SHOTS").ok().and_then(|s|s.parse::<usize>().ok()).unwrap_or(12).clamp(6,18);
+            let shots:Vec<_>=(1..=shot_count).map(|i|root.join(format!("target/firefox-{i}.ppm"))).collect();
+            for p in shots.iter().chain([&log,&sock]) {let _=std::fs::remove_file(p);}
+            let (tl,ts,ti)=(log.clone(),sock.clone(),shots.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"desk: wayland window",300){return;}
+                for p in ti {std::thread::sleep(std::time::Duration::from_secs(10));mon(&ts,&format!("screendump {}",p.display()));}
+            });
+            let delay=std::env::var("THOS_FIREFOX_WAIT").ok().and_then(|v|v.parse::<u64>().ok()).unwrap_or(180).clamp(110,300);
+            let guest=format!("THOS_FIREFOX_WAIT={delay} {} {} /busybox sh /firefox.sh",
+                if std::env::var("THOS_FIREFOX_TRACE").is_ok(){"LD_DEBUG=files"}else{""},
+                if std::env::var("THOS_FIREFOX_WAYLAND_TRACE").is_ok(){"WAYLAND_DEBUG=1"}else{""});
+            let out=boot_and_run(&img,"firefox",&guest,"\nfirefox-test-done",420);
+            let _=actions.join();
+            let rendered=shots.iter().any(|p|read_ppm(p).is_some_and(|(_,_,d)| {
+                let red=d.chunks_exact(3).filter(|p|p==&[0xd6,0x28,0x28]).count();
+                let blue=d.chunks_exact(3).filter(|p|p==&[0x16,0x3e,0xff]).count();red>10_000&&blue>10_000
+            }));
+            if rendered&&out.contains("Mozilla Firefox") {println!("firefox-test PASSED: actual Firefox rendered the offline page (sandbox-disabled diagnostic only)");}
+            else {for l in out.lines().filter(|l|l.contains("Firefox")||l.contains("firefox")||l.contains("trap")||l.contains("error")||l.contains("unhandled")){eprintln!("{l}");}exit(1);}
+        }
+        "downloads-large-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let (log,sock)=(root.join("target/downloads-large-serial.log"),root.join("target/downloads-large-mon.sock"));
+            for p in [&log,&sock,&root.join("target/downloads-large-moving.ppm"),&root.join("target/downloads-large-completed.ppm")] {let _=std::fs::remove_file(p);}
+            let (tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"downloads ready",240){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let Some((x,y))=log_window(&tl,"760x420",0) else{return false;};let mut cur=(640,400);
+                pointer_to(&ts,&mut cur,x+90,y+268);pointer_click(&ts);
+                if !wait_for(&tl,"downloads started:",30){return false;}
+                pointer_to(&ts,&mut cur,x+100,y-19);mon(&ts,"mouse_button 1");
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                for _ in 0..6 {mon(&ts,"mouse_move 16 12");std::thread::sleep(std::time::Duration::from_millis(100));cur.0+=16;cur.1+=12;}
+                mon(&ts,"mouse_button 0");std::thread::sleep(std::time::Duration::from_millis(700));
+                mon(&ts,&format!("screendump {}",tr.join("target/downloads-large-moving.ppm").display()));
+                if !wait_for(&tl,"downloads result: 0",420){return false;}
+                mon(&ts,&format!("screendump {}",tr.join("target/downloads-large-completed.ppm").display()));
+                pointer_to(&ts,&mut cur,x+96+265,y+72+268);pointer_click(&ts);
+                wait_for(&tl,"files ready",30)
+            });
+            let out=boot_and_run(&img,"downloads-large","/busybox sh /downloads-large.sh","\ndownloads-large-done",600);
+            assert!(actions.join().unwrap_or(false)&&out.contains("\ndownloads-large-bytes-match"),"large UI download, moved-window Files action or byte comparison failed");
+            println!("downloads-large-test PASSED: 128 MiB HTTP UI download, drag during transfer, complete byte match and moved-window Files action");
+        }
+        "winresize-life-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"winresize-life","/winresize-life-test; echo resize-life-exit:$?","\nresize-life-exit:",180);
+            for line in out.lines().filter(|l|l.contains("resize-life")){println!("{line}");}
+            assert!(out.contains("winresize-life-test-done")&&out.contains("resize-life-exit:0"),"resized-store lifetime, real PE painting or memory reclamation failed");
+            println!("winresize-life-test PASSED: 40 real PE resizes paint every new store, reject stale mappings, preserve live old views and reclaim retired frames");
+        }
+        "winlife-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"winlife","/winlife-test; echo winlife-exit:$?","\nwinlife-exit:",180);
+            for line in out.lines().filter(|l|l.contains("winlife")){println!("{line}");}
+            assert!(out.contains("winlife-test-done")&&out.contains("winlife-exit:0"),"Win32 owner cleanup / shared backing-store lifetime failed");
+            println!("winlife-test PASSED: 20 real PE windows paint, exit, destroy and unmap without backing-store accumulation");
+        }
+        "timer-load-test" => {
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "timer-load", "/timer-load-test; echo timer-load-exit:$?", "\ntimer-load-exit:", 180);
+            for line in out.lines().filter(|l| l.contains("timer-load")) { println!("{line}"); }
+            assert!(out.contains("timer-load-test-done") && out.contains("timer-load-exit:0"), "timer deadlines drift under masked-interrupt load");
+            println!("timer-load-test PASSED: sleeps never early and overdue timer wakes promptly after long kernel request");
+        }
+        "heap-churn-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run_args(&img,"heap-churn","/heap-churn","\nheap-churn-done",180,&["-nic","none"]);
+            assert!(out.contains("heap-churn io-ms=")&&out.contains("\nheap-churn-done"),"guest file-map/VMA payload or allocator pressure failed");
+            for line in out.lines().filter(|l|l.starts_with("heap-churn ")){println!("{line}");}
+            println!("heap-churn-test PASSED: complete file-page and live anonymous payloads survive allocator pressure; timings describe this workload only");
+        }
+        "anonymous-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"anonymous","/anonymous-test","\nanonymous-test-done:",180);
+            assert!(out.contains("\nanonymous-test-done:"),"anonymous memory regression failed; see target/anonymous-serial.log");
+            for l in out.lines().filter(|l|l.contains("anonymous committed:")){println!("{l}");}
+            println!("anonymous-test PASSED: sparse commitment, protection/data preservation, fork and concurrent faults");
+        }
+        "gsbase-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"gsbase","/gsbase-test","\ngsbase-test-done:",180);
+            assert!(out.contains("\ngsbase-test-done:"),"GS base regression failed; see target/gsbase-serial.log");
+            println!("gsbase-test PASSED: GS memory reads, thread/fork isolation and exec reset");
+        }
+        "thread-sched-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"thread-sched","/thread-sched-test","\nthread-sched-test-done:",180);
+            assert!(out.contains("\nthread-sched-test-done:"),"explicit scheduler pthread regression failed");
+            println!("thread-sched-test PASSED: normal-policy pthread creation/join and scheduler errors");
+        }
+        "jdk-lock-test" => {
+            let img=prod_interactive_image(cmd);
+            patch_qa_ext2(&img,"jdk-lock",&[("xtask/testdata/JdkFileLockProbe.java","/JdkFileLockProbe.java"),("xtask/testdata/jdk-lock.sh","/jdk-lock.sh")]);
+            let out=boot_and_run_args(&img,"jdk-lock","/busybox sh /jdk-lock.sh; echo jdk-lock-exit:$?","\njdk-lock-exit:",300,&["-nic","none"]);
+            assert!(out.contains("jdk-lock-owner-ready")&&out.contains("jdk-lock-contender-blocked")&&out.contains("jdk-lock-owner-released")&&out.contains("jdk-lock-reopen-ok")&&out.contains("jdk-lock-done")&&out.contains("jdk-lock-exit:0"),"actual javac/JVM file-lock interoperability failed; inspect target/jdk-lock-serial.log");
+            println!("jdk-lock-test PASSED: guest javac compiles real FileChannel program; separate JVMs exclude conflicting lock and reopen persisted bytes after release");
+        }
+        "record-lock-churn-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/record-lock-churn")).arg(root.join("xtask/testdata/record-lock-churn.c")));
+            patch_qa_ext2(&img,"record-lock-churn",&[("target/record-lock-churn","/record-lock-churn")]);
+            let out=boot_and_run_args(&img,"record-lock-churn","/record-lock-churn; echo record-lock-churn-exit:$?","\nrecord-lock-churn-exit:",150,&["-nic","none"]);
+            assert!(out.contains("record-lock-churn-done:")&&out.contains("record-lock-churn-exit:0"),"mixed process/range lock model mismatch; inspect target/record-lock-churn-serial.log");
+            println!("record-lock-churn-test PASSED: 1000 mixed ranges checked by independent byte model and real second-process conflict/query operations");
+        }
+        "sqlite-lock-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/sqlite-lock-test")).arg(root.join("xtask/testdata/sqlite-lock-test.c")).args(["-Wl,-Bstatic","-lsqlite3","-Wl,-Bdynamic","-lm","-ldl","-pthread"]));
+            patch_qa_ext2(&img,"sqlite-lock",&[("target/sqlite-lock-test","/sqlite-lock-test")]);
+            let out=boot_and_run_args(&img,"sqlite-lock","/sqlite-lock-test; echo sqlite-lock-exit:$?","\nsqlite-lock-exit:",150,&["-nic","none"]);
+            assert!(out.contains("sqlite-lock-test-done:")&&out.contains("sqlite-lock-exit:0"),"real SQLite rollback-journal process isolation failed; inspect target/sqlite-lock-serial.log");
+            println!("sqlite-lock-test PASSED: actual SQLite reader/writer exclusion, rollback, cross-process commit and reopen; DELETE journal only, no WAL/shared-filemap claim");
+        }
+        "posix-lock-test" => {
+            let img=prod_interactive_image(cmd); let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/posix-lock-test")).arg(root.join("xtask/testdata/posix-lock-test.c")));
+            patch_qa_ext2(&img,"posix-lock",&[("target/posix-lock-test","/posix-lock-test")]);
+            let out=boot_and_run_args(&img,"posix-lock","/posix-lock-test; echo posix-lock-exit:$?","\nposix-lock-exit:",100,&["-nic","none"]);
+            assert!(out.contains("posix-lock-test-done:")&&out.contains("posix-lock-exit:0"),"POSIX process/range locking failed; inspect target/posix-lock-serial.log");
+            println!("posix-lock-test PASSED: real cross-process ranges, conversion, split/merge, negative offsets, close/dup/fork/exec, blocking and EINTR");
+        }
+        "readonly-file-test" => {
+            let img=prod_interactive_image(cmd); let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/readonly-file-test")).arg(root.join("xtask/testdata/readonly-file-test.c")));
+            patch_qa_ext2(&img,"readonly-file",&[("target/readonly-file-test","/readonly-file-test")]);
+            let out=boot_and_run_args(&img,"readonly-file","/readonly-file-test; echo readonly-file-exit:$?","\nreadonly-file-exit:",100,&["-nic","none"]);
+            assert!(out.contains("readonly-file-test-done:")&&out.contains("readonly-file-exit:0"),"read-only regular-file protection failed; inspect target/readonly-file-serial.log");
+            println!("readonly-file-test PASSED: small/large files deny write/pwrite/truncate, preserve metadata and bytes, permit private copies and enforce mmap access");
+        }
+        "flock-test" => {
+            let img=prod_interactive_image(cmd); let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/flock-test")).arg(root.join("xtask/testdata/flock-test.c")));
+            patch_qa_ext2(&img,"flock",&[("target/flock-test","/flock-test")]);
+            let out=boot_and_run_args(&img,"flock","/flock-test; echo flock-exit:$?","\nflock-exit:",100,&["-nic","none"]);
+            assert!(out.contains("flock-test-done:")&&out.contains("flock-exit:0"),"real advisory locks failed; inspect target/flock-serial.log");
+            println!("flock-test PASSED: real conflicts, shared/exclusive conversion, dup/last-close, fork, blocking, EINTR, exec and errors");
+        }
+        "memfd-freeze-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"memfd-freeze","/memfd-freeze-test","\nmemfd-freeze-test-done:",180);
+            assert!(out.contains("\nmemfd-freeze-test-done:"),"memfd read-only/seal/fork protections failed; see target/memfd-freeze-serial.log");
+            println!("memfd-freeze-test PASSED: read-only reopening, actual write protections and seals, fork sharing and partial unmap");
+        }
+        "disk-full-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"disk-full","/disk-full-test","\ndisk-full-test-done:",600);
+            assert!(out.contains("\ndisk-full-test-done:"),"ENOSPC rollback/recovery failed; see target/disk-full-serial.log");
+            println!("disk-full-test PASSED: ENOSPC preserves contents, offset and free counts; reclaim and subsequent write succeed");
+        }
+        "large-write-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"large-write","/large-write-test","\nlarge-write-test-done:",600);
+            assert!(out.contains("\nlarge-write-test-done:"),"large writes/truncation/block reclamation failed; see target/large-write-serial.log");
+            println!("large-write-test PASSED: 128 MiB byte match, shrink/grow, sparse 512 MiB file and complete block reclamation");
+        }
+        "seqpacket-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"seqpacket","/seqpacket-test","\nseqpacket-test-done:",180);
+            assert!(out.contains("\nseqpacket-test-done:"),"record socket regression failed; see target/seqpacket-serial.log");
+            println!("seqpacket-test PASSED: message boundaries, peek/truncation, backpressure, credentials and descriptor transfer");
+        }
+        "large-runtime-read-test" => {
+            let img=prod_interactive_image(cmd);
+            let files=["/usr/lib/firefox-esr/libxul.so","/usr/lib/jvm/java-21-openjdk-amd64/lib/modules"];
+            let mut expected=Vec::new();
+            for file in files {
+                let output=Command::new("sha256sum").arg(file).output().expect("host runtime checksum");
+                assert!(output.status.success());expected.push(String::from_utf8(output.stdout).unwrap().split_whitespace().next().unwrap().to_string());
+            }
+            let out=boot_and_run(&img,"large-runtime-read","/busybox sha256sum /usr/lib/firefox-esr/libxul.so /usr/lib/jvm/java-21-openjdk-amd64/lib/modules; echo large-runtime-read-done","\nlarge-runtime-read-done",300);
+            for hash in expected {assert!(out.contains(&hash),"large runtime hash mismatch; see target/large-runtime-read-serial.log");}
+            println!("large-runtime-read-test PASSED: complete Firefox and Java runtime files beyond double-indirect limit match host SHA-256");
+        }
+        "access-exec-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"access-exec","/access-exec-test; echo access-exec-exit:$?","\naccess-exec-exit:",100);
+            assert!(out.contains("access-exec-test-done")&&out.contains("access-exec-exit:0"),"execute/search permission or symlink access semantics failed");
+            println!("access-exec-test PASSED: ordinary-user owner precedence, execute bits, symlink target, directory search, device rejection and invalid modes");
+        }
+        "winargs-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"winargs","/busybox sh /winargs.sh","\nwinargs-test-done",150);
+            assert!(out.contains("winargv count7 values-preserved")&&out.contains("winargv-values-result=0")&&out.contains("winargv maximum-pointers-ok")&&out.contains("winargv-count-result=0")&&out.contains("winargv-long-result=126"),"real CRT argument quoting, empty strings, terminator or long-command refusal failed");
+            println!("winargs-test PASSED: actual MinGW CRT preserves spaces, empty values, quotes, trailing backslashes, tabs and literal shell characters; 32 pointers terminate correctly; oversized commands fail explicitly");
+        }
+        "pewait-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winexit.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winexit.c")).arg("-lkernel32"));
+            let launcher=root.join("target/pewait");run(Command::new("gcc").args(["-O2","-static","-o"]).arg(&launcher).arg(root.join("xtask/testdata/pewait.c")));
+            patch_qa_ext2(&img,"pewait",&[("target/winexit.exe","/winexit.exe"),("target/pewait","/pewait")]);
+            let out=boot_and_run_args(&img,"pewait","/pewait","\npewait-done",180,&["-nic","none"]);
+            assert!(out.contains("pewait-done failures=0"),"PE proxy quick exit, full status, delayed exit or signal wait failed");
+            for line in out.lines().filter(|line|line.starts_with("pewait-")){println!("{line}");}
+        }
+        "pe-launch-race-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let exe=root.join("target/winlaunch.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-o"]).arg(&exe).arg(root.join("xtask/testdata/winlaunch.c")));
+            let launcher=root.join("target/pe-launch-race");
+            run(Command::new("gcc").args(["-O2","-static","-o"]).arg(&launcher).arg(root.join("xtask/testdata/pe-launch-race.c")));
+            patch_qa_ext2(&img,"pe-launch-race",&[("target/winlaunch.exe","/winlaunch.exe"),("target/pe-launch-race","/pe-launch-race")]);
+            let out=boot_and_run_args(&img,"pe-launch-race","/pe-launch-race","\npe-launch-race-done",180,&["-nic","none"]);
+            assert!(out.contains("pe-launch-race-done children=64 failures=0")&&!out.contains("pe-launch-race-FAIL"),"concurrent PE launch command lines, actual image paths or inherited pipe tags failed");
+            println!("pe-launch-race-test PASSED: 64 real PE launches from eight concurrent workers match independent inherited-stdin tags and real module paths");
+        }
+        "wargv-test" | "wide-main-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let(wide,tag)=(cmd=="wide-main-test",if cmd=="wide-main-test"{"wide-main"}else{"wargv"});let exe=root.join(format!("target/{tag}.exe"));
+            let mut cc=Command::new("x86_64-w64-mingw32-gcc");cc.arg("-O1");if wide{cc.arg("-municode");}else{cc.args(["-nostdlib","-ffreestanding","-Wl,-e,start"]);}run(cc.arg("-o").arg(&exe).arg(root.join(format!("xtask/testdata/{tag}.c"))).args(["-lkernel32","-lmsvcrt"]));
+            let mut files=vec![(format!("target/{tag}.exe"),format!("/{tag}.exe"))];files.push((format!("xtask/testdata/{tag}.sh"),format!("/{tag}.sh")));let refs:Vec<_>=files.iter().map(|(a,b)|(a.as_str(),b.as_str())).collect();patch_qa_ext2(&img,tag,&refs);
+            let command=if wide{"/busybox sh /wide-main.sh"}else{"/busybox sh /wargv.sh"};let stop=if wide{"\nwide-main-script-done"}else{"\nwargv-script-done"};
+            let out=boot_and_run_args(&img,tag,command,stop,120,&["-nic","none"]);
+            assert!(out.contains(&format!("{tag}-result=PASS"))&&!out.contains(&format!("{tag}-FAIL")),"wide CRT startup, environment metadata, concurrent cache or UTF16 argv failed");
+            if !wide{assert!(out.contains("wargv-exit:0"));}for line in out.lines().filter(|line|line.contains(tag)){println!("{line}");}
+        }
+        "winexportbounds-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winexportbounds.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winexportbounds.c")).arg("-lkernel32"));
+            patch_qa_ext2(&img,"winexportbounds",&[("target/winexportbounds.exe","/winexportbounds.exe")]);
+            let out=boot_and_run_args(&img,"winexportbounds","/winexportbounds.exe","\nwinexportbounds-done",100,&["-nic","none"]);
+            assert!(out.contains("winexportbounds-result="),"native export probe did not complete");
+            if cmd=="winexportbounds-test"{assert!(out.contains("winexportbounds-result=PASS")&&!out.contains("winexportbounds-FAIL"),"runtime export bounds or valid aliases/forwarders failed");}
+            for line in out.lines().filter(|line|line.contains("winexportbounds-")){println!("{line}");}
+        }
+        "winenv-probe" | "winenv-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winenv.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winenv.c")).arg("-lkernel32"));
+            patch_qa_ext2(&img,"winenv",&[("target/winenv.exe","/winenv.exe")]);
+            let out=boot_and_run_args(&img,"winenv","/winenv.exe","\nwinenv-done",100,&["-nic","none"]);
+            assert!(out.contains("winenv-result="),"native export probe did not complete");
+            if cmd=="winenv-test"{assert!(out.contains("winenv-result=PASS")&&!out.contains("winenv-FAIL"),"environment text, snapshots, ACP or concurrent mutation failed");}
+            for line in out.lines().filter(|line|line.contains("winenv-")){println!("{line}");}
+        }
+        "winrollback-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winrollback-build");std::fs::create_dir(&dir).unwrap();let c=dir.join("leaf.c");let dll=dir.join("rollbackleaf.dll");std::fs::write(&c,"__declspec(dllexport) int magic(void){return 77;}").unwrap();run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-ffreestanding","-Wl,--entry=0","-o"]).arg(&dll).arg(&c));let exe=dir.join("winrollback.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winrollback.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winrollback",&[(exe.to_str().unwrap(),"/winrollback.exe"),(dll.to_str().unwrap(),"/Windows/System32/rollbackleaf.dll")]);let out=boot_and_run_args(&img,"winrollback","/winrollback.exe","\nwinrollback-done",120,&["-nic","none"]);assert!(out.contains("winrollback-result=PASS")&&!out.contains("winrollback-FAIL"),"partial frame preparation rollback, registry/arena state or retry failed");for line in out.lines().filter(|l|l.contains("winrollback-")){println!("{line}");}
+        }
+        "winregistry-io-probe" | "winregistry-io-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winregistry-io-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winregistry-io.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winregistry-io.c")).arg("-lkernel32"));let hive=dir.join("user.hiv");std::fs::write(&hive,b"thos-hive v1\nK 74686f736e617469766566697874757265\nO 74686f736e617469766566697874757265 1000\n").unwrap();patch_qa_ext2(&img,"winregistry-io",&[(exe.to_str().unwrap(),"/winregistry-io.exe"),(hive.to_str().unwrap(),"/etc/thos/registry/user.hiv")]);let out=boot_and_run_args(&img,"winregistry-io","/winregistry-io.exe","\nwinregistry-io-done",600,&["-nic","none"]);assert!(out.contains("winregistry-io-result="),"native registry boundary probe did not complete");if cmd=="winregistry-io-test"{assert!(out.contains("winregistry-io-result=PASS")&&!out.contains("winregistry-io-FAIL"),"native registry Unicode, ULONG or pointer/handle validation failed");}for line in out.lines().filter(|l|l.contains("winregistry-io-")){println!("{line}");}
+        }
+        "winregistry-parallel-probe" | "winregistry-parallel-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winregistry-parallel-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winregistry-parallel.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winregistry-parallel.c")).arg("-lkernel32"));let hive=dir.join("user.hiv");std::fs::write(&hive,b"thos-hive v1\nK 74686f736e617469766566697874757265\nO 74686f736e617469766566697874757265 1000\n").unwrap();patch_qa_ext2(&img,"winregistry-parallel",&[(exe.to_str().unwrap(),"/winregistry-parallel.exe"),(hive.to_str().unwrap(),"/etc/thos/registry/user.hiv")]);let out=boot_and_run_args(&img,"winregistry-parallel","/winregistry-parallel.exe","\nwinregistry-parallel-done",300,&["-nic","none"]);assert!(out.contains("winregistry-parallel-result="),"native registry boundary probe did not complete");if cmd=="winregistry-parallel-test"{assert!(out.contains("winregistry-parallel-result=PASS")&&!out.contains("winregistry-parallel-FAIL"),"native registry Unicode, ULONG or pointer/handle validation failed");}for line in out.lines().filter(|l|l.contains("winregistry-parallel-")){println!("{line}");}
+        }
+        "winregistry-budget-probe" | "winregistry-budget-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winregistry-budget-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winregistry-budget.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winregistry-budget.c")).arg("-lkernel32"));let hive=dir.join("user.hiv");std::fs::write(&hive,b"thos-hive v1\nK 74686f736e617469766566697874757265\nO 74686f736e617469766566697874757265 1000\n").unwrap();patch_qa_ext2(&img,"winregistry-budget",&[(exe.to_str().unwrap(),"/winregistry-budget.exe"),(hive.to_str().unwrap(),"/etc/thos/registry/user.hiv")]);let out=boot_and_run_args(&img,"winregistry-budget","/winregistry-budget.exe","\nwinregistry-budget-done",300,&["-nic","none"]);assert!(out.contains("winregistry-budget-result="),"native registry boundary probe did not complete");if cmd=="winregistry-budget-test"{assert!(out.contains("winregistry-budget-result=PASS")&&!out.contains("winregistry-budget-FAIL"),"native registry Unicode, ULONG or pointer/handle validation failed");}for line in out.lines().filter(|l|l.contains("winregistry-budget-")){println!("{line}");}
+        }
+        "winregistry-native-probe" | "winregistry-native-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winregistry-native-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winregistry-native.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winregistry-native.c")).arg("-lkernel32"));let hive=dir.join("user.hiv");std::fs::write(&hive,b"thos-hive v1\nK 74686f736e617469766566697874757265\nO 74686f736e617469766566697874757265 1000\n").unwrap();patch_qa_ext2(&img,"winregistry-native",&[(exe.to_str().unwrap(),"/winregistry-native.exe"),(hive.to_str().unwrap(),"/etc/thos/registry/user.hiv")]);let out=boot_and_run_args(&img,"winregistry-native","/winregistry-native.exe","\nwinregistry-native-done",180,&["-nic","none"]);assert!(out.contains("winregistry-native-result="),"native registry boundary probe did not complete");if cmd=="winregistry-native-test"{assert!(out.contains("winregistry-native-result=PASS")&&!out.contains("winregistry-native-FAIL"),"native registry Unicode, ULONG or pointer/handle validation failed");}for line in out.lines().filter(|l|l.contains("winregistry-native-")){println!("{line}");}
+        }
+        "winthread-times-probe" | "winthread-times-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winthread-times-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winthread-times.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winthread-times.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winthread-times",&[(exe.to_str().unwrap(),"/winthread-times.exe")]);let out=boot_and_run_args(&img,"winthread-times","/winthread-times.exe","\nwinthread-times-done",180,&["-nic","none"]);assert!(out.contains("winthread-times-result="),"real thread CPU timing probe did not complete");if cmd=="winthread-times-test"{assert!(out.contains("winthread-times-result=PASS")&&!out.contains("winthread-times-FAIL"),"thread CPU/user/kernel/wait/lifetime or output validation failed");}for line in out.lines().filter(|l|l.contains("winthread-times-")){println!("{line}");}
+        }
+        "winprofile-probe" | "winprofile-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winprofile-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winprofile.exe");let child=dir.join("winprofile-child.exe");for (source,out) in [("winprofile.c",&exe),("winprofile-child.c",&child)]{run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(out).arg(root.join("xtask/testdata").join(source)).arg("-lkernel32"));}
+            patch_qa_ext2(&img,"winprofile",&[(exe.to_str().unwrap(),"/winprofile.exe"),(child.to_str().unwrap(),"/winprofile-child.exe")]);let out=boot_and_run_args(&img,"winprofile","/winprofile.exe","\nwinprofile-done",180,&["-nic","none"]);assert!(out.contains("winprofile-result="),"real persistent INI writer probe did not finish");if cmd=="winprofile-test"{assert!(out.contains("winprofile-result=PASS")&&!out.contains("winprofile-FAIL"),"actual profile persistence/encoding/deletion/parallel writers or failures failed");}for line in out.lines().filter(|l|l.contains("winprofile-")){println!("{line}");}
+        }
+        "winresource-probe" | "winresource-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winresource-build");std::fs::create_dir(&dir).unwrap();let object=dir.join("resource.o");let dll=dir.join("resourceleaf.dll");let exe=dir.join("winresource.exe");
+            run(Command::new("x86_64-w64-mingw32-windres").args(["--codepage=65001","-i"]).arg(root.join("xtask/testdata/winresource.rc")).arg("-o").arg(&object));
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-shared","-nostdlib","-Wl,--entry=0","-o"]).arg(&dll).arg(&object));
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winresource.c")).arg(&object).arg("-lkernel32"));
+            patch_qa_ext2(&img,"winresource",&[(exe.to_str().unwrap(),"/winresource.exe"),(dll.to_str().unwrap(),"/Windows/System32/resourceleaf.dll")]);let out=boot_and_run_args(&img,"winresource","/winresource.exe","\nwinresource-done",120,&["-nic","none"]);
+            assert!(out.contains("winresource-result="),"real PE resource probe did not complete");if cmd=="winresource-test"{assert!(out.contains("winresource-result=PASS")&&!out.contains("winresource-FAIL"),"actual resource data, names, handles, module lifetime or parallel readers failed");}for line in out.lines().filter(|l|l.contains("winresource-")){println!("{line}");}
+        }
+        "winthread-info-probe" | "winthread-info-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winthread-info-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winthread-info.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winthread-info.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winthread-info",&[(exe.to_str().unwrap(),"/winthread-info.exe")]);let out=boot_and_run_args(&img,"winthread-info","/winthread-info.exe","\nwinthread-info-done",120,&["-nic","none"]);assert!(out.contains("winthread-info-result="),"thread object probe did not complete");if cmd=="winthread-info-test"{assert!(out.contains("winthread-info-result=PASS")&&!out.contains("winthread-info-FAIL"),"real thread identity/status/wait/object-lifetime checks failed");}for line in out.lines().filter(|l|l.contains("winthread-info-")){println!("{line}");}
+        }
+        "winthread-exit-probe" | "winthread-exit-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winthread-exit-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winthread-exit.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winthread-exit.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winthread-exit",&[(exe.to_str().unwrap(),"/winthread-exit.exe"),("xtask/testdata/winthread-exit.sh","/winthread-exit.sh")]);let out=boot_and_run_args(&img,"winthread-exit","/busybox sh /winthread-exit.sh; echo winthread-exit-shell-done","\nwinthread-exit-shell-done",120,&["-nic","none"]);if cmd=="winthread-exit-test"{assert!(out.contains("winthread-exit-result=PASS")&&out.matches("winthread-worker-survived-main").count()==2,"main-thread exit killed surviving worker or last-worker exit status was lost");}for line in out.lines().filter(|l|l.contains("winthread-")){println!("{line}");}
+        }
+        "winsnapshot-probe" | "winsnapshot-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winsnapshot-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winsnapshot.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winsnapshot.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winsnapshot",&[(exe.to_str().unwrap(),"/winsnapshot.exe")]);let out=boot_and_run_args(&img,"winsnapshot","/winsnapshot.exe","\nwinsnapshot-done",120,&["-nic","none"]);assert!(out.contains("winsnapshot-result="),"real process snapshot probe did not complete");if cmd=="winsnapshot-test"{assert!(out.contains("winsnapshot-result=PASS")&&!out.contains("winsnapshot-FAIL"),"process snapshot/locale/clock/buffer tests failed");}for line in out.lines().filter(|l|l.contains("winsnapshot-")){println!("{line}");}
+        }
+        "windate-probe" | "windate-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("windate-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("windate.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/windate.c")).arg("-lkernel32"));patch_qa_ext2(&img,"windate",&[(exe.to_str().unwrap(),"/windate.exe")]);let out=boot_and_run_args(&img,"windate","/windate.exe","\nwindate-done",120,&["-nic","none"]);assert!(out.contains("windate-result="),"real date picture probe did not complete");if cmd=="windate-test"{assert!(out.contains("windate-result=PASS")&&!out.contains("windate-FAIL"),"date picture/locale/clock/buffer tests failed");}for line in out.lines().filter(|l|l.contains("windate-")){println!("{line}");}
+        }
+        "wintime-probe" | "wintime-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("wintime-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("wintime.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/wintime.c")).arg("-lkernel32"));patch_qa_ext2(&img,"wintime",&[(exe.to_str().unwrap(),"/wintime.exe")]);let out=boot_and_run_args(&img,"wintime","/wintime.exe","\nwintime-done",120,&["-nic","none"]);assert!(out.contains("wintime-result="),"real time picture probe did not complete");if cmd=="wintime-test"{assert!(out.contains("wintime-result=PASS")&&!out.contains("wintime-FAIL"),"time picture/locale/clock/buffer tests failed");}for line in out.lines().filter(|l|l.contains("wintime-")){println!("{line}");}
+        }
+        "winlocale-probe" | "winlocale-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winlocale-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winlocale.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winlocale.c")).arg("-lkernel32"));patch_qa_ext2(&img,"winlocale",&[(exe.to_str().unwrap(),"/winlocale.exe")]);let out=boot_and_run_args(&img,"winlocale","/winlocale.exe","\nwinlocale-done",120,&["-nic","none"]);assert!(out.contains("winlocale-result="),"real locale metadata/callback probe did not complete");if cmd=="winlocale-test"{assert!(out.contains("winlocale-result=PASS")&&!out.contains("winlocale-FAIL"),"locale data, sizes, flags or callback execution failed");}for line in out.lines().filter(|l|l.contains("winlocale-")){println!("{line}");}
+        }
+        "winbare-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winbare-build");std::fs::create_dir(&dir).unwrap();let c=dir.join("leaf.c");let dll=dir.join("bareleaf.dll");std::fs::write(&c,"__declspec(dllexport) int magic(void){return 77;}").unwrap();run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-ffreestanding","-Wl,--entry=0","-o"]).arg(&dll).arg(&c));let exe=dir.join("winbare.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winbare.c")));patch_qa_ext2(&img,"winbare",&[(exe.to_str().unwrap(),"/winbare.exe"),(dll.to_str().unwrap(),"/Windows/System32/bareleaf.dll")]);let out=boot_and_run_args(&img,"winbare","/winbare.exe","\nwinbare-done",100,&["-nic","none"]);assert!(out.contains("winbare-result=PASS")&&!out.contains("winbare-FAIL"),"first file-module metadata mapping or empty-ring reload failed");for line in out.lines().filter(|l|l.contains("winbare-")){println!("{line}");}
+        }
+        "winconsole-probe" | "winconsole-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winconsole-build");std::fs::create_dir(&dir).unwrap();let exe=dir.join("winconsole.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winconsole.c")).args(["-lkernel32","-luser32"]));patch_qa_ext2(&img,"winconsole",&[(exe.to_str().unwrap(),"/winconsole.exe")]);let out=boot_and_run_args(&img,"winconsole","/winconsole.exe","\nwinconsole-done",100,&["-nic","none"]);assert!(out.contains("winconsole-result="),"console-association getter probe did not complete");if cmd=="winconsole-test"{assert!(out.contains("winconsole-result=PASS")&&!out.contains("winconsole-FAIL"),"console association or LastError semantics failed");}for line in out.lines().filter(|l|l.contains("winconsole-")){println!("{line}");}
+        }
+        "pefail-probe" | "pefail-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("pefail-build");std::fs::create_dir(&dir).unwrap();let c=dir.join("good.c");let dll=dir.join("missing.dll");let lib=dir.join("missing.a");std::fs::write(&c,"__declspec(dllexport) int missing(void){return 7;}").unwrap();run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-Wl,--entry=0"]).arg(format!("-Wl,--out-implib,{}",lib.display())).arg("-o").arg(&dll).arg(&c));let c=dir.join("missing.c");std::fs::write(&c,"__declspec(dllimport) int missing(void);volatile int v;void start(void){v=missing();}").unwrap();let missing=dir.join("missing-import.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&missing).arg(&c).arg(&lib));
+            let mut huge=std::fs::read(&missing).unwrap();let pe=u32::from_le_bytes(huge[60..64].try_into().unwrap())as usize;huge[pe+24+56..pe+24+60].copy_from_slice(&(128u32*1024*1024).to_le_bytes());let oversized=dir.join("oversized.exe");std::fs::write(&oversized,huge).unwrap();let bad=dir.join("badpe.exe");let mut b=[0u8;64];b[..2].copy_from_slice(b"MZ");std::fs::write(&bad,b).unwrap();let plain=dir.join("plain.txt");std::fs::write(&plain,b"echo plain-script\n").unwrap();let exe=dir.join("pefail");run(Command::new("gcc").args(["-O2","-static","-o"]).arg(&exe).arg(root.join("xtask/testdata/pefail.c")));
+            let files=[(exe.display().to_string(),"/pefail"),(missing.display().to_string(),"/missing-import.exe"),(oversized.display().to_string(),"/oversized.exe"),(bad.display().to_string(),"/badpe.exe"),(plain.display().to_string(),"/plain.txt")];let refs:Vec<_>=files.iter().map(|(a,b)|(a.as_str(),*b)).collect();patch_qa_ext2(&img,"pefail",&refs);let script=dir.join("pefail.sh");std::fs::write(&script,"/pefail\n/badpe.exe\necho pefail-shell-status:$?\necho pefail-series-done\n").unwrap();patch_qa_ext2(&img,"pefail-script",&[(script.to_str().unwrap(),"/pefail.sh")]);
+            let out=boot_and_run_args(&img,"pefail","/busybox sh /pefail.sh","\npefail-series-done",100,&["-nic","none"]);assert!(out.contains("pefail-result="),"PE error probe did not complete");if cmd=="pefail-test"{assert!(out.contains("pefail-result=PASS")&&out.contains("pefail-shell-status:126")&&!out.contains("/badpe.exe: line")&&!out.contains("PANIC"),"PE error/ENOMEM/script fallback failed");}for line in out.lines().filter(|l|l.contains("pefail-")||l.contains("pe load failed")){println!("{line}");}
+        }
+        "winpolicy-probe" | "winpolicy-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winpolicy-build");std::fs::create_dir(&dir).unwrap();let mut files=Vec::new();
+            for (label,value) in [("app",100),("system",200)]{let c=dir.join(format!("{label}.c"));let dll=dir.join(format!("{label}.dll"));std::fs::write(&c,format!("__declspec(dllexport) int magic(void){{return {value};}}" )).unwrap();run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-ffreestanding","-Wl,--entry=0","-o"]).arg(&dll).arg(&c));for i in 1..=10{let name=if i==1{String::from("pick.dll")}else{format!("pick{i}.dll")};files.push((dll.display().to_string(),format!("{}/{name}",if label=="app"{"/tmp"}else{"/Windows/System32"})));}}
+            let exe=dir.join("policy.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winpolicy.c")).arg("-lkernel32"));files.push((exe.display().to_string(),String::from("/tmp/policy.exe")));let refs:Vec<_>=files.iter().map(|(a,b)|(a.as_str(),b.as_str())).collect();patch_qa_ext2(&img,"winpolicy",&refs);
+            let out=boot_and_run_args(&img,"winpolicy","/tmp/policy.exe","\nwinpolicy-done",120,&["-nic","none"]);assert!(out.contains("winpolicy-result="),"policy probe did not complete");if cmd=="winpolicy-test"{assert!(out.contains("winpolicy-result=PASS")&&!out.contains("winpolicy-FAIL"),"real DLL selection or process isolation failed");}for line in out.lines().filter(|l|l.contains("winpolicy-")){println!("{line}");}
+        }
+        "windyn-probe" | "windyn-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("windyn-build");std::fs::create_dir(&dir).unwrap();let mut files=Vec::new();
+            for (name,source,entry,lib) in [
+                ("leaf","static int value=7;static int *volatile pointer=&value;__declspec(dllexport) int counter(void){return ++*pointer;}__declspec(dllexport) int magic(void){return 77;}","0",false),
+                ("otherleaf","__declspec(dllexport) int magic(void){return 177;}","0",false),
+                ("entryleaf","int entry(void*a,int b,void*c){return 1;}__declspec(dllexport) int magic(void){return 1;}","entry",false),
+                ("importleaf","__declspec(dllimport) unsigned long GetTickCount(void);__declspec(dllexport) int magic(void){return GetTickCount();}","0",true),
+            ] {
+                let c=dir.join(format!("{name}.c"));let dll=dir.join(format!("{name}.dll"));std::fs::write(&c,source).unwrap();let mut cc=Command::new("x86_64-w64-mingw32-gcc");cc.args(["-O1","-shared","-nostdlib","-ffreestanding"]).arg(format!("-Wl,--entry={entry}")).arg("-o").arg(&dll).arg(&c);if lib{cc.arg("-lkernel32");}run(&mut cc);
+                files.push((dll.display().to_string(),if name=="otherleaf"{String::from("/tmp/leaf.dll")}else{format!("/Windows/System32/{name}.dll")}));
+            }
+            let def=dir.join("absent.def");let lib=dir.join("absent.a");std::fs::write(&def,"LIBRARY absentleaf.dll\nEXPORTS\n  needed\n").unwrap();run(Command::new("x86_64-w64-mingw32-dlltool").arg("-d").arg(&def).arg("-l").arg(&lib));let c=dir.join("newdep.c");let dll=dir.join("newdep.dll");std::fs::write(&c,"__declspec(dllimport) int needed(void);__declspec(dllexport) int magic(void){return needed();}").unwrap();run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-ffreestanding","-Wl,--entry=0","-o"]).arg(&dll).arg(&c).arg(&lib));files.push((dll.display().to_string(),String::from("/Windows/System32/newdep.dll")));
+            files.push((dir.join("otherleaf.dll").display().to_string(),String::from("/tmp/Größe😀.dll")));
+            files.push((dir.join("otherleaf.dll").display().to_string(),String::from("/tmp/€leaf.dll")));
+            files.push((dir.join("otherleaf.dll").display().to_string(),String::from("/tmp/kernel32.dll")));
+            // Corrupt an actual DLL's EAT target beyond SizeOfImage, retaining
+            // valid headers/sections. This must be rejected before publication.
+            let mut bad=std::fs::read(dir.join("leaf.dll")).unwrap();let rd=|b:&[u8],p:usize|u32::from_le_bytes(b[p..p+4].try_into().unwrap())as usize;let pe=rd(&bad,60);let opt=pe+24;let size=rd(&bad,opt+56);let sections=u16::from_le_bytes(bad[pe+6..pe+8].try_into().unwrap())as usize;let os=u16::from_le_bytes(bad[pe+20..pe+22].try_into().unwrap())as usize;let raw=|rva:usize|{for i in 0..sections{let s=opt+os+i*40;let va=rd(&bad,s+12);let n=rd(&bad,s+16);if rva>=va&&rva<va+n{return rd(&bad,s+20)+rva-va;}}panic!("fixture RVA outside file");};let ed=raw(rd(&bad,opt+112));let eat=raw(rd(&bad,ed+28));bad[eat..eat+4].copy_from_slice(&((size+4096)as u32).to_le_bytes());let path=dir.join("badleaf.dll");std::fs::write(&path,bad).unwrap();files.push((path.display().to_string(),String::from("/Windows/System32/badleaf.dll")));
+            let exe=dir.join("windyn.exe");run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/windyn.c")).arg("-lkernel32"));files.push((exe.display().to_string(),String::from("/windyn.exe")));let refs:Vec<_>=files.iter().map(|(a,b)|(a.as_str(),b.as_str())).collect();patch_qa_ext2(&img,"windyn",&refs);
+            let out=boot_and_run_args(&img,"windyn","/windyn.exe","\nwindyn-done",120,&["-nic","none"]);assert!(out.contains("windyn-result="),"runtime DLL probe did not complete");if cmd=="windyn-test"{assert!(out.contains("windyn-result=PASS")&&!out.contains("windyn-FAIL"),"actual load, calls, references, unload or rejection failed");}for line in out.lines().filter(|l|l.contains("windyn-")){println!("{line}");}
+        }
+        "winldr-probe" | "winldr-test" | "winldr-long-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let dir=test_scratch_path("winldr-build");std::fs::create_dir(&dir).unwrap();
+            let long=cmd=="winldr-long-test";let count=std::env::var("THOS_LDR_COUNT").ok().and_then(|s|s.parse::<usize>().ok()).unwrap_or(20).clamp(1,62);let mut imports=String::new();let mut names=String::new();let mut calls=String::new();let mut libs=Vec::new();let mut files=Vec::new();
+            for i in 0..count {
+                let name=format!("{}ldr{i}.dll",if long{"a".repeat(180)}else{String::new()});
+                let src=dir.join(format!("dll{i}.c"));let dll=dir.join(&name);let lib=dir.join(format!("lib{i}.a"));
+                std::fs::write(&src,format!("__declspec(dllexport) int f_{i}(void){{return {};}}",i+17)).unwrap();
+                run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-shared","-nostdlib","-ffreestanding","-Wl,--entry=0"]).arg(format!("-Wl,--out-implib,{}",lib.display())).arg("-o").arg(&dll).arg(&src));
+                imports.push_str(&format!("__declspec(dllimport) int f_{i}(void);\n"));names.push_str(&format!("\"{name}\","));calls.push_str(&format!("CHECK(\"real-import-code-{i}\",f_{i}()=={});\n",i+17));
+                libs.push(lib);files.push((dll.display().to_string(),format!("/Windows/System32/{name}")));
+            }
+            let source=std::fs::read_to_string(root.join("xtask/testdata/winldr.c")).unwrap().replace("/* GENERATED_IMPORTS */",&imports).replace("/* GENERATED_NAMES */",&names).replace("/* GENERATED_CALLS */",&calls).replace("/* GENERATED_COUNT */",&count.to_string());
+            let c=dir.join("main.c");let exe=dir.join("winldr.exe");std::fs::write(&c,source).unwrap();
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(&c).args(&libs).arg("-lkernel32"));
+            files.push((exe.display().to_string(),String::from("/winldr.exe")));let refs:Vec<_>=files.iter().map(|(a,b)|(a.as_str(),b.as_str())).collect();patch_qa_ext2(&img,"winldr",&refs);
+            let out=boot_and_run_args(&img,"winldr","/winldr.exe","\nwinldr-done",120,&["-nic","none"]);
+            assert!(out.contains("winldr-result="),"loader metadata probe did not complete");if cmd!="winldr-probe"{assert!(out.contains("winldr-result=PASS")&&!out.contains("winldr-FAIL"),"actual imported DLL discovery, full names or complete PEB rings failed");}
+            for line in out.lines().filter(|l|l.contains("winldr-")){println!("{line}");}
+        }
+        "winexports-probe" | "winexports-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winexports.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winexports.c")).arg("-lkernel32"));
+            patch_qa_ext2(&img,"winexports",&[("target/winexports.exe","/winexports.exe")]);
+            let out=boot_and_run_args(&img,"winexports","/winexports.exe","\nwinexports-done",100,&["-nic","none"]);
+            assert!(out.contains("winexports-result="),"native export probe did not complete");
+            if cmd=="winexports-test"{assert!(out.contains("winexports-result=PASS")&&!out.contains("winexports-FAIL"),"native synthetic DLL code overlaps metadata or has damaged trampolines");}
+            for line in out.lines().filter(|line|line.contains("winexports-")){println!("{line}");}
+        }
+        "winunicode-probe" | "winunicode-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winunicode.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-o"]).arg(&exe).arg(root.join("xtask/testdata/winunicode.c")));
+            patch_qa_ext2(&img,"winunicode",&[("target/winunicode.exe","/winunicode.exe")]);
+            let out=boot_and_run_args(&img,"winunicode","/winunicode.exe","\nwinunicode-done",100,&["-nic","none"]);
+            assert!(out.contains("winunicode-failures="),"UTF-8 probe did not report a result");
+            if cmd=="winunicode-test" {assert!(out.contains("winunicode-failures=0")&&!out.contains("winunicode-FAIL"),"UTF-8 conversion regression");}
+            for line in out.lines().filter(|line|line.starts_with("winunicode-")){println!("{line}");}
+        }
+        "winmodule-probe" | "winmodule-test" => {
+            let img=prod_interactive_image(cmd);
+            let root=workspace_root();let exe=root.join("target/winmodule.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-o"]).arg(&exe).arg(root.join("xtask/testdata/winmodule.c")));
+            let launcher=root.join("target/winmodule-launch");
+            run(Command::new("gcc").args(["-O2","-static","-o"]).arg(&launcher).arg(root.join("xtask/testdata/winmodule-launch.c")));
+            patch_qa_ext2(&img,"winmodule",&[("target/winmodule.exe","/winmodule.exe"),("target/winmodule-launch","/winmodule-launch"),("xtask/testdata/winmodule.sh","/winmodule.sh")]);
+            let out=boot_and_run_args(&img,"winmodule","/busybox sh /winmodule.sh; echo winmodule-run-exit:$?","\nwinmodule-run-exit:",150,&["-nic","none"]);
+            assert!(out.contains("winmodule-path="),"module path probe did not execute");
+            if cmd=="winmodule-test" {assert!(out.matches("winmodule-failures=0").count()==4&&out.contains("winmodule-series-done")&&out.contains("winmodule-run-exit:0")&&!out.contains("winmodule-FAIL"),"module pathname or buffer contract regression");}
+            for line in out.lines().filter(|line|line.starts_with("winmodule-")){println!("{line}");}
+        }
+        "winlookup-probe" | "winlookup-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run_args(&img,"winlookup","/winlookup.exe","\nwinlookup-done",100,&["-nic","none"]);
+            assert!(out.contains("winlookup-static-find=1")&&out.contains("winlookup-core=1"),"runtime export probe did not reach its baseline");
+            if cmd=="winlookup-test" {assert!(out.contains("winlookup-failures=0")&&!out.contains("winlookup-FAIL"),"runtime extension, forwarder, ordinal or counted-string regression; inspect serial log");}
+            for line in out.lines().filter(|line|line.starts_with("winlookup-")){println!("{line}");}
+            println!("Runtime export lookup recorded; winlookup-test requires all checks, probe alone does not imply compatibility");
+        }
+        "windows-snake-probe" => {
+            let img=prod_interactive_image(cmd);
+            patch_qa_ext2(&img,"windows-snake",&[("target/vendor-tests/snake/snake64.exe","/Snake64.exe"),("target/vendor-tests/snake/LICENSE","/Snake-LICENSE.txt"),("xtask/testdata/windows-snake-probe.sh","/windows-snake-probe.sh")]);
+            let out=boot_and_run_args(&img,"windows-snake","/busybox sh /windows-snake-probe.sh","\nwindows-snake-probe-end",100,&["-nic","none"]);
+            assert!(out.contains("windows-snake-present")&&out.contains("windows-snake-status="),"Win32 Snake probe did not report a launch result");
+            for line in out.lines().filter(|line|line.contains("windows-snake-")||line.contains("pe unresolved")||line.contains("pe load failed")){println!("{line}");}
+            println!("Real Windows-only x64 Snake compatibility probe recorded; no gameplay claim without actual running-game evidence");
+        }
+        "windows-lightgame-probe" => {
+            // Original SkiFree 1.04 is i386/PE32, deliberately outside the x64 loader.
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run_args(&img,"windows-lightgame","/busybox sh /windows-lightgame-probe.sh","\nwindows-lightgame-probe-end",100,&["-nic","none"]);
+            assert!(out.contains("skifree-present")&&out.contains("skifree-status=1")&&out.contains("not a supported 64-bit Windows program")&&out.contains("skifree-mode-unchanged"),"expected explicit PE32 refusal was not observed");
+            println!("SkiFree 1.04 probe: real i386 game is rejected explicitly before execution; PE32 support is missing, no gameplay claim");
+        }
+        "asus-installer-probe" => {
+            // Diagnostic only: supply the official installer in a separate QA root.
+            // No physical USB passthrough and no external network access.
+            let img=prod_interactive_image(cmd);
+            patch_qa_ext2(&img,"asus-installer",&[("target/vendor-tests/asus/ArmouryCrateInstaller_3.3.6.0/ArmouryCrateInstaller.exe","/ArmouryCrateInstaller.exe"),("xtask/testdata/asus-installer-probe.sh","/asus-installer-probe.sh")]);
+            let out=boot_and_run_args(&img,"asus-installer","/busybox sh /asus-installer-probe.sh","\nasus-installer-probe-end",150,&["-nic","none"]);
+            assert!(out.contains("asus-installer-present") && out.contains("asus-installer-status="),"ASUS probe did not report a launch result; see serial log");
+            for line in out.lines().filter(|line|line.contains("asus-installer-")||line.contains("PE:")||line.contains("pe unresolved")||line.contains("thosrun:")){println!("{line}");}
+            println!("ASUS compatibility probe recorded; this is not a successful installation or hardware-control claim");
+        }
+        "thosrun-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"thosrun","/busybox sh /thosrun-test.sh","\nthosrun-test-done",150);
+            assert!(out.contains("ripgrep ")&&out.contains("run-pe-result=0")&&out.contains("run-pe-executable")&&out.contains("native-launcher-says-hello")&&out.contains("run-elf-result=0")&&out.contains("run-elf-executable")&&out.contains("run-broken-result=1")&&out.contains("run-broken-mode-unchanged")&&out.contains("run-no-script-fallback"),"downloaded native launch or invalid EXE handling failed");
+            println!("thosrun-test PASSED: real ripgrep PE and Linux ELF saved without execute bits launch explicitly with arguments/spaces; invalid EXE stays non-executable and never runs as a script");
+        }
+        "files-browser-exe-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let (log,sock)=(root.join("target/files-browser-exe-serial.log"),root.join("target/files-browser-exe-mon.sock"));
+            for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let (tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{
+                if !wait_for(&tl,"files ready",180){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));mon(&ts,"sendkey ret");
+                if !wait_for(&tl,"term-line: hello from win32 1 -",30){return false;}
+                mon(&ts,&format!("screendump {}",tr.join("target/files-browser-exe-opened.ppm").display()));true
+            });
+            let out=boot_and_run(&img,"files-browser-exe","/busybox sh /files-browser-exe.sh","\nfiles-browser-exe-done",150);
+            assert!(actions.join().unwrap_or(false)&&out.contains("files-browser-exe-enabled")&&out.contains("files-browser-name-literal")&&out.contains("panel tasks:"),"Files failed to open a browser-style non-executable EXE safely in the existing UI");
+            println!("files-browser-exe-test PASSED: Files opens a non-executable downloaded-style PE through the terminal/Controlbar; apostrophe and dollar expression remain literal");
+        }
+        "files-launch-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let (log,sock)=(root.join("target/files-launch-serial.log"),root.join("target/files-launch-mon.sock"));
+            let (tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"files ready",180) {return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                mon(&ts,"sendkey ret");
+                if !wait_for(&tl,"term-line: files-quoted-opened",30) {return false;}
+                mon(&ts,&format!("screendump {}",tr.join("target/files-quoted-launch.ppm").display()));true
+            });
+            let out=boot_and_run(&img,"files-launch","/busybox sh /files-launch.sh","\nfiles-launch-done",180);
+            assert!(actions.join().unwrap_or(false)&&!out.contains("can't open"),"Files failed to open a long literal name with apostrophe and shell metacharacters");
+            println!("files-launch-test PASSED: Files opens a name longer than 96 bytes with a literal apostrophe and dollar expression");
+        }
+        "firefox-loader-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"firefox-loader","LD_DEBUG=files /usr/lib/firefox-esr/firefox-esr --version; echo firefox-loader-done","\nfirefox-loader-done",180);
+            assert!(out.contains("Mozilla Firefox"),"Firefox loader diagnostic failed; see target/firefox-loader-serial.log");
+        }
+        "jdk-ui-test" => {
+            std::env::set_var("THOS_JAVA","1");
+            let img=prod_interactive_image(cmd);
+            let root=workspace_root();
+            let log=root.join("target/jdk-ui-serial.log");let sock=root.join("target/jdk-ui-mon.sock");
+            let (tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"settings ready",180) {return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let Some((x,y))=log_window(&tl,"760x500",0) else{return false;};
+                mon(&ts,&format!("screendump {}",tr.join("target/jdk-settings.ppm").display()));
+                let mut cur=(640,400);
+                pointer_to(&ts,&mut cur,x+310,y+235);pointer_click(&ts);
+                if !wait_for(&tl,"JDK environment ready",40) {return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                mon(&ts,&format!("screendump {}",tr.join("target/jdk-terminal.ppm").display()));
+                mon(&ts,"sendkey alt-f4");std::thread::sleep(std::time::Duration::from_millis(1500));
+                pointer_to(&ts,&mut cur,x+500,y+235);pointer_click(&ts);
+                if !wait_for(&tl,"term-line: javac 21",40) {return false;}
+                mon(&ts,&format!("screendump {}",tr.join("target/jdk-compiler.ppm").display()));true
+            });
+            let out=boot_and_run(&img,"jdk-ui","/busybox sh /jdk-ui.sh","\njdk-ui-done",240);
+            assert!(actions.join().unwrap_or(false)&&out.contains("panel tasks:"),"JDK Settings actions or Controlbar integration failed");
+            println!("jdk-ui-test PASSED: Settings opens a JDK shell and the actual javac version; Controlbar lists their windows");
+        }
         "java-test" => {
             std::env::set_var("THOS_FS_MIB", "512");
             std::env::set_var("THOS_JAVA", "1");
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "java", "/busybox sh /java.sh", "java-script-done", 600);
-            if out.contains("openjdk version") && out.contains("java-says-385") && out.contains("thread-says") {
+            if out.contains("openjdk version") && out.contains("java-says-385") && out.contains("thread-says") && out.contains("compiler-says-55") {
                 println!("java-test PASSED: OpenJDK 21 ran a program (collections, streams, a second thread)");
             } else {
                 for l in out.lines().filter(|l| !l.contains("THOS: net") ).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
@@ -622,7 +1209,12 @@ fn main() {
                 exit(1);
             }
         }
-        "install-test" => {
+        "install-test" | "install-ram-test" => {
+            if cmd == "install-ram-test" {         // the same, but the stick is the live image: no USB driver and no stick root, the system disk image comes from memory
+                std::env::set_var("THOS_RAMROOT", "1");
+                std::env::set_var("THOS_FS_MIB", "256");
+                std::env::set_var("THOS_MEM", "1024M");
+            }
             // booted from a stick (USB) with a blank internal SATA disk: thos-install copies THOS onto it; then the internal disk boots alone
             std::env::set_var("THOS_BOOT_USB", "1");
             std::env::set_var("THOS_FRESH_INSTALL", "1");
@@ -720,6 +1312,44 @@ fn main() {
             } else {
                 for l in out.lines().filter(|l| l.contains("THOS: own") || l.contains("page")).take(5) { eprintln!("  {l}"); }
                 eprintln!("westmere-test FAILED");
+                exit(1);
+            }
+        }
+        "installer-menu-test" => {
+            // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
+            std::env::set_var("THOS_RAMROOT", "1");
+            std::env::set_var("THOS_FS_MIB", "256");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let target = root.join("target/menu-target.img");
+            let _ = std::fs::remove_file(&target);
+            let size = std::fs::metadata(&img).map(|m| m.len()).unwrap_or(0) + (400 << 20);
+            std::fs::File::create(&target).and_then(|f| f.set_len(size)).expect("create the target disk");
+            let (log, sock) = (root.join("target/menu-serial.log"), root.join("target/menu-mon.sock"));
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            let mut child = Command::new("qemu-system-x86_64")
+                .args(["-M", "pc", "-m", "1024M", "-smp", "2", "-display", "none", "-no-reboot"])
+                .args(["-drive", &format!("id=stick,if=none,format=raw,file={}", img.to_str().unwrap()), "-device", "usb-ehci,id=ehci", "-device", "usb-storage,bus=ehci.0,drive=stick,bootindex=0"])
+                .args(["-drive", &format!("id=tgt,if=none,format=raw,file={}", target.to_str().unwrap()), "-device", "ahci,id=ahci1", "-device", "ide-hd,drive=tgt,bus=ahci1.0"])
+                .args(["-serial", &format!("file:{}", log.to_str().unwrap()), "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap())])
+                .spawn().expect("spawn qemu");
+            std::thread::sleep(std::time::Duration::from_secs(3));              // the boot loader's menu is up (6 s timer): pick the second entry
+            mon(&sock, "sendkey down");
+            mon(&sock, "sendkey ret");
+            let mut ok = wait_for(&log, "THOS installer", 240);
+            if ok && wait_for(&log, "Type YES", 60) {
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                type_line(&sock, "YES");
+                ok = wait_for(&log, "THOS is installed", 300) && wait_for(&log, "r = restart", 30);
+            } else { ok = false; }
+            let logged_in = std::fs::read_to_string(&log).map(|t| t.contains("THOS login:")).unwrap_or(false);
+            let _ = child.kill();
+            let _ = child.wait();
+            if ok && !logged_in {
+                println!("installer-menu-test PASSED: the start menu's install entry boots to the installer without a login and installs onto the blank disk");
+            } else {
+                eprintln!("{}", std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
+                eprintln!("installer-menu-test FAILED (reached installer: {ok}, a login was shown: {logged_in})");
                 exit(1);
             }
         }
@@ -858,10 +1488,14 @@ fn main() {
             let out = boot_and_run(&img, "hw", "/busybox sh /hw.sh", "hw-done", 100);
             let num = |k: &str| out.lines().find_map(|l| l.trim().strip_prefix(k)).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
             let model = out.lines().any(|l| l.trim().starts_with("hw-model=model name") && l.len() > 25);
-            if model && num("hw-pci=") >= 3 && num("hw-log=") >= 10 && num("dmesg-lines=") >= 10 && out.contains("stack_size_ok=1") {
-                println!("hw-test PASSED: /proc/cpuinfo (CPUID brand), /proc/pci and /proc/dmesg work; `hwreport` collects them into /tmp/hwreport.txt");
+            if model && num("hw-pci=") >= 3 && num("hw-log=") >= 10 && num("dmesg-lines=") >= 10 && out.contains("stack_size_ok=1")
+                && out.contains("wlan-present=0") && out.contains("gpu-acceleration=0") && out.contains("gpu-adapter=adapter Boot framebuffer")
+                && out.contains("wlan-firmware=validated") && out.contains("wlan-microcode=39864") && out.contains("gpu-firmware=validated")
+                && out.contains("wlan-uploaded=0") && out.contains("gpu-uploaded=0")
+                && out.contains("wlan-core=absent") && out.contains("framebuffer-wc=1") {
+                println!("hw-test PASSED: hardware report and adapter status work; QEMU correctly reports no BCM43225 and no Radeon acceleration");
             } else {
-                for l in out.lines().filter(|l| l.contains("hw-")) {
+                for l in out.lines().filter(|l| l.contains("hw-") || l.starts_with("wlan-") || l.starts_with("gpu-")) {
                     eprintln!("  {l}");
                 }
                 eprintln!("hw-test FAILED");
@@ -938,6 +1572,17 @@ fn main() {
                 exit(1);
             }
         }
+        "live-desktop-test" => {
+            // Use a prebuilt live image; preserve the exact packaged root and kernel.
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let screenshot=root.join("target/live-desktop-finish.ppm");
+            let _=std::fs::remove_file(&screenshot);
+            // Autostart owns the virtual keyboard; do not wait for serial-shell command output.
+            let out=boot_and_run_args(&img,"live-desktop","","panel tasks: Terminal",150,&["-nic","none"]);
+            let shot=read_ppm(&screenshot).map(|(w,h,_)|w==1280&&h==800).unwrap_or(false);
+            assert!(shot&&out.contains("panel tasks: Terminal")&&out.contains("desk: ready")&&out.contains("panel ready")&&out.contains("term ready"),"packaged live desktop/autostart or screenshot failed");
+            println!("live-desktop-test PASSED: packaged image autostarts desktop, Controlbar and terminal; 1280x800 screenshot saved");
+        }
         "autostart-test" => {
             // not in the suite: it needs its own image (with /tmp/autostart); the cached base image is dropped before and after
             let base = workspace_root().join("target/disk.img");
@@ -953,6 +1598,51 @@ fn main() {
                 eprintln!("autostart-test FAILED");
                 exit(1);
             }
+        }
+        "io-stress-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"iostress","/iostress","\niostress-done",180);
+            assert!(out.contains("shared stream reads passed")&&out.contains("concurrent durable writes passed")&&out.contains("positional reads and mmap passed"),"concurrent file I/O failed");
+            println!("io-stress-test PASSED: four readers share a large-file descriptor without missing bytes; four writers preserve and persist every byte");
+        }
+        "large-copy-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"largecopy","cp /rg.exe /tmp/large-copy.exe; cmp /rg.exe /tmp/large-copy.exe && echo copy-result-ok; echo large-copy-done","\nlarge-copy-done",180);
+            assert!(out.contains("\ncopy-result-ok")&&!out.contains("kernel #PF"),"large copy failed or trapped");
+            println!("large-copy-test PASSED: 5.4 MB Windows EXE copied beyond the old 4 MB boundary and compared byte-for-byte");
+        }
+        "downloads-test" => {
+            std::env::set_var("THOS_CURL","1");
+            std::env::set_var("THOS_FS_MIB","512");
+            let img=prod_interactive_image(cmd);
+            let root=workspace_root();
+            let log=root.join("target/downloads-serial.log");
+            let sock=root.join("target/downloads-mon.sock");
+            let shot=root.join("target/downloads.ppm");
+            let _=std::fs::remove_file(&shot);
+            let _=std::fs::remove_file(&log);let _=std::fs::remove_file(&sock);
+            let (tl,ts,ti)=(log.clone(),sock.clone(),shot.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"downloads ready",200) {return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let Some((x,y))=log_window(&tl,"760x420",0) else{return false;};
+                let mut cur=(640,400);
+                pointer_to(&ts,&mut cur,x+90,y+268);pointer_click(&ts);
+                if !wait_for(&tl,"downloads result: 0",60) {return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                mon(&ts,&format!("screendump {}",ti.display()));
+                pointer_to(&ts,&mut cur,x+265,y+268);pointer_click(&ts);
+                wait_for(&tl,"files ready",30)
+            });
+            let out=boot_and_run(&img,"downloads","/busybox sh -x /downloads.sh","\ndownloads-test-done",240);
+            assert!(actions.join().unwrap_or(false),"download or Open Downloads mouse action failed");
+            assert!(out.contains("sendfile offsets passed"),"sendfile explicit/implicit offset semantics failed");
+            assert!(out.contains("downloads-bytes-match")&&out.contains("ripgrep 14.1.1"),"downloaded EXE bytes/start failed");
+            assert!(out.contains("overwrite-result=1")&&out.contains("missing-result=1")&&out.contains("no-partial-final-file")&&out.contains("temporary-files-clean"),"download failure/overwrite handling failed");
+            assert!(out.contains("cancel-result=130")&&out.contains("no-cancelled-final-file"),"cancelled download was published or not stopped");
+            assert!(out.contains("registered-exe-result=0"),"space-containing Windows program registration failed");
+            assert!(read_ppm(&shot).is_some(),"download UI screenshot missing");
+            println!("downloads-test PASSED: UI mouse download, identical EXE bytes, actual Windows launch, Files integration, overwrite/HTTP failure cleanup, spaced MSI-style paths");
         }
         "winrg-test" => {
             // needs the internet once (the release zip is cached in target/rg-win): ripgrep.exe as MSVC built it
@@ -971,6 +1661,12 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkgmsi", "/busybox sh /pkg-msi.sh", "pkg-msi-done", 1500);
             for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(25).collect::<Vec<_>>().into_iter().rev() { eprintln!("  {l}"); }
+        }
+        "pkg-repo-ui-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"pkg-repo-ui","/busybox sh /pkg-repo-ui.sh","\npkg-repo-ui-done",150);
+            assert!(out.contains("\npkg-repo-ui-done")&&out.matches("\npkg-demo-ran").count()==1,"repository menu registration failed; see target/pkg-repo-ui-serial.log");
+            println!("pkg-repo-ui-test PASSED: shared-root package registered once, unrelated app excluded, actual launcher executes");
         }
         "pkg-test" => {
             let img = prod_interactive_image(cmd);
@@ -1006,12 +1702,84 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_soft_test(&img);
         }
+        "net-settings-test" => {
+            let img = prod_interactive_image(cmd);
+            let script = "echo disconnect >/dev/netctl; cat /proc/netinfo; echo static 10.0.2.20 24 10.0.2.2 10.0.2.3 >/dev/netctl; cat /proc/netinfo; echo static 999.0.0.1 24 0.0.0.0 0.0.0.0 >/dev/netctl; cat /proc/netinfo; echo dhcp >/dev/netctl; sleep 4; cat /proc/netinfo; echo net-settings-done";
+            let out = boot_and_run(&img,"netsettings",script,"\nnet-settings-done",180);
+            assert!(out.contains("state disabled") && out.contains("ip 0.0.0.0"));
+            assert!(out.matches("ip 10.0.2.20").count() == 2 && out.contains("address_mode manual"),"manual settings or invalid-request rollback failed");
+            assert!(out.contains("Invalid argument") && out.contains("address_mode dhcp") && out.contains("ip 10.0.2.15"),"DHCP renewal or validation failed");
+            let pending = boot_and_run_args(&img,"netnolease","sleep 5; cat /proc/netinfo; echo no-lease-done","\nno-lease-done",100,&["-nic","none","-netdev","hubport,id=isolated,hubid=9","-device","virtio-net-pci,netdev=isolated"]);
+            assert!(pending.contains("state dhcp-pending") && pending.contains("ip 0.0.0.0") && !pending.contains("ip 10.0.2.15"),"an isolated NIC must not receive a fabricated address");
+            println!("net-settings-test PASSED: disconnect, manual IPv4, invalid-request rollback, real DHCP renewal; isolated NIC stays unconfigured");
+        }
+        "desk-native-resize-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let log=root.join("target/native-resize-serial.log");let sock=root.join("target/native-resize-mon.sock");
+            let folder=root.join("target/native-resize");std::fs::create_dir_all(&folder).unwrap();
+            let (tl,ts,tf)=(log.clone(),sock.clone(),folder.clone());
+            let actions=std::thread::spawn(move|| {
+                let ms=std::time::Duration::from_millis;
+                let record=|dims:&str| -> Option<(i32,i32,i32)> {
+                    let text=std::fs::read_to_string(&tl).ok()?;
+                    let line=text.lines().find(|l|l.contains(&format!(" created {dims} at ")))?;
+                    let id=line.split_whitespace().nth(2)?.parse().ok()?;
+                    let (x,y)=log_window(&tl,dims,0)?;Some((id,x,y))
+                };
+                let ready=|id:i32,w:i32,h:i32|wait_for(&tl,&format!("desk: native resized {id} {w}x{h}"),30);
+                let shot=|name:&str|mon(&ts,&format!("screendump {}",tf.join(format!("{name}.ppm")).display()));
+                if !wait_for(&tl,"term ready",200){return false;}
+                std::thread::sleep(ms(1500));let mut cur=(640,400);
+                shot("initial");
+                let Some((id,x,y))=record("744x504") else{return false;};
+                pointer_to(&ts,&mut cur,x+744,y+504);mon(&ts,"mouse_button 1");
+                pointer_to(&ts,&mut cur,x+834,y+564);mon(&ts,"mouse_button 0");
+                if !ready(id,834,564){return false;}
+                type_line(&ts,"/busybox stty size");if !wait_for(&tl,"term-line: 27 90",20){return false;}
+                shot("terminal-resized");
+                pointer_to(&ts,&mut cur,x+834-53,y-19);pointer_click(&ts);
+                if !ready(id,1278,697){return false;}
+                type_line(&ts,"/busybox stty size");if !wait_for(&tl,"term-line: 33 139",20){return false;}
+                shot("terminal-maximized");
+                mon(&ts,"sendkey f11");if !ready(id,1280,800){return false;}
+                type_line(&ts,"/busybox stty size");if !wait_for(&tl,"term-line: 38 139",20){return false;}
+                shot("terminal-fullscreen");
+                mon(&ts,"sendkey f11");std::thread::sleep(ms(900));
+                pointer_to(&ts,&mut cur,1226,19);pointer_click(&ts);std::thread::sleep(ms(800));
+                for (app,dims,cmd) in [
+                    ("settings","760x500","/thossettings &"),
+                    ("files","780x500","/thosfiles &"),
+                    ("editor","760x520","/thosedit &"),
+                    ("software","760x520","/thossoft &"),
+                    ("downloads","760x420","/thosdownloads &"),
+                ] {
+                    type_line(&ts,cmd);std::thread::sleep(ms(1600));
+                    // Editor and Software have the same default dimensions; pick the latest surface.
+                    let text=std::fs::read_to_string(&tl).unwrap_or_default();
+                    let Some(line)=text.lines().filter(|l|l.contains(&format!(" created {dims} at "))).last() else{return false;};
+                    let aid:i32=line.split_whitespace().nth(2).unwrap().parse().unwrap();
+                    let (ax,ay)=line.rsplit(" at ").next().unwrap().trim().split_once(',').unwrap();
+                    let (ax,ay):(i32,i32)=(ax.parse().unwrap(),ay.parse().unwrap());
+                    let width:i32=dims.split_once('x').unwrap().0.parse().unwrap();
+                    pointer_to(&ts,&mut cur,ax+width-53,ay-19);pointer_click(&ts);
+                    if !ready(aid,1278,697){return false;}
+                    shot(&format!("{app}-maximized"));
+                    mon(&ts,"sendkey alt-up");std::thread::sleep(ms(700));
+                    mon(&ts,"sendkey alt-f4");std::thread::sleep(ms(700));
+                }
+                true
+            });
+            let out=boot_and_run(&img,"native-resize","/busybox sh /desk-native-resize.sh","\nnative-resize-done",240);
+            assert!(actions.join().unwrap_or(false),"native resize/maximize/fullscreen action failed");
+            assert!(!out.contains("kernel #PF")&&!out.contains("page fault [user]"),"native resize trapped");
+            println!("desk-native-resize-test PASSED: mouse resize, real pty geometry, maximize/restore and F11; all six native apps maximize");
+        }
         "desk-settings-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
             let (log, sock) = (root.join("target/desksettings-serial.log"), root.join("target/desksettings-mon.sock"));
-            let shots = [root.join("target/desksettings1.ppm"), root.join("target/desksettings2.ppm")];
-            for f in [&log, &sock, &shots[0], &shots[1]] { let _ = std::fs::remove_file(f); }
+            let shots: Vec<PathBuf> = (1..=5).map(|i| root.join(format!("target/desksettings{i}.ppm"))).collect();
+            for f in std::iter::once(&log).chain(std::iter::once(&sock)).chain(shots.iter()) { let _ = std::fs::remove_file(f); }
             let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
             std::thread::spawn(move || {
                 let ms = std::time::Duration::from_millis;
@@ -1022,12 +1790,34 @@ fn main() {
                 mon(&tsock, "sendkey down");
                 std::thread::sleep(ms(2500));
                 mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+                mon(&tsock, "sendkey down");
+                std::thread::sleep(ms(700));
+                mon(&tsock, "sendkey down");
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[2].to_str().unwrap()));
+                mon(&tsock, "sendkey up");
+                mon(&tsock, "sendkey up");
+                std::thread::sleep(ms(1200));
+                let (wx,wy) = log_window(&tlog,"760x500",0).expect("settings window position");
+                let mut cur = (640,400);
+                pointer_to(&tsock,&mut cur,wx+310,wy+469);
+                pointer_click(&tsock);
+                std::thread::sleep(ms(1200));
+                mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
+                pointer_to(&tsock,&mut cur,wx+695,wy+30);
+                pointer_click(&tsock);
+                pointer_to(&tsock,&mut cur,wx+570,wy+469);
+                pointer_click(&tsock);
+                std::thread::sleep(ms(1200));
+                mon(&tsock, &format!("screendump {}", tshots[4].to_str().unwrap()));
             });
             let out = boot_and_run(&img, "desksettings", "/busybox sh /desk-settings.sh", "desk ok:", 200);
             let (a, b) = (read_ppm(&shots[0]), read_ppm(&shots[1]));
             let differ = match (&a, &b) { (Some(x), Some(y)) => x.2.iter().zip(y.2.iter()).filter(|(p, q)| p != q).count() > 2000, _ => false };
-            if out.contains("settings ready") && differ {
-                println!("desk-settings-test PASSED: the settings app opened and switched pages");
+            let display = match (&b, read_ppm(&shots[2])) { (Some(x), Some(y)) => x.2.iter().zip(y.2.iter()).filter(|(p, q)| p != q).count() > 2000, _ => false };
+            let setup = match (read_ppm(&shots[3]),read_ppm(&shots[4])) { (Some(x),Some(y)) => x.2.iter().zip(y.2.iter()).filter(|(p,q)|p!=q).count()>2000, _=>false };
+            if out.contains("settings ready") && differ && display && setup {
+                println!("desk-settings-test PASSED: About, Network, Display and mouse-opened Ethernet/Wi-Fi settings");
             } else {
                 for l in out.lines().filter(|l| l.contains("settings") || l.contains("desk")) { eprintln!("  {l}"); }
                 eprintln!("desk-settings-test FAILED (shots differ: {differ})");
@@ -1290,6 +2080,34 @@ fn main() {
                 exit(1);
             }
         }
+        "privilege-ui-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let(log,sock)=(root.join("target/privilege-ui-serial.log"),root.join("target/privilege-ui-mon.sock"));
+            for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"settings ready",180){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                let Some((x,y))=log_window(&tl,"760x500",0) else{return false;};
+                mon(&ts,&format!("screendump {}",tr.join("target/privilege-settings.ppm").display()));
+                let mut cursor=(640,400);pointer_to(&ts,&mut cursor,x+514,y+285);pointer_click(&ts);
+                if !wait_for(&tl,"term ready",35){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(2000));type_line(&ts,"pass");
+                std::thread::sleep(std::time::Duration::from_millis(1500));type_line(&ts,"/busybox id -u");
+                if !wait_for(&tl,"term-line: 0",30){return false;}
+                mon(&ts,&format!("screendump {}",tr.join("target/privilege-terminal.ppm").display()));
+                type_line(&ts,"exit");true
+            });
+            let out=boot_and_run(&img,"privilege-ui","/busybox sh /privilege-ui.sh","\nprivilege-ui-done",180);
+            assert!(actions.join().unwrap_or(false)&&!out.contains("password: pass")&&!out.contains("term-line: pass"),"Admin terminal UI/echo regression failed; see target/privilege-ui-serial.log");
+            println!("privilege-ui-test PASSED: Settings button opens real authenticated root terminal, password not echoed");
+        }
+        "privilege-test" => {
+            let img=prod_interactive_image(cmd);
+            let out=boot_and_run(&img,"privilege","/busybox sh /privilege.sh","\nprivilege-test-done:",180);
+            assert!(out.contains("\nprivilege-test-done:")&&!out.contains("\nprivileged-wrong-password"),"sudo/doas scoped elevation failed; see target/privilege-serial.log");
+            println!("privilege-test PASSED: real authenticated root, stdio, exit status, noninteractive denial and unchanged parent uid");
+        }
         "desk-elevate-test" => {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
@@ -1340,6 +2158,253 @@ fn main() {
                 eprintln!("desk-cal-test FAILED");
                 exit(1);
             }
+        }
+        "desk-drag-test" => {
+            // Real button/motion input (PS/2 or USB), with captures while the button is held.
+            let hotplug=std::env::var("THOS_USB_MOUSE_HOTPLUG").is_ok();
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskdrag-serial.log"), root.join("target/deskdrag-mon.sock"));
+            let shots: Vec<_> = (0..6).map(|i| root.join(format!("target/deskdrag-{i}.ppm"))).collect();
+            for f in shots.iter().chain([&log, &sock]) { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            let driver = std::thread::spawn(move || {
+                use std::io::Write;
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "perfscript ready", 300) { return; }
+                if hotplug {
+                    mon(&tsock,"device_add usb-mouse,id=plugmouse,bus=ehcim.0");
+                    if !wait_for(&tlog,"boot mouse addr",30){return;}
+                }
+                std::thread::sleep(ms(1500));
+                let Some((wx, wy)) = log_window(&tlog, "780x500", 0) else { return };
+                let mut cur = (640, 400);
+                pointer_to(&tsock, &mut cur, wx + 300, wy - 19);
+                let mut st = std::os::unix::net::UnixStream::connect(&tsock).expect("monitor");
+                let mut shot = |i: usize| { let _ = writeln!(st, "screendump {}", tshots[i].display()); std::thread::sleep(ms(200)); };
+                shot(0);
+                let _ = writeln!(st, "mouse_button 1");
+                std::thread::sleep(ms(200));
+                for i in 1..=3 {
+                    for _ in 0..10 {
+                        let _ = writeln!(st, "mouse_move 4 3");
+                        std::thread::sleep(ms(16));
+                    }
+                    // Settle and capture without releasing: verifies the live drag state.
+                    std::thread::sleep(ms(400));
+                    let _ = writeln!(st, "screendump {}", tshots[i].display());
+                    std::thread::sleep(ms(200));
+                }
+                if hotplug {
+                    let _=writeln!(st,"device_del plugmouse");
+                    if !wait_for(&tlog,"mouse disconnected",30){return;}
+                } else {let _ = writeln!(st, "mouse_button 0");}
+                std::thread::sleep(ms(500));
+                let _ = writeln!(st, "screendump {}", tshots[4].display());
+                std::thread::sleep(ms(200));
+                if hotplug {
+                    let _=writeln!(st,"device_add usb-mouse,id=replugmouse,bus=ehcim.0");
+                    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(30);
+                    loop {
+                        if std::fs::read_to_string(&tlog).unwrap_or_default().matches("boot mouse addr").count()>=2 {break;}
+                        if std::time::Instant::now()>=deadline{return;}
+                        std::thread::sleep(ms(100));
+                    }
+                    std::thread::sleep(ms(500));
+                }
+                let _ = writeln!(st, "mouse_move 40 -30");
+                std::thread::sleep(ms(500));
+                let _ = writeln!(st, "screendump {}", tshots[5].display());
+                std::thread::sleep(ms(300));
+                let _ = writeln!(st, "sendkey ctrl-alt-q");
+            });
+            let _ = boot_and_run_args(&img, "deskdrag", "PERF_ONLY_FILES=1 /busybox sh /perf.sh", "desk ok:", 280, &["-cpu", "Westmere,-pdpe1gb"]);
+            let _ = driver.join();
+            let (wx, wy) = log_window(&log, "780x500", 0).expect("file-manager window");
+            let frames: Vec<_> = shots.iter().map(|p| read_ppm(p).expect("drag screenshot")).collect();
+            let crop = |i: usize, x: i32, y: i32, w: usize, h: usize| -> Vec<u8> {
+                let (fw, fh, data) = &frames[i];
+                assert!(x >= 0 && y >= 0 && x as usize + w <= *fw && y as usize + h <= *fh);
+                (y as usize..y as usize + h).flat_map(|row| data[(row * fw + x as usize) * 3..(row * fw + x as usize + w) * 3].iter().copied()).collect()
+            };
+            // Interior excludes rounded borders/shadows whose blending follows wallpaper.
+            let reference = crop(0, wx + 12, wy + 12, 756, 476);
+            for i in 1..6 {
+                let n = i.min(3) as i32;
+                assert!(reference == crop(i, wx + 12 + n * 40, wy + 12 + n * 30, 756, 476), "window failed to follow held mouse or moved after release, shot {i}");
+            }
+            assert_ne!(crop(0, wx + 12, wy + 40, 60, 300), crop(3, wx + 12, wy + 40, 60, 300), "old window position was not repainted");
+            if hotplug {println!("USB mouse hotplug PASSED: runtime attach on second controller, held-button unplug releases drag, reconnect works");}
+            println!("desk-drag-test PASSED: mouse-held window follows +40/+30, +80/+60, +120/+90; release stops drag; old area repainted. Screenshots: target/deskdrag-0..5.ppm");
+        }
+        "perf-test" => {
+            // frame times of the desktop while the pointer hovers over the file manager and drags a window (THOS_PERF_KVM=1: with KVM)
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/perf-serial.log"), root.join("target/perf-mon.sock"));
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock) = (log.clone(), sock.clone());
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "files ready", 300) { return; }
+                std::thread::sleep(ms(3000));
+                let (wx, wy) = log_window(&tlog, "780x500", 0).unwrap_or((200, 100));
+                let mut cur = (640i32, 400i32);
+                pointer_to(&tsock, &mut cur, wx + 400, wy + 100);
+                std::thread::sleep(ms(1000));
+                let mut st = std::os::unix::net::UnixStream::connect(&tsock).expect("monitor");
+                let mut st2 = st.try_clone().expect("clone");
+                let mut burst = |dx: i32, dy: i32, n: usize, gap: u64| { for _ in 0..n { let _ = writeln!(st2, "mouse_move {dx} {dy}"); std::thread::sleep(ms(gap)); } };
+                for _ in 0..4 { burst(0, 6, 40, 12); burst(0, -6, 40, 12); }          // hover up and down over the list rows
+                burst(8, 0, 30, 12); burst(-8, 0, 30, 12);                             // and sideways over the sidebar and toolbar
+                std::thread::sleep(ms(2500));
+                // drag the window by its titlebar
+                // HMP uses one active connection: keep using the burst connection
+                // instead of opening another socket while `st` is still alive.
+                let (tx, ty) = (wx + 300, wy - 19);
+                while cur != (tx, ty) {
+                    let (dx, dy) = ((tx - cur.0).clamp(-40, 40), (ty - cur.1).clamp(-40, 40));
+                    let _ = writeln!(st, "mouse_move {dx} {dy}");
+                    cur.0 += dx; cur.1 += dy;
+                    std::thread::sleep(ms(30));
+                }
+                std::thread::sleep(ms(500));
+                let _ = writeln!(st, "mouse_button 1");
+                std::thread::sleep(ms(200));
+                for _ in 0..3 { burst(10, 5, 40, 12); burst(-10, -5, 40, 12); }
+                let _ = writeln!(st, "mouse_button 0");
+                std::thread::sleep(ms(5000));
+                // End only after the workload finishes; a fixed guest sleep can race
+                // the monitor driver on slow hosts and leave it talking to dead QEMU.
+                let _ = writeln!(st, "sendkey ctrl-alt-q");
+            });
+            let kvm = std::env::var("THOS_PERF_KVM").is_ok();
+            let extra: Vec<&str> = if kvm { vec!["-enable-kvm", "-cpu", "Westmere,-pdpe1gb"] } else { vec!["-cpu", "Westmere,-pdpe1gb"] };
+            // Keep the file manager exposed: other apps would cover the hover/drag targets
+            // and the test would mostly measure cursor movement over Settings instead.
+            let out = boot_and_run_args(&img, "perf", "PERF_ONLY_FILES=1 /busybox sh /perf.sh", "desk ok:", 280, &extra);
+            println!("--- {} ---", if kvm { "KVM" } else { "emulated CPU (TCG)" });
+            let mut agg: std::collections::BTreeMap<String, (i64, i64, i64)> = Default::default();
+            for l in out.lines().filter(|l| l.trim_start().starts_with("perf ")) {
+                let t = l.trim_start().trim_start_matches("perf ");
+                let Some((name, rest)) = t.split_once(": ") else { continue };
+                let g = |k: &str| rest.split_whitespace().find_map(|w| w.strip_prefix(k)).and_then(|v| v.trim_end_matches("us").parse::<i64>().ok()).unwrap_or(0);
+                let e = agg.entry(name.to_string()).or_insert((0, 0, 0));
+                e.0 += g("n="); e.1 += g("avg=") * g("n="); e.2 = e.2.max(g("max="));
+            }
+            for (k, (n, tot, mx)) in &agg { println!("  {k}: {n} calls, avg {} us, worst {} us", if *n > 0 { tot / n } else { 0 }, mx); }
+            if !agg.get("files-render").is_some_and(|(n, _, _)| *n > 0) {
+                eprintln!("perf-test FAILED: no file-manager render samples; workload was not measured");
+                exit(1);
+            }
+        }
+        "perf-video" => {
+            // THOS on its own, recorded in real time: the pointer hovers over every program and drags windows around; the video and the frame
+            // times (probes in the compositor and the file manager) show how responsive the desktop is. THOS_PERF_KVM=1 runs with KVM.
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let tag = if std::env::var("THOS_PERF_KVM").is_ok() { "perfkvm" } else { "perftcg" };
+            if tag == "perfkvm" { std::env::set_var("THOS_QEMU_EXTRA", "-enable-kvm -cpu Westmere,-pdpe1gb -m 2048"); } else { std::env::set_var("THOS_QEMU_EXTRA", "-cpu Westmere,-pdpe1gb"); }
+            let shm = std::path::PathBuf::from(format!("/dev/shm/thos-{tag}"));
+            let _ = std::fs::remove_dir_all(&shm);
+            std::fs::create_dir_all(&shm).unwrap();
+            let (log, sock) = (root.join(format!("target/{tag}-serial.log")), root.join(format!("target/{tag}-mon.sock")));
+            for f in [&log, &sock] { let _ = std::fs::remove_file(f); }
+            let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let (tlog, tsock, tshm, tstop) = (log.clone(), sock.clone(), shm.clone(), stop.clone());
+            let cap = std::thread::spawn(move || -> Vec<(u128, PathBuf)> {
+                use std::io::{Read, Write};
+                let mut frames = Vec::new();
+                if !wait_for(&tlog, "perfscript ready", 300) { return frames; }
+                let Ok(mut st) = std::os::unix::net::UnixStream::connect(&tsock) else { return frames };
+                let _ = st.set_read_timeout(Some(std::time::Duration::from_millis(1500)));
+                let t0 = std::time::Instant::now();
+                let mut n = 0;
+                while !tstop.load(std::sync::atomic::Ordering::Relaxed) && t0.elapsed().as_secs() < 150 {
+                    let ppm = tshm.join(format!("f{n:05}.ppm"));
+                    let at = t0.elapsed().as_millis();
+                    if writeln!(st, "screendump {}", ppm.display()).is_err() { break; }
+                    let mut got = String::new();
+                    let mut b = [0u8; 256];
+                    while !got.contains("(qemu)") || got.matches("(qemu)").count() < 2 && n == 0 {
+                        match st.read(&mut b) { Ok(0) | Err(_) => break, Ok(k) => got.push_str(&String::from_utf8_lossy(&b[..k])) }
+                        if got.ends_with("(qemu) ") { break; }
+                    }
+                    if ppm.exists() { frames.push((at, ppm)); n += 1; }
+                }
+                frames
+            });
+            let (alog, asock, astop) = (log.clone(), sock.clone(), stop.clone());
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&alog, "perfscript ready", 300) { return; }
+                std::thread::sleep(ms(4000));
+                let Ok(mut st) = std::os::unix::net::UnixStream::connect(&asock) else { return };
+                let mut st2 = st.try_clone().expect("clone");
+                let mut mv = |dx: i32, dy: i32, n: usize, gap: u64| { for _ in 0..n { let _ = writeln!(st2, "mouse_move {dx} {dy}"); std::thread::sleep(ms(gap)); } };
+                // the windows (opened in this order by perf.sh): find where each one is
+                let wins: Vec<(i32, i32, &str)> = [("780x500", 0, "files"), ("760x520", 0, "software"), ("760x500", 0, "settings")].iter()
+                    .filter_map(|(sz, k, name)| log_window(&alog, sz, *k).map(|(x, y)| (x, y, *name))).collect();
+                let mut cur = (640i32, 400i32);
+                for (x, y, name) in &wins {
+                    let _ = name;
+                    // hover over the window: down the list, across the toolbar
+                    let tx = x + 400 - cur.0; let ty = y + 120 - cur.1;
+                    mv(tx.clamp(-120, 120) / 8, ty.clamp(-120, 120) / 8, 8, 14);
+                    cur = (x + 400, y + 120);
+                    for _ in 0..3 { mv(0, 7, 40, 10); mv(0, -7, 40, 10); }
+                    mv(9, 0, 30, 10); mv(-9, 0, 30, 10);
+                    std::thread::sleep(ms(800));
+                }
+                // drag windows by their titlebars
+                for (x, y, _) in wins.iter().rev() {
+                    let mut c2 = cur;
+                    let (gx, gy) = (x + 300, y - 19);
+                    while (c2.0 - gx).abs() > 3 || (c2.1 - gy).abs() > 3 { let dx = (gx - c2.0).clamp(-30, 30); let dy = (gy - c2.1).clamp(-30, 30); mv(dx, dy, 1, 10); c2.0 += dx; c2.1 += dy; }
+                    std::thread::sleep(ms(300));
+                    let _ = writeln!(st, "mouse_button 1");
+                    std::thread::sleep(ms(150));
+                    for _ in 0..2 { mv(12, 6, 35, 10); mv(-12, -6, 35, 10); }
+                    let _ = writeln!(st, "mouse_button 0");
+                    cur = c2;
+                    std::thread::sleep(ms(600));
+                }
+                std::thread::sleep(ms(1500));
+                astop.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            let _ = boot_and_run(&img, tag, "/busybox sh /perf.sh", "desk ok:", 400);
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let frames = cap.join().unwrap_or_default();
+            println!("frames captured: {} in {} ms", frames.len(), frames.last().map(|f| f.0).unwrap_or(0));
+            if frames.len() > 4 {
+                let list = shm.join("list.txt");
+                let mut f = std::fs::File::create(&list).unwrap();
+                use std::io::Write;
+                let frames: Vec<(u128, PathBuf)> = frames.into_iter().filter_map(|(t, ppm)| {      // PNG frames (the concat list wants one image each)
+                    let png = ppm.with_extension("png");
+                    let ok = Command::new("pnmtopng").arg(&ppm).stdout(std::fs::File::create(&png).ok()?).status().map(|s| s.success()).unwrap_or(false);
+                    let _ = std::fs::remove_file(&ppm);
+                    ok.then_some((t, png))
+                }).collect();
+                for w in frames.windows(2) { writeln!(f, "file '{}'\nduration {:.4}", w[0].1.display(), (w[1].0 - w[0].0) as f64 / 1000.0).unwrap(); }
+                writeln!(f, "file '{}'", frames.last().unwrap().1.display()).unwrap();
+                let out = root.join(format!("target/video-{tag}.mp4"));
+                let ok = Command::new("ffmpeg").args(["-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", list.to_str().unwrap(), "-vf", "fps=30,format=yuv420p", "-c:v", "libx264", "-crf", "22", "-preset", "fast", out.to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false);
+                println!("video: {} ({})", out.display(), ok);
+            }
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            let mut agg: std::collections::BTreeMap<String, (i64, i64, i64)> = Default::default();
+            for l in text.lines().filter(|l| l.trim_start().starts_with("perf ")) {
+                let t = l.trim_start().trim_start_matches("perf ");
+                let Some((name, rest)) = t.split_once(": ") else { continue };
+                let g = |k: &str| rest.split_whitespace().find_map(|w| w.strip_prefix(k)).and_then(|v| v.trim_end_matches("us").parse::<i64>().ok()).unwrap_or(0);
+                let e = agg.entry(name.to_string()).or_insert((0, 0, 0));
+                e.0 += g("n="); e.1 += g("avg=") * g("n="); e.2 = e.2.max(g("max="));
+            }
+            for (k, (n, tot, mx)) in &agg { println!("  {k}: {n} calls, avg {} us, worst {} us", if *n > 0 { tot / n } else { 0 }, mx); }
+            let _ = std::fs::remove_dir_all(&shm);
         }
         "desk-shot-test" => {
             let img = prod_interactive_image(cmd);
@@ -1592,6 +2657,269 @@ fn main() {
             let img = prod_interactive_image(cmd);
             desk_menu_test(&img);
         }
+        "desk-menu-scroll-test" => {
+            let img=prod_interactive_image(cmd);
+            desk_menu_scroll_test(&img);
+        }
+        "gdi-lifetime-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-lifetime.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-lifetime.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-lifetime",&[("target/gdi-lifetime.exe","/gdi-lifetime.exe"),("xtask/testdata/gdi-lifetime.sh","/gdi-lifetime.sh")]);
+            let out=boot_and_run_args(&img,"gdi-lifetime","/busybox sh /gdi-lifetime.sh","\ngdi-lifetime-done",180,&["-nic","none"]);
+            assert!(out.contains("gdi-lifetime-cycles:40")&&out.matches("gdi-lifetime-allocation=PASS").count()==40&&out.contains("gdi-lifetime-result=PASS")&&!out.contains("allocation=FAIL"),"bitmap pages were not reclaimed or repeated real allocation failed");
+            for line in out.lines().filter(|line|line.contains("gdi-lifetime-")){println!("{line}");}
+        }
+        "gdi-font-probe" | "gdi-font-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-font.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-font.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            let reference=root.join("target/gdi-font-reference");run(Command::new("cc").args(["-O2","-I/usr/include/freetype2","-I/usr/include/libpng16","-o"]).arg(&reference).arg(root.join("xtask/testdata/gdi-font-reference.c")).arg("-lfreetype"));
+            run(Command::new(&reference).args(["/usr/share/fonts/truetype/lato/Lato-Regular.ttf","/usr/share/fonts/truetype/lato/Lato-Bold.ttf"]).arg(root.join("target/gdi-font-reference.ppm")));
+            patch_qa_ext2(&img,"gdi-font",&[("target/gdi-font.exe","/gdi-font.exe"),("xtask/testdata/desk-gdi-font.sh","/desk-gdi-font.sh")]);
+            let(log,sock)=(root.join("target/gdi-font-serial.log"),root.join("target/gdi-font-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-font-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(1000));mon(&ts,&format!("screendump {}",tr.join("target/gdi-font-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-font","/busybox sh /desk-gdi-font.sh","\ngdi-font-done",150,&["-nic","none"]);let acted=actions.join().unwrap_or(false);
+            let actual=read_ppm(&root.join("target/gdi-font-complete.ppm"));let expected=read_ppm(&root.join("target/gdi-font-reference.ppm"));let pos=log_window(&log,"640x360",0);let mut differences=0usize;let mut ink=0usize;
+            if let(Some((w,h,p)),Some((ew,eh,e)),Some((x,y)))=(actual,expected,pos){
+                assert_eq!((ew,eh),(640,360));assert!(x>=0&&y>=0&&(x as usize+640)<=w&&(y as usize+360)<=h);
+                for py in 18..245usize{for px in 18..620usize{let a=((y as usize+py)*w+x as usize+px)*3;let b=(py*ew+px)*3;if e[b..b+3]!=[14,17,24]{ink+=1;}if p[a..a+3]!=e[b..b+3]{if differences==0{println!("GDI font first pixel mismatch at {px},{py}: actual {:?} expected {:?}",&p[a..a+3],&e[b..b+3]);}differences+=1;}}}
+            }else{differences=usize::MAX;}
+            println!("GDI font independent FreeType reference: {differences} different pixels, {ink} ink pixels");
+            if cmd=="gdi-font-test"{assert!(acted&&differences==0&&ink>1000&&out.contains("gdi-font-result=PASS")&&out.contains("gdi-font-exit:0")&&!out.contains("gdi-font-FAIL"),"font API ownership/metrics/UTF16 or actual antialiased text differs from independent TrueType reference");}
+            for line in out.lines().filter(|line|line.contains("gdi-font-")){println!("{line}");}
+        }
+        "gdi-alpha-probe" | "gdi-alpha-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-alpha.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-alpha.c")).args(["-luser32","-lgdi32","-lmsimg32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-alpha",&[("target/msimg32-alpha-2026-10-17.dll","/Windows/System32/msimg32.dll"),("target/gdi-alpha.exe","/gdi-alpha.exe"),("xtask/testdata/desk-gdi-alpha.sh","/desk-gdi-alpha.sh")]);
+            let(log,sock)=(root.join("target/gdi-alpha-serial.log"),root.join("target/gdi-alpha-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-alpha-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/gdi-alpha-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-alpha","/busybox sh /desk-gdi-alpha.sh","\ngdi-alpha-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);assert!(acted&&out.contains("gdi-alpha-result="),"actual GDI fixture did not complete");
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/gdi-alpha-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+200,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[127,0,128]}));
+            if cmd=="gdi-alpha-test" {assert!(painted&&out.contains("gdi-alpha-result=PASS")&&out.contains("gdi-alpha-exit:0")&&!out.contains("gdi-alpha-FAIL"),"GDI constant-alpha math, MSIMG32 ABI, validation or actual window pixels failed");}
+            for line in out.lines().filter(|line|line.contains("gdi-alpha-")){println!("{line}");}
+        }
+        "winwide-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winwide.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winwide.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"winwide",&[("target/winwide.exe","/winwide.exe"),("xtask/testdata/desk-winwide.sh","/desk-winwide.sh")]);
+            let(log,sock)=(root.join("target/winwide-serial.log"),root.join("target/winwide-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"winwide-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/winwide-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"winwide","/busybox sh /desk-winwide.sh","\nwinwide-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/winwide-complete.ppm")).is_some_and(|(w,h,p)|{
+                // Keep the blue sample outside the two tiny windows and their
+                // real shadows. Sample the marker inside rounded corners.
+                [(x+30,y+200,[80,150,220]),(x+390,y+230,[250,210,30])].into_iter().all(|(x,y,c)|x>=0&&y>=0&&(x as usize)<w&&(y as usize)<h&&p[((y as usize)*w+x as usize)*3..((y as usize)*w+x as usize)*3+3]==c)
+            }));
+            assert!(acted&&painted&&out.contains("winwide-result=PASS")&&out.contains("winwide-exit:0")&&!out.contains("winwide-FAIL"),"Unicode window API, messages, text or displayed client pixels failed");
+            for line in out.lines().filter(|line|line.contains("winwide-")){println!("{line}");}
+        }
+        "winframe-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winframe.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winframe.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"winframe",&[("target/winframe.exe","/winframe.exe"),("xtask/testdata/desk-winframe.sh","/desk-winframe.sh")]);
+            let(log,sock)=(root.join("target/winframe-serial.log"),root.join("target/winframe-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"winframe-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/winframe-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"winframe","/busybox sh /desk-winframe.sh","\nwinframe-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/winframe-complete.ppm")).is_some_and(|(w,h,p)|{
+                // The final backing pixel is checked in the PE itself. The
+                // compositor deliberately masks rounded corners, so inspect
+                // the inset of the same bottom-right marker on the screen.
+                [(x+50,y+50,[18,150,180]),(x+390,y+230,[250,220,40])].into_iter().all(|(x,y,c)|x>=0&&y>=0&&(x as usize)<w&&(y as usize)<h&&p[((y as usize)*w+x as usize)*3..((y as usize)*w+x as usize)*3+3]==c)
+            }));
+            assert!(acted&&painted&&out.contains("winframe-result=PASS")&&out.contains("winframe-exit:0")&&!out.contains("winframe-FAIL"),"actual AdjustWindowRect/CreateWindowEx client size, errors, clipping or displayed corners failed");
+            for line in out.lines().filter(|line|line.contains("winframe-")){println!("{line}");}
+        }
+        "gdi-pen-probe" | "gdi-pen-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-pen.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-pen.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-pen",&[("target/gdi-pen.exe","/gdi-pen.exe"),("xtask/testdata/desk-gdi-pen.sh","/desk-gdi-pen.sh")]);
+            let(log,sock)=(root.join("target/gdi-pen-serial.log"),root.join("target/gdi-pen-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-pen-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/gdi-pen-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-pen","/busybox sh /desk-gdi-pen.sh","\ngdi-pen-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);assert!(acted&&out.contains("gdi-pen-result="),"actual GDI fixture did not complete");
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/gdi-pen-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+20,y as usize+20);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[75,160,240]}));
+            if cmd=="gdi-pen-test" {assert!(painted&&out.contains("gdi-pen-result=PASS")&&out.contains("gdi-pen-exit:0")&&!out.contains("gdi-pen-FAIL"),"GDI pen ownership, hollow/solid borders, clipping or actual window stroke failed");}
+            for line in out.lines().filter(|line|line.contains("gdi-pen-")){println!("{line}");}
+        }
+        "gdi-blit-probe" | "gdi-blit-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-blit.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-blit.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-blit",&[("target/gdi-blit.exe","/gdi-blit.exe"),("xtask/testdata/desk-gdi-blit.sh","/desk-gdi-blit.sh")]);
+            let(log,sock)=(root.join("target/gdi-blit-serial.log"),root.join("target/gdi-blit-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-blit-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/gdi-blit-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-blit","/busybox sh /desk-gdi-blit.sh","\ngdi-blit-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);assert!(acted&&out.contains("gdi-blit-result="),"actual GDI fixture did not complete");
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/gdi-blit-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+200,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[46,180,90]}));
+            if cmd=="gdi-blit-test" {assert!(painted&&out.contains("gdi-blit-result=PASS")&&out.contains("gdi-blit-exit:0")&&!out.contains("gdi-blit-FAIL"),"GDI bitmap ownership, SRCCOPY pixels or displayed window failed");}
+            for line in out.lines().filter(|line|line.contains("gdi-blit-")){println!("{line}");}
+        }
+        "gdi-dcbrush-probe" | "gdi-dcbrush-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-dcbrush.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-dcbrush.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-dcbrush",&[("target/gdi-dcbrush.exe","/gdi-dcbrush.exe"),("xtask/testdata/desk-gdi-dcbrush.sh","/desk-gdi-dcbrush.sh")]);
+            let(log,sock)=(root.join("target/gdi-dcbrush-serial.log"),root.join("target/gdi-dcbrush-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-dcbrush-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/gdi-dcbrush-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-dcbrush","/busybox sh /desk-gdi-dcbrush.sh","\ngdi-dcbrush-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);assert!(acted&&out.contains("gdi-dcbrush-result="),"actual GDI fixture did not complete");
+            let painted=log_window(&log,"400x240",1).is_some_and(|(x,y)|read_ppm(&root.join("target/gdi-dcbrush-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+200,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[46,180,90]}));
+            if cmd=="gdi-dcbrush-test" {assert!(painted&&out.contains("gdi-dcbrush-result=PASS")&&out.contains("gdi-dcbrush-exit:0")&&!out.contains("gdi-dcbrush-FAIL"),"GDI handle validation, per-window brush state or desktop/window isolation failed");}
+            for line in out.lines().filter(|line|line.contains("gdi-dcbrush-")){println!("{line}");}
+        }
+        "gdi-brush-probe" | "gdi-brush-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/gdi-brush.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/gdi-brush.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"gdi-brush",&[("target/gdi-brush.exe","/gdi-brush.exe"),("xtask/testdata/desk-gdi-brush.sh","/desk-gdi-brush.sh")]);
+            let(log,sock)=(root.join("target/gdi-brush-serial.log"),root.join("target/gdi-brush-mon.sock"));for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{if !wait_for(&tl,"gdi-brush-ready-close",90){return false;}std::thread::sleep(std::time::Duration::from_millis(700));mon(&ts,&format!("screendump {}",tr.join("target/gdi-brush-complete.ppm").display()));mon(&ts,"sendkey alt-f4");true});
+            let out=boot_and_run_args(&img,"gdi-brush","/busybox sh /desk-gdi-brush.sh","\ngdi-brush-done",150,&["-nic","none"]);
+            let acted=actions.join().unwrap_or(false);assert!(acted&&out.contains("gdi-brush-result="),"actual GDI fixture did not complete");
+            let painted=log_window(&log,"400x240",1).is_some_and(|(x,y)|read_ppm(&root.join("target/gdi-brush-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+200,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[46,180,90]}));
+            if cmd=="gdi-brush-test" {assert!(painted&&out.contains("gdi-brush-result=PASS")&&out.contains("gdi-brush-exit:0")&&!out.contains("gdi-brush-FAIL"),"GDI handle validation, per-window brush state or desktop/window isolation failed");}
+            for line in out.lines().filter(|line|line.contains("gdi-brush-")){println!("{line}");}
+        }
+        "desk-winfocus-probe" | "desk-winfocus-test" | "desk-winfocus-panel-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winfocus.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winfocus.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"winfocus",&[("target/winfocus.exe","/winfocus.exe"),("xtask/testdata/desk-winfocus.sh","/desk-winfocus.sh")]);
+            let(log,sock)=(root.join("target/winfocus-serial.log"),root.join("target/winfocus-mon.sock"));
+            for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{
+                if !wait_for(&tl,"winfocus-ready\n",90){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1600));
+                let(Some((x1,y1)),Some((x2,y2)))=(log_window(&tl,"400x240",0),log_window(&tl,"400x240",1))else{return false;};let mut cur=(640,400);
+                pointer_to(&ts,&mut cur,x1+20,y1+20);pointer_click(&ts);
+                if !wait_for(&tl,"winfocus-step:1",20){mon(&ts,"sendkey alt-f4");return false;}
+                pointer_to(&ts,&mut cur,x2+350,y2+200);pointer_click(&ts);
+                if !wait_for(&tl,"winfocus-step:2",20){mon(&ts,"sendkey alt-f4");return false;}
+                pointer_to(&ts,&mut cur,x2+400-86,y2-19);pointer_click(&ts);
+                if !wait_for(&tl,"winfocus-step:3",20){mon(&ts,"sendkey alt-f4");return false;}
+                mon(&ts,"sendkey alt-ret");
+                if !wait_for(&tl,"winfocus-step:4",20){mon(&ts,"sendkey alt-f4");return false;}
+                mon(&ts,"sendkey alt-f4");
+                if !wait_for(&tl,"winfocus-step:5",20){mon(&ts,"sendkey alt-f4");return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                mon(&ts,&format!("screendump {}",tr.join("target/winfocus-complete.ppm").display()));
+                mon(&ts,"sendkey alt-f4");true
+            });
+            let command=if cmd=="desk-winfocus-panel-test" {"/busybox sh /desk-winfocus.sh panel"}else{"/busybox sh /desk-winfocus.sh"};
+            let out=boot_and_run_args(&img,"winfocus",command,"\nwinfocus-done",150,&["-nic","none"]);
+            let passed=actions.join().unwrap_or(false);assert!(out.contains("winfocus-ready\n"),"focus PE fixture did not start");
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/winfocus-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+100,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[46,180,90]}));
+            if cmd=="desk-winfocus-test" || cmd=="desk-winfocus-panel-test" {assert!(passed&&painted&&out.contains("winfocus-step:5")&&out.contains("winfocus-exit:0"),"actual WM_SETFOCUS/WM_KILLFOCUS handles, click switching or minimize focus restoration failed");}
+            for line in out.lines().filter(|line|line.contains("winfocus-")){println!("{line}");}
+            println!("Win32 focus probe complete: all checks passed={passed}");
+        }
+        "desk-winkey-probe" | "desk-winkey-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();let exe=root.join("target/winkey.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&exe).arg(root.join("xtask/testdata/winkey.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"winkey",&[("target/winkey.exe","/winkey.exe"),("xtask/testdata/desk-winkey.sh","/desk-winkey.sh")]);
+            let(log,sock)=(root.join("target/winkey-serial.log"),root.join("target/winkey-mon.sock"));
+            for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{
+                if !wait_for(&tl,"winkey-ready\n",90){return false;}
+                for(key,expected)in[("left","winkey-left-up"),("shift-a","winkey-shift-up"),("ctrl-b","winkey-control-up"),("y","winkey-ready-close")]{
+                    mon(&ts,&format!("sendkey {key}"));
+                    if !wait_for(&tl,expected,20){mon(&ts,"sendkey alt-f4");return false;}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                mon(&ts,&format!("screendump {}",tr.join("target/winkey-complete.ppm").display()));
+                mon(&ts,"sendkey ret");wait_for(&tl,"winkey-close-complete",20)
+            });
+            let out=boot_and_run_args(&img,"winkey","/busybox sh /desk-winkey.sh","\nwinkey-done",150,&["-nic","none"]);
+            let passed=actions.join().unwrap_or(false);
+            assert!(out.contains("winkey-ready\n"),"real PE keyboard fixture did not start");
+            let painted=log_window(&log,"400x240",0).is_some_and(|(x,y)|read_ppm(&root.join("target/winkey-complete.ppm")).is_some_and(|(w,h,p)|{let(x,y)=(x as usize+200,y as usize+100);x<w&&y<h&&p[(y*w+x)*3..(y*w+x)*3+3]==[46,180,90]}));
+            if cmd=="desk-winkey-test" {assert!(passed&&painted&&out.contains("winkey-exit:0")&&out.contains("winkey-close-complete")&&!out.contains("winkey-FAIL"),"real PE key-down/up, virtual keys, scan/extended/transition flags or character regression");}
+            for line in out.lines().filter(|line|line.contains("winkey-")){println!("{line}");}
+            println!("Win32 key-message probe complete: all checks passed={passed}");
+        }
+        "desk-winresize-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let fixture=root.join("target/winresize-fixture.exe");
+            run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-ffreestanding","-Wl,-e,start","-o"]).arg(&fixture).arg(root.join("xtask/testdata/winresize.c")).args(["-luser32","-lgdi32","-lkernel32"]));
+            patch_qa_ext2(&img,"winresize-fixture",&[("target/winresize-fixture.exe","/winresize.exe")]);
+            let log=root.join("target/winresize-serial.log");let sock=root.join("target/winresize-mon.sock");
+            let dir=root.join("target/winresize");std::fs::create_dir_all(&dir).unwrap();
+            for p in [&log,&sock] {let _=std::fs::remove_file(p);}
+            let (tl,ts,td)=(log.clone(),sock.clone(),dir.clone());
+            let actions=std::thread::spawn(move|| {
+                let ready=|needle:&str,prior:usize| {
+                    let end=std::time::Instant::now()+std::time::Duration::from_secs(30);
+                    while std::time::Instant::now()<end {
+                        if std::fs::read_to_string(&tl).unwrap_or_default().matches(needle).count()>prior{return true;}
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }false
+                };
+                let count=|needle:&str|std::fs::read_to_string(&tl).unwrap_or_default().matches(needle).count();
+                let shot=|name:&str|mon(&ts,&format!("screendump {}",td.join(format!("{name}.ppm")).display()));
+                if !ready("winresize painted 400x240 state0",0){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(1600));let mut cur=(640,400);
+                let Some((x,y))=log_window(&tl,"400x240",0) else{return false;};
+                pointer_to(&ts,&mut cur,x+400,y+240);mon(&ts,"mouse_button 1");
+                pointer_to(&ts,&mut cur,x+480,y+300);mon(&ts,"mouse_button 0");
+                if !ready("winresize painted 480x300 state0",0){return false;}shot("resized");
+                pointer_to(&ts,&mut cur,x+480-53,y-19);pointer_click(&ts);
+                if !ready("winresize painted 1278x697 state2",0){return false;}shot("maximized");
+                mon(&ts,"sendkey f11");
+                if !ready("winresize painted 1280x800 state2",0){return false;}shot("fullscreen");
+                let n=count("winresize painted 1278x697 state2");mon(&ts,"sendkey f11");
+                if !ready("winresize painted 1278x697 state2",n){return false;}
+                let n=count("winresize painted 480x300 state0");mon(&ts,"sendkey alt-up");
+                if !ready("winresize painted 480x300 state0",n){return false;}shot("restored");
+                mon(&ts,"sendkey alt-f4");ready("desk: win32 window 1 closed",0)
+            });
+            let out=boot_and_run(&img,"winresize","/busybox sh /desk-winresize.sh","\nwinresize-done",180);
+            let pixel=|name:&str,x:usize,y:usize,color:[u8;3]|read_ppm(&dir.join(format!("{name}.ppm"))).is_some_and(|(w,h,d)|x<w&&y<h&&d[(y*w+x)*3..(y*w+x)*3+3]==color);
+            assert!(actions.join().unwrap_or(false)&&out.contains("winresize-exit:0")&&out.contains("winresize title-api-ok")&&out.contains("panel tasks: Windows sizi"),"Win32 resize/title/Controlbar messages or clean exit failed");
+            let (x,y)=log_window(&log,"400x240",0).expect("actual Win32 origin");
+            let (x,y)=(x as usize,y as usize);
+            for (name,x,y,w,h) in [("resized",x,y,480,300),("maximized",1,38,1278,697),("fullscreen",0,0,1280,800),("restored",x,y,480,300)] {
+                assert!(pixel(name,x+w-10,y+h-10,[250,220,40]),"{name}: client corner did not reach actual new buffer bounds");
+            }
+            println!("desk-winresize-test PASSED: real PE GetClientRect matches WM_SIZE; mouse resize, maximize, F11 and restore paint actual new buffer corners; Alt-F4 exits");
+        }
+        "desk-wininput-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let log=root.join("target/wininput-serial.log");let sock=root.join("target/wininput-mon.sock");
+            let shot=root.join("target/wininput-complete.ppm");
+            for p in [&log,&sock,&shot] {let _=std::fs::remove_file(p);}
+            let (tl,ts,ti)=(log.clone(),sock.clone(),shot.clone());
+            let actions=std::thread::spawn(move|| {
+                if !wait_for(&tl,"desk: win32 window",150){return false;}
+                std::thread::sleep(std::time::Duration::from_millis(2000));
+                let mut cur=(640,400);pointer_to(&ts,&mut cur,150,150);mon(&ts,"mouse_button 1");
+                if !wait_for(&tl,"wininput left-down",15){return false;}
+                pointer_to(&ts,&mut cur,190,170);
+                if !wait_for(&tl,"wininput left-drag",15){return false;}
+                mon(&ts,"mouse_button 0");
+                if !wait_for(&tl,"wininput left-up",15){return false;}
+                for (button,down,up) in [(2,"wininput right-down","wininput right-up"),(4,"wininput middle-down","wininput all-buttons-complete")] {
+                    mon(&ts,&format!("mouse_button {button}"));if !wait_for(&tl,down,15){return false;}
+                    mon(&ts,"mouse_button 0");if !wait_for(&tl,up,15){return false;}
+                }
+                std::thread::sleep(std::time::Duration::from_millis(800));
+                mon(&ts,&format!("screendump {}",ti.display()));
+                if std::env::var("THOS_WININPUT_ALT_CLOSE").is_ok() {mon(&ts,"sendkey alt-f4");}
+                else {pointer_to(&ts,&mut cur,379,61);pointer_click(&ts);}
+                wait_for(&tl,"desk: win32 window 1 closed",15)
+            });
+            let out=boot_and_run(&img,"wininput","/busybox sh /desk-wininput.sh","\nwininput-done",120);
+            let pixels=read_ppm(&shot).is_some_and(|(w,h,d)|w>350&&h>100&&d[(100*w+350)*3..(100*w+350)*3+3]==[46,180,90]);
+            assert!(actions.join().unwrap_or(false)&&out.contains("wininput-exit:0")&&out.contains("wininput close-complete")&&pixels,"real Win32 pointer transitions, paint or close failed");
+            println!("desk-wininput-test PASSED: real PE receives movement with held left button, all three down/up transitions, client coordinates and button masks; release paints and close exits");
+        }
         "desk-win32-test" => {
             let img = prod_interactive_image(cmd);
             desk_win32_test(&img);
@@ -1636,6 +2964,151 @@ fn main() {
                 eprintln!("foot-test FAILED (mapped {}, bright pixels {a}/{b}, command ran {wrote})", mapped.is_some());
                 exit(1);
             }
+        }
+        "gtk-input-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            let flags=Command::new("pkg-config").args(["--cflags","--libs","gtk+-3.0"]).output().expect("GTK3 development headers");
+            assert!(flags.status.success(),"GTK3 development headers unavailable");
+            run(Command::new("gcc").args(["-O1","-o"]).arg(root.join("target/gtk-input")).arg(root.join("xtask/testdata/gtk-input.c")).args(String::from_utf8(flags.stdout).unwrap().split_whitespace()));
+            patch_qa_ext2(&img,"gtk-input",&[("target/gtk-input","/gtk-input"),("xtask/testdata/gtk-input.sh","/gtk-input.sh")]);
+            let (log,sock,probe)=(root.join("target/gtk-input-serial.log"),root.join("target/gtk-input-mon.sock"),root.join("target/gtk-input-probe.ppm"));
+            for p in [&log,&sock,&probe]{let _=std::fs::remove_file(p);}
+            let (tl,ts,tp)=(log.clone(),sock.clone(),probe.clone());
+            let actions=std::thread::spawn(move||{
+                if !wait_for(&tl,"gtk-input-ready",150){return false;}
+                for _ in 0..60 {
+                    mon(&ts,&format!("screendump {}",tp.display()));
+                    if let Some((w,_,d))=read_ppm(&tp){
+                        let points:Vec<_>=d.chunks_exact(3).enumerate().filter(|(_,p)|*p==[19,177,221]).map(|(i,_)|(i%w,i/w)).collect();
+                        if points.len()>5000 {
+                            let x=(points.iter().map(|p|p.0).min().unwrap()+points.iter().map(|p|p.0).max().unwrap())/2;
+                            let y=(points.iter().map(|p|p.1).min().unwrap()+points.iter().map(|p|p.1).max().unwrap())/2;
+                            pointer_to(&ts,&mut(640,400),x as i32,y as i32);pointer_click(&ts);return true;
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                false
+            });
+            let out=boot_and_run_args(&img,"gtk-input","/busybox sh /gtk-input.sh","gtk-input-done:0",180,&["-nic","none"]);
+            assert!(actions.join().unwrap_or(false)&&out.contains("gtk-input-press button=1")&&out.contains("gtk-input-clicked")&&!out.contains("gtk-input-timeout"),"real GTK input failed; inspect target/gtk-input-serial.log and screenshot");
+            println!("gtk-input-test PASSED: real GTK3 press/click callback with default CSD on Wayland");
+        }
+        "wayland-keyboard-test" => {
+            let img=prod_interactive_image(cmd); let root=workspace_root();
+            if let Ok(frozen)=std::env::var("THOS_KEYBOARD_COMPOSITOR") {
+                std::fs::copy(frozen,root.join("target/thosdesk-keyboard")).expect("frozen compositor");
+            } else {
+            run(Command::new("gcc").args(["-O1","-o"]).arg(root.join("target/thosdesk-keyboard")).arg(root.join("xtask/testdata/thosdesk.c")).args(["-I/usr/include/freetype2","-lfreetype","-lm"]));
+            }
+            for(kind,name)in[("client-header","xdg-shell-client-protocol.h"),("private-code","xdg-shell-protocol.c")]{run(Command::new("wayland-scanner").args([kind,"/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"]).arg(root.join("target").join(name)));}
+            run(Command::new("gcc").args(["-O1","-Wall","-Wextra","-o"]).arg(root.join("target/wlkeyboardclient")).arg(root.join("xtask/testdata/wlkeyboardclient.c")).arg(root.join("target/xdg-shell-protocol.c")).arg("-I").arg(root.join("target")).arg("-lwayland-client"));
+            patch_qa_ext2(&img,"wayland-keyboard",&[("target/thosdesk-keyboard","/thosdesk"),("target/thosdesk-keyboard","/desktop"),("target/wlkeyboardclient","/wlkeyboardclient"),("xtask/testdata/wayland-keyboard.sh","/wayland-keyboard.sh")]);
+            let(log,sock)=(root.join("target/wayland-keyboard-serial.log"),root.join("target/wayland-keyboard-mon.sock"));
+            for p in [&log,&sock] { let _=std::fs::remove_file(p); }
+            let(tl,ts)=(log.clone(),sock.clone());
+            let actions=std::thread::spawn(move||{
+                for(stage,key)in[(0,"a"),(1,"b"),(2,"shift-c"),(3,"ctrl-a"),(4,"alt_r-a")]{
+                    if !wait_for(&tl,&format!("wlkbd-ready:{stage}\n"),60){return false;}
+                    mon(&ts,&format!("sendkey {key}"));
+                    if !wait_for(&tl,&format!("wlkbd-ok:{stage}\n"),20){return false;}
+                }
+                if !wait_for(&tl,"wlkbd-ready:5\n",60){return false;}
+                mon(&ts,"sendkey shift-a 5000");
+                if !wait_for(&tl,"wlkbd-ok:5\n",20){return false;}
+                for stage in 6..8 {
+                    if !wait_for(&tl,&format!("wlkbd-ready:{stage}\n"),20){return false;}
+                    mon(&ts,"sendkey f11");
+                    if !wait_for(&tl,&format!("wlkbd-ok:{stage}\n"),20){return false;}
+                }
+                true
+            });
+            let out=boot_and_run_args(&img,"wayland-keyboard","/busybox sh /wayland-keyboard.sh","\nwayland-keyboard-done",120,&["-nic","none"]);
+            assert!(actions.join().unwrap_or(false)&&out.contains("wlkbd-done")&&out.contains("wayland-keyboard-exit=0")&&!out.contains("wlkbd-FAIL"),"Wayland keyboard resources, release/rebind/focus, keymap or modifiers failed");
+            println!("wayland-keyboard-test PASSED: independent v3/v5 keymaps/focus/keys/modifiers, repeat versioning, release and rebind without mouse movement");
+        }
+        "wayland-input-test" => {
+            let img=prod_interactive_image(cmd);let root=workspace_root();
+            run(Command::new("gcc").args(["-O1","-o"]).arg(root.join("target/thosdesk-input")).arg(root.join("xtask/testdata/thosdesk.c")).args(["-I/usr/include/freetype2","-lfreetype","-lm"]));
+            for(kind,name)in[("client-header","xdg-shell-client-protocol.h"),("private-code","xdg-shell-protocol.c")]{run(Command::new("wayland-scanner").args([kind,"/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"]).arg(root.join("target").join(name)));}
+            run(Command::new("gcc").args(["-O1","-o"]).arg(root.join("target/wlinputclient")).arg(root.join("xtask/testdata/wlinputclient.c")).arg(root.join("target/xdg-shell-protocol.c")).arg("-I").arg(root.join("target")).arg("-lwayland-client"));
+            patch_qa_ext2(&img,"wayland-input",&[("target/thosdesk-input","/thosdesk"),("target/thosdesk-input","/desktop"),("target/wlinputclient","/wlinputclient"),("xtask/testdata/wayland-input.sh","/wayland-input.sh")]);
+            let(log,sock)=(root.join("target/wayland-input-serial.log"),root.join("target/wayland-input-mon.sock"));
+            for p in [&log,&sock]{let _=std::fs::remove_file(p);}
+            let(tl,ts,tr)=(log.clone(),sock.clone(),root.clone());
+            let actions=std::thread::spawn(move||{
+                if !wait_for(&tl,"wlinput-ready:0\n",90){return false;}
+                let shot=tr.join("target/wayland-input-first.ppm");let mut origin=None;let mut previous=None;
+                for _ in 0..25 {
+                    mon(&ts,&format!("screendump {}",shot.display()));
+                    if let Some((width,_,pixels))=read_ppm(&shot){
+                        let(mut left,mut top,mut count)=(usize::MAX,usize::MAX,0);
+                        for(i,p)in pixels.chunks_exact(3).enumerate(){if p==[23,197,53]{left=left.min(i%width);top=top.min(i/width);count+=1;}}
+                        if count>40000 {if previous==Some((left,top)){origin=previous;break;}previous=Some((left,top));}
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                }
+                let Some((left,top))=origin else{mon(&ts,"quit");return false;};
+                let mut cur=(640,400);
+                for(stage,(x,y))in[(20,20),(60,50),(70,60),(70,60),(70,60),(70,60),(70,60),(70,60),(70,60),(250,150),(45,35),(45,35),(45,35)].into_iter().enumerate(){
+                    if !wait_for(&tl,&format!("wlinput-ready:{stage}\n"),30){return false;}
+                    pointer_to(&ts,&mut cur,left as i32+x,top as i32+y);
+                    if stage==8 {mon(&ts,"mouse_button 1");pointer_to(&ts,&mut cur,left as i32+250,top as i32+150);mon(&ts,"mouse_button 0");}
+                    else {pointer_click(&ts);}
+                    if !wait_for(&tl,&format!("wlinput-ok:{stage} "),30){return false;}
+                }
+                if !wait_for(&tl,"wlinput-wheel-ready",30){return false;}
+                mon(&ts,"mouse_move 0 0 1");
+                wait_for(&tl,"wlinput-wheel-ok",30)
+            });
+            let out=boot_and_run_args(&img,"wayland-input","/busybox sh /wayland-input.sh","\nwayland-input-done",180,&["-nic","none"]);
+            assert!(actions.join().unwrap_or(false)&&out.contains("wlinput-done")&&out.contains("wlinput-wheel-ok")&&out.contains("wayland-input-exit=0")&&!out.contains("wlinput-FAIL"),"Wayland pointer target, coordinates, region snapshot or grab failed");
+            println!("wayland-input-test PASSED: 13 real input phases with two v3/v5 resources, independent release/rebind/current focus, wheel versioning, regions, subsurfaces and grab");
+        }
+        "wayland-subsurface-test" => {
+            let img = prod_interactive_image(cmd); let root = workspace_root();
+            run(Command::new("gcc").args(["-O1", "-o", root.join("target/thosdesk-subsurface").to_str().unwrap(), root.join("xtask/testdata/thosdesk.c").to_str().unwrap(), "-I/usr/include/freetype2", "-lfreetype", "-lm"]));
+            for (kind, output) in [("client-header", "xdg-shell-client-protocol.h"), ("private-code", "xdg-shell-protocol.c")] {
+                run(Command::new("wayland-scanner").args([kind, "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml", root.join(format!("target/{output}")).to_str().unwrap()]));
+            }
+            run(Command::new("gcc").args(["-O1", "-o", root.join("target/wlsubclient").to_str().unwrap(), root.join("xtask/testdata/wlsubclient.c").to_str().unwrap(), root.join("target/xdg-shell-protocol.c").to_str().unwrap(), "-I", root.join("target").to_str().unwrap(), "-lwayland-client"]));
+            // The shared helper validates partition bounds and checks ext2 before repacking.
+            patch_qa_ext2(&img,"subsurface",&[("target/thosdesk-subsurface","/thosdesk"),("target/thosdesk-subsurface","/desktop"),("target/wlsubclient","/wlsubclient"),("xtask/testdata/wayland-subsurface.sh","/wayland-subsurface.sh")]);
+            let log = root.join("target/subsurface-serial.log"); let sock = root.join("target/subsurface-mon.sock");
+            let shots: Vec<_> = (1..=10).map(|n| root.join(format!("target/subsurface-{n}.ppm"))).collect();
+            for p in shots.iter().chain([&log,&sock]) { let _ = std::fs::remove_file(p); }
+            let (tl, ts, ss) = (log.clone(), sock.clone(), shots.clone());
+            let actions = std::thread::spawn(move || {
+                if !wait_for(&tl, "desk: ready", 90) { return false; }
+                pointer_to(&ts, &mut (640,400), 20, 20);
+                for (i, shot) in ss.iter().enumerate() {
+                    if !wait_for(&tl, &format!("wlsubclient phase:{}\n", i+1), 90) { return false; }
+                    std::thread::sleep(std::time::Duration::from_millis(700)); mon(&ts, &format!("screendump {}", shot.display()));
+                    mon(&ts,"sendkey ret");
+                }
+                true
+            });
+            let out = boot_and_run(&img, "subsurface", "/busybox sh /wayland-subsurface.sh", "\nwayland-subsurface-done:0", 180);
+            assert!(actions.join().unwrap_or(false) && out.contains("wlsubclient-done"), "subsurface client did not finish");
+            let mut green_left = Vec::new();
+            let mut base_blue = 0;
+            for (i, shot) in shots.iter().enumerate() {
+                let (w, _, pixels) = read_ppm(shot).expect("subsurface screenshot missing");
+                let count = |color: [u8;3]| pixels.chunks_exact(3).filter(|p| *p == color).count();
+                let (blue,red,green,yellow)=(count([1,2,3]),count([170,0,17]),count([0,204,68]),count([255,170,0]));
+                // The existing rounded window corners clip a small part of the background.
+                // Measure that baseline once; subsequent phases must preserve its exact coverage.
+                if i == 0 { assert!((63900..=64000).contains(&blue),"parent background missing"); base_blue = blue; }
+                let expected = match i+1 {
+                    1|7|10 => (base_blue,0,0,0), 2 => (base_blue-8000,8000,0,0),
+                    3|4|5|9 => (base_blue-8000,0,8000,0), 6|8 => (base_blue-8000,0,6800,1200), _ => unreachable!()
+                };
+                assert_eq!((blue,red,green,yellow),expected,"subsurface pixels differ in phase {}",i+1);
+                green_left.push(pixels.chunks_exact(3).enumerate().filter(|(_,p)| *p == [0,204,68]).map(|(n,_)|n%w).min());
+            }
+            assert_eq!(green_left[2],green_left[3],"position applied before parent commit");
+            assert_eq!(green_left[4],green_left[3].map(|x|x+100),"position did not apply on parent commit");
+            println!("wayland-subsurface-test PASSED: real pixels, synchronized/desynchronized commits, parent-buffered position, nested surfaces, stacking and destruction");
         }
         "wayland-test" => {
             // an unmodified libwayland client (and the stock wayland-info) against the compositor's Wayland server
@@ -2036,6 +3509,7 @@ fn build_kernel_prod(features: &[&str]) {
 }
 
 fn build_kernel_raw(features: &[&str]) {
+    test_scratch::require_space(&workspace_root(), 1024 * 1024 * 1024);
     let mut c = Command::new(env!("CARGO"));
     c.current_dir(workspace_root())
         .args(["build", "--package", "thos-kernel", "--release"]);
@@ -2047,6 +3521,66 @@ fn build_kernel_raw(features: &[&str]) {
 
 fn kernel_elf() -> PathBuf {
     workspace_root().join("target/x86_64-unknown-none/release/thos-kernel")
+}
+
+fn patch_qa_ext2(img:&Path,tag:&str,files:&[(&str,&str)]) {
+    use std::io::{Read,Write,Seek,SeekFrom};
+    let root=workspace_root();let disk=test_scratch_path(&format!("{tag}-private-root.ext2"));
+    let mut image=std::fs::OpenOptions::new().read(true).write(true).open(img).unwrap();
+    image.seek(SeekFrom::Start(470)).unwrap();let mut partition=[0u8;8];image.read_exact(&mut partition).unwrap();
+    let start=u32::from_le_bytes(partition[..4].try_into().unwrap()) as u64*512;
+    let bytes=u32::from_le_bytes(partition[4..].try_into().unwrap()) as u64*512;
+    assert!(start>0&&bytes>0&&start+bytes<=image.metadata().unwrap().len(),"test requires a valid QA ext2 partition, not a RAM-root live image");
+    test_scratch::require_space(&root, bytes);
+    // Keep logical zeroes as holes in the temporary ext2 instead of allocating
+    // half a GiB for every small fixture update.
+    image.seek(SeekFrom::Start(start)).unwrap();
+    let mut extracted=std::fs::File::create(&disk).unwrap();
+    let mut chunk=vec![0u8;256*1024];let mut left=bytes;
+    while left>0 {
+        let n=left.min(chunk.len() as u64) as usize;image.read_exact(&mut chunk[..n]).unwrap();
+        if chunk[..n].iter().any(|b|*b!=0) {extracted.write_all(&chunk[..n]).unwrap();}
+        else {extracted.seek(SeekFrom::Current(n as i64)).unwrap();}
+        left-=n as u64;
+    }
+    extracted.set_len(bytes).unwrap();drop(extracted);
+    for(source,destination)in files {
+        // Only private QA roots are patched here. Create fixture parent dirs
+        // before debugfs write, which otherwise exits zero even when absent.
+        if let Some(parent)=Path::new(destination).parent(){let mut prefix=String::new();for part in parent.components(){if let std::path::Component::Normal(part)=part{prefix.push('/');prefix.push_str(part.to_str().unwrap());let _=Command::new("/usr/sbin/debugfs").args(["-w","-R",&format!("mkdir {prefix}")]).arg(&disk).output();}}}
+        let _=Command::new("/usr/sbin/debugfs").args(["-w","-R",&format!("rm {destination}")]).arg(&disk).output();
+        run(Command::new("/usr/sbin/debugfs").args(["-w","-R",&format!("write {} {destination}",root.join(source).display())]).arg(&disk));
+    }
+    run(Command::new("/usr/sbin/e2fsck").args(["-fn"]).arg(&disk));
+    assert_eq!(std::fs::metadata(&disk).unwrap().len(),bytes);
+    image.seek(SeekFrom::Start(start)).unwrap();
+    let mut patched=std::fs::File::open(&disk).unwrap();let mut previous=vec![0u8;chunk.len()];left=bytes;
+    while left>0 {
+        let n=left.min(chunk.len() as u64) as usize;
+        patched.read_exact(&mut chunk[..n]).unwrap();image.read_exact(&mut previous[..n]).unwrap();
+        if chunk[..n]!=previous[..n] {
+            image.seek(SeekFrom::Current(-(n as i64))).unwrap();image.write_all(&chunk[..n]).unwrap();
+            image.seek(SeekFrom::Current(-(n as i64))).unwrap();image.read_exact(&mut previous[..n]).unwrap();
+            assert_eq!(chunk[..n],previous[..n],"QA partition writeback differs from checked root");
+        }
+        left-=n as u64;
+    }
+}
+
+fn build_winlookup_fixture(root: &Path, img: &Path) {
+    if Command::new("x86_64-w64-mingw32-gcc").arg("--version").output().is_err(){return;}
+    for name in ["lookupa","lookupb"] {
+        let dll=root.join(format!("target/{name}.dll"));
+        let import=root.join(format!("target/lib{name}.dll.a"));
+        run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-nostdlib","-shared","-Wl,--entry=DllMain","-o"]).arg(&dll)
+            .arg(root.join(format!("xtask/testdata/{name}.c"))).arg(root.join(format!("xtask/testdata/{name}.def")))
+            .arg(format!("-Wl,--out-implib,{}",import.display())));
+        run(Command::new("debugfs").args(["-w","-R",&format!("write {} Windows/System32/{name}.dll",dll.display())]).arg(img));
+    }
+    let exe=root.join("target/winlookup.exe");
+    run(Command::new("x86_64-w64-mingw32-gcc").args(["-O1","-o"]).arg(&exe).arg(root.join("xtask/testdata/winlookup.c"))
+        .arg(root.join("target/liblookupa.dll.a")).arg(root.join("target/liblookupb.dll.a")));
+    run(Command::new("debugfs").args(["-w","-R",&format!("write {} winlookup.exe",exe.display())]).arg(img));
 }
 
 fn build_iso() -> PathBuf {
@@ -2107,15 +3641,20 @@ fn ramroot() -> bool {
 fn limine_conf(root: &Path) -> PathBuf {
     let src = root.join("boot/limine.conf");
     let res = std::env::var("THOS_RES").ok();
-    if res.is_none() && !ramroot() {
+    let menu = ramroot() || std::env::var("THOS_BOOTMENU").is_ok();
+    if res.is_none() && !ramroot() && !menu {
         return src;
     }
     let mut text = std::fs::read_to_string(&src).expect("read limine.conf");
+    if menu {
+        // the start menu: the live/normal system and the installer (kernel command line `install`: no login, the installer runs as root)
+        text = "# SPDX-License-Identifier: GPL-2.0-or-later\n# THOS start menu\ntimeout: 6\ninterface_branding: THOS\n\n/THOS - start\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n\n/THOS - install to this computer\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n    cmdline: install\n".to_string();
+    }
     if let Some(res) = res {
         text = text.replace("    protocol: limine\n", &format!("    protocol: limine\n    resolution: {res}\n"));
     }
     if ramroot() {
-        text = text.replace("    kernel_path: boot():/boot/thos-kernel\n", "    kernel_path: boot():/boot/thos-kernel\n    module_path: boot():/boot/thos-root.ext2\n");
+        text = text.replace("    kernel_path: boot():/boot/thos-kernel\n", "    kernel_path: boot():/boot/thos-kernel\n    module_path: boot():/boot/thos-disk.img\n");
     }
     let dir = root.join("target/limine-res");
     std::fs::create_dir_all(&dir).expect("mkdir");
@@ -2129,6 +3668,7 @@ fn fs_mib() -> u64 {
 }
 
 fn disk_image() -> PathBuf {
+    test_scratch::require_space(&workspace_root(), 0);
     let root = workspace_root();
     let img = root.join("target/disk.img");
     let progs = ["init", "child"];
@@ -2139,6 +3679,8 @@ fn disk_image() -> PathBuf {
         .flatten()
         .filter_map(|e| e.metadata().ok()?.modified().ok())
         .chain(root.join("xtask/src/main.rs").metadata().and_then(|m| m.modified()))
+        .chain(root.join("kernel/src/brcm_firmware.rs").metadata().and_then(|m| m.modified()))
+        .chain(["SHA256SUMS", "LICENCE.broadcom_bcm43xx", "LICENSE.radeon", "brcm/bcm43xx-0.fw", "brcm/bcm43xx_hdr-0.fw", "radeon/CEDAR_me.bin", "radeon/CEDAR_pfp.bin", "radeon/CEDAR_rlc.bin"].into_iter().filter_map(|f| root.join("assets/firmware").join(f).metadata().ok()?.modified().ok()))
         .max();
     let fresh = match (img.metadata().and_then(|m| m.modified()), newest_src) {
         (Ok(i), Some(s)) => i > s,
@@ -2185,6 +3727,12 @@ fn disk_image() -> PathBuf {
     }
 
     // A plain data file for the open/read/lseek test.
+    let firmware = root.join("assets/firmware");
+    run(Command::new("sha256sum").current_dir(&firmware).args(["-c", "SHA256SUMS"]));
+    let binary = std::fs::read(firmware.join("brcm/bcm43xx-0.fw")).expect("BCM43225 firmware");
+    let index = std::fs::read(firmware.join("brcm/bcm43xx_hdr-0.fw")).expect("BCM43225 firmware index");
+    brcm_firmware::Firmware::parse(&binary, &index).and_then(|f| f.mimo16_bytes()).expect("valid BCM43225 MIMO16 profile");
+    copy_tree_into_image(&img, firmware.to_str().unwrap(), "/lib/firmware");
     let msg = root.join("target/message");
     std::fs::write(&msg, b"hello a file read via open+lseek+read\n").unwrap();
     run(Command::new("debugfs").args([
@@ -2391,6 +3939,7 @@ fn disk_image() -> PathBuf {
             for d in ["usr/share/fonts", "usr/share/fonts/thos"] {
                 let _ = Command::new("debugfs").args(["-w", "-R", &format!("mkdir {d}"), img.to_str().unwrap()]).output();
             }
+            run(Command::new("debugfs").args(["-w","-R",&format!("write {} usr/share/fonts/thos/copyright",root.join("kernel/font/gdi-lato-copyright.txt").display()),img.to_str().unwrap()]));
             for (src, dst) in [("/usr/share/fonts/truetype/lato/Lato-Regular.ttf", "Lato-Regular.ttf"), ("/usr/share/fonts/truetype/lato/Lato-Bold.ttf", "Lato-Bold.ttf"), ("/usr/share/fonts/truetype/font-awesome/fontawesome-webfont.ttf", "icons.ttf"), ("/usr/share/fonts/truetype/hack/Hack-Regular.ttf", "Hack-Regular.ttf")] {
                 if std::path::Path::new(src).exists() {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {src} usr/share/fonts/thos/{dst}"), img.to_str().unwrap()]));
@@ -2445,6 +3994,18 @@ fn disk_image() -> PathBuf {
                 for sub in ["lib", "conf", "bin"] {
                     copy_tree_into_image(&img, &format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"), &format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"));
                 }
+                // Debian stores configuration and license texts behind links.
+                // Materialize their contents; skipping links leaves java.security absent.
+                for sub in ["conf", "legal"] {
+                    let materialized=root.join(format!("target/java-{sub}"));
+                    let _=std::fs::remove_dir_all(&materialized);
+                    run(Command::new("cp").args(["-Lr",&format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"),materialized.to_str().unwrap()]));
+                    copy_tree_into_image(&img,materialized.to_str().unwrap(),&format!("/usr/lib/jvm/java-21-openjdk-amd64/{sub}"));
+                }
+                let tools=std::env::var("THOS_JDK_TOOLS").map(PathBuf::from).unwrap_or_else(|_|root.join("target/openjdk-tools/usr/lib/jvm/java-21-openjdk-amd64/bin"));
+                if tools.join("javac").exists() {
+                    copy_tree_into_image(&img,tools.to_str().unwrap(),"/usr/lib/jvm/java-21-openjdk-amd64/bin");
+                }
                 for dir in ["lib", "lib/server"] {
                     if let Ok(rd) = std::fs::read_dir(format!("/usr/lib/jvm/java-21-openjdk-amd64/{dir}")) {
                         for e in rd.flatten() {
@@ -2458,8 +4019,26 @@ fn disk_image() -> PathBuf {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} Hello.class", root.join("xtask/testdata/Hello.class").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} java.sh", root.join("xtask/testdata/java.sh").to_str().unwrap()), img.to_str().unwrap()]));
             }
-            // GTK 3 hello (unmodified toolkit; needs THOS_FS_MIB=192 and THOS_GTK=1, see `gtk-test`)
-            if (std::env::var("THOS_GTK").is_ok() || std::env::var("THOS_NETSURF").is_ok()) && std::path::Path::new("/usr/share/glib-2.0/schemas/gschemas.compiled").exists() {
+            if std::env::var("THOS_FIREFOX").is_ok() {
+                let tree=std::path::Path::new("/usr/lib/firefox-esr");
+                assert!(tree.join("firefox-esr").exists(),"Firefox ESR test runtime not installed on host");
+                copy_tree_into_image(&img,tree.to_str().unwrap(),"/usr/lib/firefox-esr");
+                let mut fdirs:std::collections::BTreeSet<String>=["/lib","/lib64","/lib/x86_64-linux-gnu"].iter().map(|s|s.to_string()).collect();
+                add_dynamic_program(&img,tree.join("firefox-esr").to_str().unwrap(),&mut fdirs);
+                for e in std::fs::read_dir(tree).unwrap().flatten() {
+                    let path=e.path();
+                    if path.extension().is_some_and(|e|e=="so") {add_dynamic_program(&img,path.to_str().unwrap(),&mut fdirs);}
+                }
+                for lib in ["libnssckbi.so","libsoftokn3.so","libfreeblpriv3.so"] {
+                    let p=format!("/usr/lib/x86_64-linux-gnu/{lib}");
+                    if std::path::Path::new(&p).exists(){add_dynamic_program(&img,&p,&mut fdirs);}
+                }
+                for f in ["firefox.sh","firefox-test.html","firefox-downloads.sh","firefox-downloads-test.html"] {
+                    run(Command::new("debugfs").args(["-w","-R",&format!("write {} {f}",root.join(format!("xtask/testdata/{f}")).display()),img.to_str().unwrap()]));
+                }
+            }
+            // GTK assets used by GTK applications, NetSurf and the Firefox probe.
+            if (std::env::var("THOS_GTK").is_ok() || std::env::var("THOS_NETSURF").is_ok() || std::env::var("THOS_FIREFOX").is_ok()) && std::path::Path::new("/usr/share/glib-2.0/schemas/gschemas.compiled").exists() {
                 let mut gdirs: std::collections::BTreeSet<String> = ["/lib", "/lib64", "/lib/x86_64-linux-gnu"].iter().map(|s| s.to_string()).collect();
                 let hello = root.join("target/gtkhello");
                 let ok = Command::new("sh").arg("-c").arg(format!("gcc -O1 -o {} {} $(pkg-config --cflags --libs gtk+-3.0)", hello.display(), root.join("xtask/testdata/gtkhello.c").display())).status().map(|s| s.success()).unwrap_or(false);
@@ -2664,7 +4243,9 @@ fn disk_image() -> PathBuf {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", pk.join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-fetch", root.join("xtask/testdata/thos-fetch").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg-repo-ui.sh", root.join("xtask/testdata/pkg-repo-ui.sh").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} shrc", root.join("xtask/testdata/shrc").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-autostart", root.join("xtask/testdata/thos-autostart").to_str().unwrap()), img.to_str().unwrap()]));
                 if std::env::var("THOS_FRESH_INSTALL").is_ok() {            // a copy installed from this image asks for a new account at its first start
@@ -2680,13 +4261,14 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall"] {          // the installer: root helper + the disk copier
+                for prog in ["thoselevate", "thosinstall","sudo","doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
-                    if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
+                    let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
+                    if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "perf.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
@@ -2724,6 +4306,7 @@ fn disk_image() -> PathBuf {
                 ("ws2_32.c", "ws2_32.dll", vec!["-lkernel32"]),
                 ("bcryptprimitives.c", "bcryptprimitives.dll", vec!["-lkernel32"]),
                 ("userenv.c", "userenv.dll", vec!["-lkernel32"]),
+                ("msimg32.c", "msimg32.dll", vec!["-lgdi32"]),
                 ("synch.c", "api-ms-win-core-synch-l1-2-0.dll", vec!["-lkernel32"]),
             ] {
                 let out = root.join(format!("target/{dll}"));
@@ -2782,27 +4365,29 @@ fn disk_image() -> PathBuf {
             if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wbig.to_str().unwrap(), root.join("xtask/testdata/wbig.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} wbig.exe", wbig.to_str().unwrap()), img.to_str().unwrap()]));
             }
-            let wc = root.join("target/whello.exe");
-            if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join("xtask/testdata/whello.c").to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
-                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} whello.exe", wc.to_str().unwrap()), img.to_str().unwrap()]));
+            for name in ["whello", "winargv"] {
+                let wc=root.join(format!("target/{name}.exe"));
+                if Command::new("x86_64-w64-mingw32-gcc").args(["-O1", "-o", wc.to_str().unwrap(), root.join(format!("xtask/testdata/{name}.c")).to_str().unwrap()]).status().map(|s|s.success()).unwrap_or(false) {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {name}.exe", wc.display()), img.to_str().unwrap()]));
+                }
             }
-            let wh = root.join("target/winhello.exe");
-            if Command::new("x86_64-w64-mingw32-gcc")
-                .args(["-O1", "-nostdlib", "-ffreestanding", "-Wl,-e,start", "-o", wh.to_str().unwrap(), root.join("xtask/testdata/winhello.c").to_str().unwrap(), "-luser32", "-lgdi32", "-lkernel32"])
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} winhello.exe", wh.to_str().unwrap()), img.to_str().unwrap()]));
+            build_winlookup_fixture(&root,&img);
+            for name in ["winhello", "wininput", "winresize"] {
+                let wh=root.join(format!("target/{name}.exe"));
+                if Command::new("x86_64-w64-mingw32-gcc")
+                    .args(["-O1", "-nostdlib", "-ffreestanding", "-Wl,-e,start", "-o", wh.to_str().unwrap(), root.join(format!("xtask/testdata/{name}.c")).to_str().unwrap(), "-luser32", "-lgdi32", "-lkernel32"])
+                    .status().map(|s|s.success()).unwrap_or(false) {
+                    run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {name}.exe", wh.display()), img.to_str().unwrap()]));
+                }
             }
-            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings", "thosnotify", "thosedit", "thoscal"] {
+            for prog in ["thosdesk", "thoswin", "thostext", "thosterm", "thospanel", "thosfiles", "thossoft", "thossettings", "thosnotify", "thosedit", "thoscal", "thosdownloads", "thosrun", "access-exec-test", "sendfiletest", "iostress", "seqpacket-test", "large-write-test", "disk-full-test", "memfd-freeze-test", "posix-lock-test", "readonly-file-test", "flock-test", "thread-sched-test", "gsbase-test", "anonymous-test", "heap-churn", "timer-load-test", "winlife-test", "winresize-life-test"] {
                 if prog == "thosterm" {
                     // `desktop` is the same program started under another name: it brings up panel + terminal too
                     let td = root.join("target/thosdesk");
                     let _ = Command::new("debugfs").args(["-w", "-R", &format!("write {} desktop", td.to_str().unwrap()), img.to_str().unwrap()]).output();
                 }
                 let out = root.join(format!("target/{prog}"));
-                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thossettings", "thosedit", "thoscal", "thosterm", "thosview", "thostext"].contains(&prog);       // these draw with the UI toolkit (FreeType)
+                let ui = ["thosdesk", "thospanel", "thosfiles", "thossoft", "thossettings", "thosedit", "thoscal", "thosterm", "thosview", "thostext", "thosdownloads"].contains(&prog);       // these draw with the UI toolkit (FreeType)
                 let mut gargs: Vec<String> = vec!["-O1".into(), "-o".into(), out.to_str().unwrap().into(), root.join(format!("xtask/testdata/{prog}.c")).to_str().unwrap().into()];
                 if ui {
                     gargs.extend(["-I/usr/include/freetype2".to_string(), "-lfreetype".to_string(), "-lm".to_string()]);
@@ -2974,7 +4559,7 @@ fn disk_image() -> PathBuf {
             img.to_str().unwrap(),
         ]));
     }
-    for (f, name) in [("thos-pkg", "thos-pkg"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall")] {
+    for (f, name) in [("thos-pkg", "thos-pkg"), ("thos-fetch", "thos-fetch"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall"), ("sudo", "sudo"), ("doas", "doas")] {
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("sif /{f} links_count 2"), img.to_str().unwrap()]).output();      // the hard link counts as a second name (e2fsck checks)
     }
@@ -5717,10 +7302,16 @@ fn type_raw(sock: &Path, text: &str) {
             '|' => "altgr-less", // DE: AltGr + the key left of Y
             '>' => "shift-less", // DE: Shift + the key left of Y (plain = `<`)
             '$' => "shift-4",
+            '&' => "shift-6",
+            '?' => "shift-minus",
+            '\'' => "shift-backslash",
+            '"' => "shift-2",
+            '<' => "less",
             ';' => "shift-comma",
             ':' => "shift-dot",
             '(' => "shift-8",
             ')' => "shift-9",
+            '=' => "shift-0", // German layout: Shift+0, needed for environment assignments
             // QWERTZ: the physical Y and Z keys are swapped relative to the US
             // names QEMU's `sendkey` uses, so typing `y` needs the `z` key.
             'y' => "z",
@@ -5811,7 +7402,8 @@ fn kbd_test(iso: &Path) {
     let disk = disk_image();
     let (mut child, log, sock) = spawn_interactive_qemu("kbd", iso, &disk);
 
-    if !wait_for(&log, "THOS first-run setup", 90) {
+    let boot_secs=std::env::var("THOS_BOOT_TIMEOUT").ok().and_then(|v|v.parse::<u64>().ok()).unwrap_or(90).clamp(90,600);
+    if !wait_for(&log, "THOS first-run setup", boot_secs) {
         kill(&mut child, "kbd-test", "kernel never reached first-run setup", &log);
     }
     drive_login(&sock, &log, &mut child, "kbd-test");
@@ -6046,10 +7638,16 @@ fn login_test(iso: &Path) {
 /// Normally builds it. Under `cargo xtask suite` the runner has already built it once
 /// (`THOS_PREBUILT_IMG`): each test then works on its **own copy**, because QEMU writes to the disk
 /// (first-run setup creates the admin account in it) and parallel tests must not share a disk.
+// Preserve zero-filled holes in generated QA images; bytes and logical length stay identical.
+fn copy_test_image(source:&Path,destination:&Path) {
+    test_scratch::require_space(&workspace_root(), std::fs::metadata(source).expect("test seed metadata").len());
+    run(Command::new("cp").args(["--sparse=always","--reflink=auto","--"]).arg(source).arg(destination));
+}
+
 fn prod_interactive_image(tag: &str) -> PathBuf {
     if let Ok(shared) = std::env::var("THOS_PREBUILT_IMG") {
-        let own = workspace_root().join(format!("target/priv-{tag}.img"));
-        std::fs::copy(&shared, &own).expect("copy the prebuilt image");
+        let own = test_scratch_path(&format!("priv-{tag}.img"));
+        copy_test_image(Path::new(&shared), &own);
         return own;
     }
     build_kernel_prod(&["interactive"]);
@@ -6079,9 +7677,9 @@ fn suite(args: &[String]) {
 
     // tests that boot the shared production image (the slowest first, so the pool stays busy)
     const SHARED: &[&str] = &[
-        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-cal-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
+        "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-drag-test", "desk-cal-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
-        "net-test", "random-test", "bios-power-test",
+        "net-test", "net-settings-test", "random-test", "bios-power-test",
     ];
     const ISO: &[&str] = &[
         "kbd-test", "ahci-test", "ext2-test", "fat-test", "integrity-test", "registry-crash-test",
@@ -6159,6 +7757,7 @@ fn suite(args: &[String]) {
 }
 
 fn bios_image() -> PathBuf {
+    test_scratch::require_space(&workspace_root(), 0);
     const GAP_SECTORS: u64 = 2048;
     const BOOT_MIB: u64 = 64;
     let root = workspace_root();
@@ -6173,7 +7772,16 @@ fn bios_image() -> PathBuf {
     let _ = std::fs::remove_file(&boot);
     // THOS_RAMROOT: the boot partition also carries the root file system (a module the boot loader loads into memory), sized to hold it
     let _ = std::fs::remove_file(root.join("target/disk.img"));
-    let ram_fs = if ramroot() { Some(disk_image()) } else { None };
+    // THOS_RAMROOT: the module is a complete disk image (MBR, boot loader, boot partition, root): the system runs from it in memory and the
+    // installer copies from it. It is the ordinary image of this build, made first by a nested call with the switch off.
+    let ram_fs = if ramroot() {
+        std::env::remove_var("THOS_RAMROOT");
+        let reference = bios_image();
+        std::env::set_var("THOS_RAMROOT", "1");
+        let copy = root.join("target/thos-disk-module.img");
+        std::fs::copy(&reference, &copy).expect("copy the reference image");
+        Some(copy)
+    } else { None };
     let boot_mib = match &ram_fs { Some(f) => BOOT_MIB + std::fs::metadata(f).map(|m| m.len() >> 20).unwrap_or(0) + 16, None => BOOT_MIB };
     std::fs::write(&boot, vec![0u8; (boot_mib << 20) as usize]).expect("create boot partition");
     run(Command::new("mkfs.fat").args(["-F", "32", "-n", "THOSBOOT", b]));
@@ -6186,7 +7794,7 @@ fn bios_image() -> PathBuf {
         run(Command::new("mcopy").args(["-i", b, src.to_str().unwrap(), dst]));
     }
     if let Some(f) = &ram_fs {
-        run(Command::new("mcopy").args(["-i", b, f.to_str().unwrap(), "::boot/thos-root.ext2"]));
+        run(Command::new("mcopy").args(["-i", b, f.to_str().unwrap(), "::boot/thos-disk.img"]));
     }
 
     // Always start from a pristine root FS: other tests (`kbd-test`, ...) boot
@@ -6273,8 +7881,8 @@ fn bios_power_test(img: &Path, cmd: &str, needle: &str) {
     let _ = std::fs::remove_file(&log);
     let _ = std::fs::remove_file(&sock);
     // Each run starts from a pristine copy so first-run setup appears again.
-    let run_img = root.join("target/bios-power.img");
-    std::fs::copy(img, &run_img).expect("copy image");
+    let run_img = test_scratch_path("bios-power.img");
+    copy_test_image(img, &run_img);
     let mut child = Command::new("qemu-system-x86_64")
         .args(["-M", "pc", "-m", "512M", "-smp", "2"])
         .args([
@@ -6339,8 +7947,8 @@ fn shortcuts_test(img: &Path) {
     let sock = root.join("target/shortcuts-mon.sock");
     let _ = std::fs::remove_file(&log);
     let _ = std::fs::remove_file(&sock);
-    let run_img = root.join("target/shortcuts.img");
-    std::fs::copy(img, &run_img).expect("copy image");
+    let run_img = test_scratch_path("shortcuts.img");
+    copy_test_image(img, &run_img);
     let mut child = Command::new("qemu-system-x86_64")
         .args(["-M", "pc", "-m", "512M", "-smp", "2"])
         .args([
@@ -6450,8 +8058,8 @@ fn longcmd_test(img: &Path) {
     let sock = root.join("target/longcmd-mon.sock");
     let _ = std::fs::remove_file(&log);
     let _ = std::fs::remove_file(&sock);
-    let run_img = root.join("target/longcmd.img");
-    std::fs::copy(img, &run_img).expect("copy image");
+    let run_img = test_scratch_path("longcmd.img");
+    copy_test_image(img, &run_img);
     let mut child = Command::new("qemu-system-x86_64")
         .args(["-M", "pc", "-m", "512M", "-smp", "2"])
         .args([
@@ -6519,8 +8127,8 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     let sock = root.join(format!("target/{tag}-mon.sock"));
     let _ = std::fs::remove_file(&log);
     let _ = std::fs::remove_file(&sock);
-    let run_img = root.join(format!("target/{tag}.img"));
-    std::fs::copy(img, &run_img).expect("copy image");
+    let run_img = test_scratch_path(&format!("{tag}.img"));
+    copy_test_image(img, &run_img);
     let mut child = Command::new("qemu-system-x86_64")
         .args(["-M", "pc", "-m", &std::env::var("THOS_MEM").unwrap_or_else(|_| "512M".into()), "-smp", &std::env::var("THOS_SMP").unwrap_or_else(|_| "2".into())])
         .args(if std::env::var("THOS_BOOT_USB").is_ok() {
@@ -6542,6 +8150,7 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
             "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap()),
         ])
         .args(extra)
+        .args(std::env::var("THOS_QEMU_EXTRA").unwrap_or_default().split_whitespace().collect::<Vec<_>>())
         .spawn()
         .expect("spawn qemu");
     if !wait_for(&log, "THOS first-run setup", 90) {
@@ -6553,7 +8162,12 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
     }
     std::thread::sleep(std::time::Duration::from_millis(800));
     type_line(&sock, cmd);
-    let found = wait_for(&log, needle, secs);
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(secs);
+    let found=loop {
+        if std::fs::read_to_string(&log).unwrap_or_default().contains(needle) {break true;}
+        if child.try_wait().ok().flatten().is_some()||std::time::Instant::now()>=deadline {break false;}
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
     if !found {
         // a hang: leave the CPUs' registers (three samples, a second apart) next to the log; rip -> `nm` on the kernel
         use std::io::{Read, Write};
@@ -6574,6 +8188,9 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
             std::thread::sleep(std::time::Duration::from_secs(1));
         }
         let _ = std::fs::write(root.join(format!("target/{tag}-regs.txt")), all);
+    }
+    if found {
+        mon(&sock,&format!("screendump {}",root.join(format!("target/{tag}-finish.ppm")).display()));
     }
     let out = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = child.kill();
@@ -8018,6 +9635,17 @@ fn desk_term_test(img: &Path) {
     });
     let out = boot_and_run(img, "deskterm", "/busybox sh /desk-term.sh", "desk ok:", 150);
     let line = out.lines().any(|l| l.trim() == "term-line: hellothos") && out.lines().any(|l| l.trim() == "term-line: ä");
+    let prompt_blue = read_ppm(&shot).is_some_and(|(w,h,d)| {
+        let Some((x,y)) = log_window(&log,"744x504",0) else { return false; };
+        let mut n=0;
+        for py in y.max(0) as usize..(y+504).max(0).min(h as i32) as usize {
+            for px in x.max(0) as usize..(x+744).max(0).min(w as i32) as usize {
+                let i=(py*w+px)*3;
+                if d[i+2]>180 && d[i+2] as i32-d[i+1] as i32>45 && d[i+1] as i32-d[i] as i32>15 { n+=1; }
+            }
+        }
+        n>15
+    });
     let (w, count) = match read_ppm(&shot) {
         Some((w, _, d)) => {
             let mut n = 0;
@@ -8033,8 +9661,8 @@ fn desk_term_test(img: &Path) {
         }
         None => (0, 0),
     };
-    if line && count > 200 && out.contains("term done") {
-        println!("desk-term-test PASSED: a typed command ran in a BusyBox shell on a pty inside a terminal window ({count} text pixels on screen, width {w})");
+    if line && count > 200 && prompt_blue && out.contains("term done") {
+        println!("desk-term-test PASSED: shell input/output, German layout and blue prompt ({count} text pixels on screen, width {w})");
     } else {
         eprintln!("  output line seen: {line}, text pixels: {count}");
         for l in out.lines().filter(|l| l.contains("term") || l.contains("desk") || l.contains("fault") || l.contains("unhandled")) {
@@ -8077,6 +9705,18 @@ fn desk_panel_test(img: &Path) {
         if wait_for(&tlog, "term ready", 40) {
             std::thread::sleep(ms(1500));
             mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            // The unchanged right-hand controlbar button must open Network settings.
+            let mut dx = 1140 - 638;
+            while dx != 0 {
+                let step = dx.clamp(-40, 40);
+                mon(&tsock, &format!("mouse_move {step} 0"));
+                dx -= step;
+            }
+            std::thread::sleep(ms(300));
+            mon(&tsock, "mouse_button 1");
+            std::thread::sleep(ms(300));
+            mon(&tsock, "mouse_button 0");
+            let _ = wait_for(&tlog, "settings ready", 40);
         }
     });
     let out = boot_and_run(img, "deskpanel", "/busybox sh /desk-panel.sh", "desk ok:", 150);
@@ -8086,8 +9726,8 @@ fn desk_panel_test(img: &Path) {
     };
     let bar_ok = px(125, 768).is_some_and(|c| c.0 < 70 && c.1 < 80 && c.2 > 30 && c.2 < 110); // the glass pill behind "Start"
     let term = out.contains("term ready");
-    if bar_ok && term {
-        println!("desk-panel-test PASSED: undecorated panel at the bottom edge; a click on its button launched a terminal window");
+    if bar_ok && term && out.contains("settings ready") {
+        println!("desk-panel-test PASSED: controlbar launched Terminal and Network settings by mouse clicks");
     } else {
         eprintln!("  panel pixel {:?}, terminal launched: {term}", px(125, 768));
         for l in out.lines().filter(|l| l.contains("panel") || l.contains("term") || l.contains("desk") || l.contains("fault")) {
@@ -8100,11 +9740,62 @@ fn desk_panel_test(img: &Path) {
 
 /// `cargo xtask desk-menu-test`: the Start button opens the menu above the panel; its "D" toggle pins Terminal to the
 /// desktop (an icon appears and survives in /desktop.conf); a click outside closes the menu; a row launches a terminal.
+fn desk_menu_scroll_test(img:&Path) {
+    use std::io::{Read,Seek,SeekFrom};
+    let root=workspace_root();
+    let wheel=std::env::var("THOS_USB_MOUSE_WHEEL").is_ok();
+    // Populate only this private image. The unprivileged guest cannot write
+    // the system /apps.conf; type_line also intentionally supports short commands.
+    let catalog=root.join("target/menuscroll-apps.conf");
+    std::fs::write(&catalog,(1..=20).map(|i|format!("Program{i:02}|/thosfiles\n")).collect::<String>()).unwrap();
+    let disk=root.join("target/menuscroll-root.img");
+    let mut image=std::fs::OpenOptions::new().read(true).write(true).open(img).unwrap();
+    image.seek(SeekFrom::Start(470)).unwrap();let mut partition=[0u8;8];image.read_exact(&mut partition).unwrap();
+    let start=u32::from_le_bytes(partition[..4].try_into().unwrap()) as u64*512;
+    let bytes=u32::from_le_bytes(partition[4..].try_into().unwrap()) as u64*512;
+    image.seek(SeekFrom::Start(start)).unwrap();
+    assert_eq!(std::io::copy(&mut (&mut image).take(bytes),&mut std::fs::File::create(&disk).unwrap()).unwrap(),bytes);
+    for dest in ["/apps.conf","/desk-menu-scroll.sh"] {
+        let _=Command::new("/usr/sbin/debugfs").args(["-w","-R",&format!("rm {dest}"),disk.to_str().unwrap()]).output();
+        let src=if dest=="/apps.conf" {catalog.clone()}else{root.join("xtask/testdata/desk-menu-scroll.sh")};
+        run(Command::new("/usr/sbin/debugfs").args(["-w","-R",&format!("write {} {dest}",src.display()),disk.to_str().unwrap()]));
+    }
+    image.seek(SeekFrom::Start(start)).unwrap();assert_eq!(std::io::copy(&mut std::fs::File::open(&disk).unwrap(),&mut image).unwrap(),bytes);drop(image);
+    let log=root.join("target/menuscroll-serial.log");let sock=root.join("target/menuscroll-mon.sock");
+    let shots:Vec<_>=(1..=3).map(|i|root.join(format!("target/menuscroll-{i}.ppm"))).collect();
+    for p in shots.iter().chain([&log,&sock]) {let _=std::fs::remove_file(p);}
+    let(tl,ts,ss)=(log.clone(),sock.clone(),shots.clone());
+    let actions=std::thread::spawn(move|| {
+        let ms=std::time::Duration::from_millis;
+        if !wait_for(&tl,"panel ready",200){return;}
+        std::thread::sleep(ms(1000));mon(&ts,"sendkey meta_l");std::thread::sleep(ms(1000));
+        mon(&ts,&format!("screendump {}",ss[0].display()));
+        if wheel {let mut cur=(640,400);pointer_to(&ts,&mut cur,100,530);for _ in 0..8 {mon(&ts,"mouse_move 0 0 -1");std::thread::sleep(ms(120));}}
+        else {mon(&ts,"sendkey end");}
+        std::thread::sleep(ms(1500));
+        mon(&ts,&format!("screendump {}",ss[1].display()));
+        // 29 entries at 800 px: fourteen visible rows, last centre y=654.
+        let mut cur=if wheel{(100i32,530i32)}else{(640i32,400i32)};
+        for (x,y) in [(283,654),(90,654)] {
+            let(mut dx,mut dy)=(x-cur.0,y-cur.1);
+            while dx!=0||dy!=0 {let(sx,sy)=(dx.clamp(-40,40),dy.clamp(-40,40));mon(&ts,&format!("mouse_move {sx} {sy}"));dx-=sx;dy-=sy;}
+            cur=(x,y);std::thread::sleep(ms(300));mon(&ts,"mouse_button 1");std::thread::sleep(ms(300));mon(&ts,"mouse_button 0");std::thread::sleep(ms(1000));
+        }
+        if wait_for(&tl,"files ready",35) {std::thread::sleep(ms(1000));mon(&ts,&format!("screendump {}",ss[2].display()));}
+    });
+    let guest="/busybox sh /desk-menu-scroll.sh";
+    let out=boot_and_run(img,"menuscroll",guest,"\nmenu-scroll-done",180);let _=actions.join();
+    let changed=match(read_ppm(&shots[0]),read_ppm(&shots[1])) {(Some(a),Some(b))=>a.2.iter().zip(b.2.iter()).filter(|(a,b)|a!=b).count()>2000,_=>false};
+    assert!(changed&&out.contains("Program20|/thosfiles")&&out.contains("files ready"),"Start viewport/pin/launch regression failed; see target/menuscroll-serial.log");
+    if wheel {assert!(out.contains("wheel true"),"wheel report layout not negotiated");println!("USB mouse wheel PASSED: actual scroll to final Start-menu page, pin and launch via USB mouse");}
+    println!("desk-menu-scroll-test PASSED: 29 programs, final page, final entry pin and actual Files launch");
+}
+
 fn desk_menu_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/deskmenu-serial.log");
     let sock = root.join("target/deskmenu-mon.sock");
-    let shots: Vec<PathBuf> = (1..=4).map(|i| root.join(format!("target/deskmenu-{i}.ppm"))).collect();
+    let shots: Vec<PathBuf> = (1..=6).map(|i| root.join(format!("target/deskmenu-{i}.ppm"))).collect();
     for f in [&log, &sock] {
         let _ = std::fs::remove_file(f);
     }
@@ -8136,11 +9827,21 @@ fn desk_menu_test(img: &Path) {
             mon(sock, "mouse_button 0");
             std::thread::sleep(ms(700));
         };
-        // the menu: 8 programs, rows 40 px apart starting at y = 382 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
-        let row_y = |i: i32| 374 + 40 * i;
-        goto(36, 768);                       // Start
-        click(&tsock);
+        // the menu: 9 programs, rows 40 px apart starting at y = 334 (centre of the first row); the dock chip sits at x = 283, the desktop chip at x = 319
+        let row_y = |i: i32| 334 + 40 * i;
+        mon(&tsock,"sendkey meta_l");       // standalone Windows key opens Start
+        std::thread::sleep(ms(1200));
         mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+        mon(&tsock,"sendkey meta_l");       // second press closes Start
+        std::thread::sleep(ms(700));
+        mon(&tsock, &format!("screendump {}", tshots[5].to_str().unwrap()));
+        goto(36,768);
+        click(&tsock);
+        goto(283,710);                       // Shut down asks first; QEMU must keep running
+        click(&tsock);
+        mon(&tsock, &format!("screendump {}", tshots[4].to_str().unwrap()));
+        goto(70,710);                        // Cancel returns to Programs
+        click(&tsock);
         goto(319, row_y(0));                 // desktop chip of the Terminal row: pin to the desktop
         click(&tsock);
         std::thread::sleep(ms(1500));        // the compositor re-reads /desktop.conf
@@ -8149,9 +9850,9 @@ fn desk_menu_test(img: &Path) {
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
         goto(36, 768);                       // Start again, then the Terminal row itself
         click(&tsock);
-        goto(283, row_y(4));                 // dock chip of the Text editor row (fifth): pin to the dock
+        goto(283, row_y(5));                 // dock chip of the Text editor row (sixth): pin to the dock
         click(&tsock);
-        goto(319, row_y(6));                 // desktop chip of the Win32 demo row (seventh)
+        goto(319, row_y(7));                 // desktop chip of the Win32 demo row (eighth)
         click(&tsock);
         std::thread::sleep(ms(1500));
         mon(&tsock, &format!("screendump {}", tshots[3].to_str().unwrap()));
@@ -8168,13 +9869,15 @@ fn desk_menu_test(img: &Path) {
         (x < w && y < h).then(|| (d[(y * w + x) * 3], d[(y * w + x) * 3 + 1], d[(y * w + x) * 3 + 2]))
     };
     let accent = |c: Option<(u8, u8, u8)>| c.is_some_and(|c| (c.0 as i32 - 0x5b).abs() + (c.1 as i32 - 0x8d).abs() + (c.2 as i32 - 0xef).abs() < 60);
-    let menu_open = accent(px(0, 271, 374));                       // the Terminal row's dock chip is lit while the menu is open
+    let menu_open = accent(px(0, 271, 334));                       // the Terminal row's dock chip is lit while the menu is open
     let icon = px(1, 48, 40).is_some_and(|c| (c.0 as i32 - 16).abs() + (c.1 as i32 - 20).abs() + (c.2 as i32 - 40).abs() > 90); // a desktop icon tile, not wallpaper
     let icon_shot = px(1, 48, 50);
-    let menu_closed = !accent(px(1, 271, 374));
+    let menu_closed = !accent(px(1, 271, 334));
     let term = out.contains("term ready");
-    if menu_open && icon && menu_closed && term {
-        println!("desk-menu-test PASSED: Start menu opens, pins an icon to the desktop, closes on an outside click and launches a program");
+    let keyboard_close = !accent(px(5,271,334));
+    let confirmation = match (read_ppm(&shots[0]),read_ppm(&shots[4])) { (Some(x),Some(y))=>x.2.iter().zip(y.2.iter()).filter(|(p,q)|p!=q).count()>2000,_=>false };
+    if menu_open && icon && menu_closed && term && keyboard_close && confirmation {
+        println!("desk-menu-test PASSED: Windows key opens/closes Start; shutdown confirmation cancels; pinning and program launch work");
     } else {
         eprintln!("  menu open {menu_open}, desktop icon {icon} ({icon_shot:?}), menu closed {menu_closed}, terminal launched {term}");
         for l in out.lines().filter(|l| l.contains("panel") || l.contains("term") || l.contains("desk") || l.contains("fault")) {
@@ -8188,7 +9891,7 @@ fn desk_menu_test(img: &Path) {
 /// The position of the n-th (0-based) legacy window of this size that the compositor logged: "desk: window N created WxH at X,Y".
 fn log_window(log: &Path, size: &str, nth: usize) -> Option<(i32, i32)> {
     let text = std::fs::read_to_string(log).ok()?;
-    let line = text.lines().filter(|l| l.contains("desk: window") && l.contains(&format!(" created {size} at "))).nth(nth)?;
+    let line = text.lines().filter(|l| (l.contains("desk: window")||l.contains("desk: win32 window")) && l.contains(&format!(" created {size} at "))).nth(nth)?;
     let at = line.rsplit(" at ").next()?;
     let (x, y) = at.trim().split_once(',')?;
     Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
@@ -8429,7 +10132,7 @@ fn desk_win32_test(img: &Path) {
     let root = workspace_root();
     let log = root.join("target/deskwin32-serial.log");
     let sock = root.join("target/deskwin32-mon.sock");
-    let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/deskwin32-{i}.ppm"))).collect();
+    let shots: Vec<PathBuf> = (1..=3).map(|i| root.join(format!("target/deskwin32-{i}.ppm"))).collect();
     for f in [&log, &sock] {
         let _ = std::fs::remove_file(f);
     }
@@ -8459,6 +10162,10 @@ fn desk_win32_test(img: &Path) {
         mon(&tsock, "mouse_button 0");
         std::thread::sleep(ms(2000));
         mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+        pointer_to(&tsock,&mut (150,150),379,61);pointer_click(&tsock);
+        if wait_for(&tlog,"desk: win32 window 1 closed",30) {
+            std::thread::sleep(ms(1500));mon(&tsock,&format!("screendump {}",tshots[2].display()));
+        }
     });
     let out = boot_and_run(img, "deskwin32", "/busybox sh /desk-win32.sh", "desk ok:", 150);
     let px = |i: usize, x: usize, y: usize| -> Option<(u8, u8, u8)> {
@@ -8469,8 +10176,9 @@ fn desk_win32_test(img: &Path) {
     // blue-ish background, yellow rectangle at (40..140, 40..100) in the window; after the click the blue is darker
     let c1 = near(px(0, 100 + 250, 80 + 20), (30, 160, 200)) && near(px(0, 100 + 80, 80 + 70), (250, 220, 40));
     let c2 = near(px(1, 100 + 250, 80 + 20), (30, 160, 140));
-    if c1 && c2 {
-        println!("desk-win32-test PASSED: a real Win32 .exe (mingw) draws into a compositor window; a click arrives as WM_LBUTTONDOWN and repaints it");
+    let closed=read_ppm(&shots[2]).is_some_and(|(_,_,d)|d.chunks_exact(3).filter(|p|*p==[30,160,140]).count()<5);
+    if c1 && c2 && closed {
+        println!("desk-win32-test PASSED: a real Win32 .exe (mingw) draws into a compositor window; a click arrives as WM_LBUTTONDOWN and repaints it; close removes the window/store from the desktop");
     } else {
         eprintln!("  before click: bg {:?} rect {:?}; after: bg {:?}", px(0, 350, 100), px(0, 180, 150), px(1, 350, 100));
         for l in out.lines().filter(|l| l.contains("desk") || l.contains("win") || l.contains("PE") || l.contains("fault") || l.contains("unhandled")) {

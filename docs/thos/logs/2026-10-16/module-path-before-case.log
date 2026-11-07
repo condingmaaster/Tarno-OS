@@ -1,0 +1,79 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1828:17
+     |
+1828 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.78s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winmodule-probe`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1111/32768 files (2.8% non-contiguous), 104017/524288 blocks
+winmodule-path=C:\program.exe expected=C:\winmodule.exe
+winmodule-FAIL ansi-path error=0
+winmodule-FAIL wide-path error=0
+winmodule-FAIL ansi-truncated error=0
+winmodule-FAIL wide-truncated error=0
+winmodule-FAIL ansi-one error=0
+winmodule-FAIL wide-one error=0
+winmodule-FAIL ansi-zero error=54321
+winmodule-ok wide-zero
+winmodule-FAIL ansi-exact error=54321
+winmodule-FAIL ansi-fit error=54321
+winmodule-FAIL wide-exact error=54321
+winmodule-FAIL wide-fit error=54321
+winmodule-path=C:\program.exe expected=C:\winmodule.exe
+winmodule-FAIL ansi-path error=54321
+winmodule-FAIL wide-path error=54321
+winmodule-FAIL ansi-truncated error=0
+winmodule-FAIL wide-truncated error=0
+winmodule-FAIL ansi-one error=0
+winmodule-FAIL wide-one error=0
+winmodule-FAIL ansi-zero error=54321
+winmodule-ok wide-zero
+winmodule-FAIL ansi-exact error=54321
+winmodule-FAIL ansi-fit error=54321
+winmodule-FAIL wide-exact error=54321
+winmodule-FAIL wide-fit error=54321
+winmodule-ok kernel-handle
+winmodule-path=C:\program.exe expected=C:\Windows\System32\KERNEL32.DLL
+winmodule-FAIL ansi-path error=54321
+winmodule-FAIL wide-path error=54321
+winmodule-FAIL ansi-truncated error=0
+winmodule-FAIL wide-truncated error=0
+winmodule-FAIL ansi-one error=0
+winmodule-FAIL wide-one error=0
+winmodule-FAIL ansi-zero error=54321
+winmodule-ok wide-zero
+winmodule-FAIL ansi-exact error=54321
+winmodule-FAIL ansi-fit error=54321
+winmodule-FAIL wide-exact error=54321
+winmodule-FAIL wide-fit error=54321
+winmodule-ok extension-handle
+winmodule-path=C:\program.exe expected=C:\Windows\System32\kernel32x.dll
+winmodule-FAIL ansi-path error=54321
+winmodule-FAIL wide-path error=54321
+winmodule-FAIL ansi-truncated error=0
+winmodule-FAIL wide-truncated error=0
+winmodule-FAIL ansi-one error=0
+winmodule-FAIL wide-one error=0
+winmodule-FAIL ansi-zero error=54321
+winmodule-ok wide-zero
+winmodule-FAIL ansi-exact error=54321
+winmodule-FAIL ansi-fit error=54321
+winmodule-FAIL wide-exact error=54321
+winmodule-FAIL wide-fit error=54321
+winmodule-FAIL invalid-ansi error=0
+winmodule-FAIL invalid-wide error=0
+winmodule-failures=46
+winmodule-done

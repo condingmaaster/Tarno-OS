@@ -1,0 +1,7 @@
+
+running 2 tests
+test tests::idle_return_reclaims_registry_entry_without_reusing_live_queue ... ok
+test tests::staged_waiter_prevents_orphan_queue ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

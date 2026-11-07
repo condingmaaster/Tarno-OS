@@ -1,0 +1,47 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1909:17
+     |
+1909 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.05s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winexportbounds-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (3.0% non-contiguous), 103808/524288 blocks
+winexportbounds-ok valid-mapped-name-first
+winexportbounds-ok valid-mapped-name-last
+winexportbounds-ok valid-ordinal
+winexportbounds-ok missing-name
+winexportbounds-ok huge-name-count-bounded
+winexportbounds-ok huge-function-count-bounded
+winexportbounds-ok name-table-crosses-image
+winexportbounds-ok ordinal-table-crosses-image
+winexportbounds-ok eat-crosses-image
+winexportbounds-ok ordinal-index-outside-eat
+winexportbounds-ok target-outside-image
+winexportbounds-ok zero-export-slot
+winexportbounds-ok name-must-terminate-inside-image
+winexportbounds-ok forwarder-must-terminate-inside-directory
+winexportbounds-ok valid-forwarder-resolves
+winexportbounds-ok missing-forwarder-module
+winexportbounds-ok directory-crosses-image
+winexportbounds-ok directory-too-short
+winexportbounds-ok optional-header-too-short
+winexportbounds-ok hostile-pe-offset-bounded
+winexportbounds-ok dos-magic-required
+winexportbounds-ok hostile-image-size-bounded
+winexportbounds-ok multiple-names-one-function
+winexportbounds-ok healthy-after-malformed-images
+winexportbounds-ok high-kernel-pointer-rejected
+winexportbounds-result=PASS
+winexportbounds-done

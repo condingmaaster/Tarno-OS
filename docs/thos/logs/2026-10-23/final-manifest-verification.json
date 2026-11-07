@@ -1,0 +1,11 @@
+{
+  "manifest": "target/thos-live-2026-10-23-night-build-manifest.json",
+  "kernel_and_runtime_sources_match_current_files": true,
+  "frozen_binary_and_root_and_source_archive_hashes_valid": true,
+  "automation_id": "thos-um-00-10-fortsetzen",
+  "automation_active": true,
+  "single_reset_resume": "2026-10-24 02:47 Europe/Berlin",
+  "test_scratch_empty": true,
+  "physical_disk_updated": false,
+  "physical_keyboard_changed": false
+}

@@ -31,6 +31,7 @@ const ST_ACK: u8 = 1;
 const ST_DRIVER: u8 = 2;
 const ST_DRIVER_OK: u8 = 4;
 const F_MAC: u32 = 1 << 5;
+const F_STATUS: u32 = 1 << 16;
 
 const HDR: usize = 10; // struct virtio_net_hdr without MRG_RXBUF
 const BUFS: usize = 16;
@@ -103,6 +104,7 @@ impl Queue {
 }
 
 pub struct VirtioNet {
+    has_link_status: bool,
     io: u16,
     pub mac: [u8; 6],
     rx: Queue,
@@ -135,6 +137,7 @@ fn in8(p: u16) -> u8 {
 }
 
 impl VirtioNet {
+    pub fn link_up(&self) -> bool { !self.has_link_status || in16(self.io + REG_CONFIG + 6) & 1 != 0 }
     pub fn probe() -> Result<Self, &'static str> {
         let loc = pci::find_id(VENDOR_VIRTIO, DEVICE_NET_LEGACY).ok_or("no virtio-net device")?;
         let bar0 = pci::read32(loc, 0x10);
@@ -151,7 +154,7 @@ impl VirtioNet {
         if host & F_MAC == 0 {
             return Err("virtio-net offers no MAC address");
         }
-        out32(io + REG_GUEST_FEATURES, F_MAC); // nothing else: no offloads, 10-byte header
+        out32(io + REG_GUEST_FEATURES, F_MAC | (host & F_STATUS)); // link status, no offloads
 
         let (dma_phys, dma_len) = crate::mm::net_dma();
         let dma_virt = crate::mm::phys_to_virt(x86_64::PhysAddr::new(dma_phys)).as_mut_ptr::<u8>();
@@ -189,6 +192,7 @@ impl VirtioNet {
             *b = in8(io + REG_CONFIG + i as u16);
         }
         let mut dev = Self {
+            has_link_status: host & F_STATUS != 0,
             io,
             mac,
             rx,

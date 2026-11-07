@@ -553,6 +553,7 @@ impl Tg3 {
         self.w(HOSTCC_MODE, 0x2 | 0x100 | 0x8);
     }
 
+    pub fn link_up(&self) -> bool { self.link }
     fn check_link(&mut self) {
         let now = crate::timer::monotonic_ns();
         if now.saturating_sub(self.link_checked_ns) < 250_000_000 {

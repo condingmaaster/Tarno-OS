@@ -6,6 +6,8 @@
 # Everything it does is written to the log (/var/log/thos-install.log and ~/thos-install.log on the stick), also when it fails.
 B=/busybox
 # disks may only be read and written by root: ask for the administrator password once, then run this same script as root
+INSTALLER=0
+if [ "$1" = --installer ]; then INSTALLER=1; shift; HOME=${HOME:-/tmp}; set -- --home "$HOME" "$@"; fi
 if [ "$1" != --home ]; then
     echo "  The installer needs the administrator password."
     exec /bin/thoselevate $B sh /bin/thos-install --home "${HOME:-/tmp}" "$@"
@@ -17,7 +19,15 @@ if [ "$1" = --log ]; then exec $B less "$HOMELOG"; fi
 
 say()  { echo "$*"; echo "$($B date '+%H:%M:%S') $*" >> $LOG; }
 show() { echo "$*"; echo "         $*" >> $LOG; }
-die()  { say "STOP: $*"; keep_log; echo; echo "The log is in $HOMELOG (read it with: thos-install --log)."; exit 1; }
+die()  { say "STOP: $*"; keep_log; echo; echo "The log is in $HOMELOG (read it with: thos-install --log)."; finish; exit 1; }
+finish() {   # in the boot-menu installer the computer is not left at a bare prompt
+    [ "$INSTALLER" = 1 ] || return 0
+    echo
+    printf "  r = restart, s = shut down, Enter = command line: "
+    read what
+    case "$what" in r|R) $B sync; $B reboot -f ;; s|S) $B sync; $B poweroff -f ;; esac
+    exit 0
+}
 keep_log() { $B cp "$LOG" /tmp/thos-install.log 2>/dev/null; $B sync; }
 
 echo "== THOS installer ==" > $LOG
@@ -33,6 +43,8 @@ say "1/4  Checking this computer"
 CPU=$($B grep -m1 'model name' /proc/cpuinfo | $B cut -d: -f2 | $B sed 's/^ *//')
 CORES=$($B grep -c '^processor' /proc/cpuinfo)
 MEM=$($B awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+# a system running from a loaded disk image has that image taken out of the memory it reports: count it
+[ "$BOOT" = ram ] && MEM=$((MEM + $($B awk '$1=="disk" && $2=="/dev/ram0" {print $3}' /tmp/thos-disks.txt 2>/dev/null || echo 0)))
 NET=$($B sed -n 1p /proc/netinfo | $B cut -d' ' -f2)
 FAIL=0
 check() { # check <ok|warn|fail> <text>
@@ -44,7 +56,7 @@ check() { # check <ok|warn|fail> <text>
 }
 check ok "Processor: $CPU, $CORES core(s)"
 if [ "$MEM" -ge 512 ]; then check ok "Memory: $MEM MB"; elif [ "$MEM" -ge 256 ]; then check warn "Memory: $MEM MB (works, but little)"; else check fail "Memory: only $MEM MB (at least 256 MB needed)"; fi
-if [ "$BOOT" = usb ]; then check ok "Started from the USB stick (BIOS/Legacy mode)"; else check fail "THOS is already running from the internal disk: boot the stick to install"; fi
+if [ "$BOOT" = usb ] || [ "$BOOT" = ram ]; then check ok "Started from the USB stick (BIOS/Legacy mode)"; else check fail "THOS is already running from the internal disk: boot the stick to install"; fi
 if [ "$NET" = up ]; then check ok "Network cable connected"; else check warn "No network (not needed for the installation)"; fi
 
 # ---- 2. disks ---------------------------------------------------------------------------------------------------------------------
@@ -54,7 +66,9 @@ DISKS=/tmp/thos-disks.txt
 /bin/thosinstall --disks > $DISKS 2>&1
 [ -s $DISKS ] || die "no disks could be read (root rights are needed: run again and enter the administrator password)"
 cat $DISKS >> $LOG
-SRCMB=$($B awk '$1=="part" && $2=="/dev/sdb" {e=$4+$5; if (e>m) m=e} END {print m+0}' $DISKS)
+$B grep -v '^\(disk\|part\|free\) ' $DISKS | while read l; do show "  ! $l"; done
+SRCDEV=/dev/sdb; [ "$BOOT" = ram ] && SRCDEV=/dev/ram0
+SRCMB=$($B awk -v s="$SRCDEV" '$1=="part" && $2==s {e=$4+$5; if (e>m) m=e} END {print m+0}' $DISKS)
 TARGET=""
 N=0
 while read kind dev a b c d rest; do
@@ -87,7 +101,7 @@ if [ "$1" != --yes ]; then
     printf "  Type YES (capital letters) to install, anything else cancels: "
     read ans
     echo "answer: $ans" >> $LOG
-    [ "$ans" = YES ] || { say "Cancelled by the user. Nothing was changed."; keep_log; exit 1; }
+    [ "$ans" = YES ] || { say "Cancelled by the user. Nothing was changed."; keep_log; finish; exit 1; }
 fi
 
 # ---- 4. install --------------------------------------------------------------------------------------------------------------------------
@@ -107,6 +121,7 @@ if $B grep -q "install done" $LOG; then
     echo
     echo "  Shut down, remove the stick and start the computer: THOS starts from the internal disk."
     echo "  The log of this installation: $HOMELOG   (command: thos-install --log)"
+    finish
     exit 0
 fi
 die "the installation did not finish. The internal disk is NOT bootable. You can run the installer again"

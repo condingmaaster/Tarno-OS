@@ -1,0 +1,10 @@
+{
+  "primary": {
+    "usedPercent": 95,
+    "windowDurationMins": 300,
+    "resetsAt": 1792106464
+  },
+  "all_guests_stopped": true,
+  "once_resume_local": "2026-10-16T01:22:00+02:00",
+  "real_keyboard_unchanged": true
+}

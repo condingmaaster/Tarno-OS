@@ -21,13 +21,15 @@
 #include "thosgfx.h"
 #include "thosui.h"
 #include "thosmotion.h"
+#include "thoscommand.h"
 
 #define PH 64                                  /* the panel surface: floating glass pills with a margin of wallpaper around them */
 static int PW = 1024;
+static int screen_h = 800;
 #define MAXB 10
 #define MAXD 16
-#define MAXA 24
-struct ent { char label[24]; char cmd[160]; };
+#define MAXA 128
+struct ent { char label[24]; char cmd[1024]; };
 static struct ent bar[MAXB], dsk[MAXD], apps[MAXA];
 static int nbar, ndsk, napps;
 #define PANEL_USER "/tmp/panel.conf"
@@ -54,7 +56,7 @@ static int sock_connect(void) {
 static int load_list(const char *path, struct ent *e, int max) {
     FILE *f = fopen(path, "r");
     int n = 0;
-    for (char line[200]; f && fgets(line, sizeof line, f) && n < max;) {
+    for (char line[1400]; f && fgets(line, sizeof line, f) && n < max;) {
         char *b = strchr(line, '|');
         if (!b) continue;
         *b = 0;
@@ -78,18 +80,10 @@ static int find(struct ent *e, int n, const char *label) {
 }
 /* is the program of a command there? (empty command = the terminal) */
 static int cmd_exists(const char *cmd) {
-    char prog[160];
+    char prog[1024];
     if (!*cmd) return access("/thosterm", X_OK) == 0;
     if (!strncmp(cmd, "TERM:", 5)) cmd += 5;
-    while (*cmd) {                                           /* leading VAR=value words are environment */
-        const char *sp = cmd + strcspn(cmd, " =");
-        if (*sp != '=') break;
-        cmd = cmd + strcspn(cmd, " ");
-        while (*cmd == ' ') cmd++;
-    }
-    snprintf(prog, sizeof prog, "%s", cmd);
-    prog[strcspn(prog, " ")] = 0;
-    return access(prog, X_OK) == 0;
+    return thos_command_program(cmd,prog,sizeof prog) && access(prog, X_OK) == 0;
 }
 static void add_app(const char *label, const char *cmd) {
     if (napps >= MAXA || find(apps, napps, label) >= 0 || !cmd_exists(cmd)) return;
@@ -109,12 +103,13 @@ static void build_apps(void) {
     add_app("Terminal", "");
     add_app("Files", "/thosfiles");
     add_app("Software", "/thossoft");
+    add_app("Downloads", "/thosdownloads");
     add_app("Settings", "/thossettings");
     add_app("Text editor", "/thosedit");
     add_app("Foot terminal", "/usr/bin/foot");
     add_app("Web browser", "/usr/bin/netsurf-gtk https://www.debian.org/");
     add_app("GTK demo", "/gtkhello 70");
-    add_app("Win32 demo", "/thoswin");
+    add_app("Win32 demo", "/winhello.exe");
     { FILE *bd = fopen("/proc/bootdisk", "r");              /* booted from a stick: offer the installer */
       char b[16] = "";
       if (bd) { if (fgets(b, sizeof b, bd)) {} fclose(bd); }
@@ -141,12 +136,19 @@ static struct dk items[MAXI];
 static int nitems;
 static struct spring start_hov, start_dip;                /* dip: the press feedback, 1 at the moment of the click and springing back to 0 */
 #define RW 152                                          /* the right pill: network state + clock */
-static int net_up, net_x0, net_x1;
+static int net_up, net_wifi, net_x0, net_x1;
 static int read_net(void) {                             /* the link state the kernel reports in /proc/netinfo */
     FILE *f = fopen("/proc/netinfo", "r");
-    char l[40] = "";
-    if (f) { if (fgets(l, sizeof l, f)) {} fclose(f); }
-    return !strncmp(l, "link up", 7);
+    char l[128];
+    int state = 0;
+    if (f) {
+        while (fgets(l, sizeof l, f)) {
+            if (!strcmp(l, "link up\n")) state |= 1;
+            if (!strcmp(l, "wlan_present 1\n")) state |= 2;
+        }
+        fclose(f);
+    }
+    return state;
 }
 static int dock_avail(void) { return PW - 2 * DOCK_X - 118 - RW - 2 * 14 - 20; }
 static struct dk *item_new(int kind, int key, const char *label, int at) {
@@ -242,7 +244,7 @@ static void draw_bar(void) {
     int rw = RW, rx = PW - DOCK_X - rw, tw = rw - 44, tx = rx + 44;
     pill(rx, rw);
     net_x0 = rx; net_x1 = rx + 44;
-    ui_icon(col, PW, PH, rx + 24, DOCK_Y + DOCK_H / 2, 0xf1e6, 15, net_up ? UI_GOOD : 0x6c748c);                       /* a plug: lit green when the link is up */
+    ui_icon(col, PW, PH, rx + 24, DOCK_Y + DOCK_H / 2, !net_up && net_wifi ? 0xf1eb : 0xf1e6, 15, net_up ? UI_GOOD : 0x6c748c); /* Detection alone never indicates a connection. */
     if (!net_up) ui_rrect(col, PW, PH, rx + 14, DOCK_Y + DOCK_H / 2 + 11, 20, 2, 1, 0x6c748c);
     for (int y = DOCK_Y + 14; y < DOCK_Y + DOCK_H - 14; y++) col[y * PW + rx + 42] = 0x2d3448;
     ui_text(col, PW, PH, tx + (tw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
@@ -300,15 +302,17 @@ static void draw_bar(void) {
 #define M_HEAD 52
 #define M_ROW 40
 #define M_FOOT 60
-#define ROWS (napps)
+static int menu_rows, menu_first;
+#define ROWS (menu_rows)
 #define CHIP_W 30
 static int mfd = -1, mh, mshm = -1, hover = -1;
+static int power_pending;
 static struct spring mh_y, mh_a, mh_foot;      /* the menu's hover highlight glides between rows; the footer buttons fade */
 static int menu_busy(void) { return mfd >= 0 && (spring_busy(&mh_y) || spring_busy(&mh_a) || spring_busy(&mh_foot)); }
 static void menu_hover(int hv) {
     if (hv == hover) return;
-    if (hv >= 0 && hv < napps) { if (hover < 0 || hover >= napps) spring_init(&mh_y, (float)(hv * M_ROW), SP_HOVER); spring_to(&mh_y, (float)(hv * M_ROW)); spring_to(&mh_a, 1); spring_to(&mh_foot, 0); }
-    else if (hv >= napps) { spring_to(&mh_a, 0); spring_to(&mh_foot, 1); }
+    if (hv >= 0 && hv < ROWS) { if (hover < 0 || hover >= ROWS) spring_init(&mh_y, (float)(hv * M_ROW), SP_HOVER); spring_to(&mh_y, (float)(hv * M_ROW)); spring_to(&mh_a, 1); spring_to(&mh_foot, 0); }
+    else if (hv >= ROWS) { spring_to(&mh_a, 0); spring_to(&mh_foot, 1); }
     else { spring_to(&mh_a, 0); spring_to(&mh_foot, 0); }
     hover = hv;
 }
@@ -331,26 +335,38 @@ static void draw_menu(void) {
     ui_rrect(mmask, M_W, mh, 0, 0, M_W, mh, 18, 0xffffffu);
     ui_rrect(mcol, M_W, mh, 0, 0, M_W, mh, 18, 0x39425eu);
     ui_rrect_g(mcol, M_W, mh, 1, 1, M_W - 2, mh - 2, 17, 0x212839u, 0x161b28u, 255);
-    ui_text(mcol, M_W, mh, 20, 32, "THOS", UI_BOLD, 18, UI_TEXT);
-    ui_text(mcol, M_W, mh, 20 + ui_text_width(UI_BOLD, 18, "THOS") + 10, 32, "Programs", UI_REG, 12, UI_MUTED);
+    ui_text(mcol, M_W, mh, 20, 32, power_pending ? (power_pending==1 ? "Restart THOS?" : "Shut down THOS?") : "THOS", UI_BOLD, 18, UI_TEXT);
+    if(!power_pending) {
+        char label[40];
+        if(napps>ROWS) snprintf(label,sizeof label,"Programs %d-%d/%d",menu_first+1,menu_first+ROWS,napps);
+        else snprintf(label,sizeof label,"Programs");
+        ui_text(mcol, M_W, mh, 20 + ui_text_width(UI_BOLD, 18, "THOS") + 10, 32, label, UI_REG, 12, UI_MUTED);
+    }
+    if(power_pending) {
+        ui_text(mcol,M_W,mh,20,95,"Save your work before continuing.",UI_BOLD,14,UI_TEXT);
+        ui_text(mcol,M_W,mh,20,125,"Open applications will be stopped.",UI_REG,13,UI_MUTED);
+        ui_text(mcol,M_W,mh,20,151,"Unsaved changes can be lost.",UI_REG,13,UI_MUTED);
+    }
     ui_icon(mcol, M_W, mh, chip_x(0) + CHIP_W / 2, 22, 0xf0c9, 10, UI_MUTED);
     ui_icon(mcol, M_W, mh, chip_x(1) + CHIP_W / 2, 22, 0xf108, 10, UI_MUTED);
-    if (mh_a.p > 0.02f) ui_rrect_g(mcol, M_W, mh, 8, M_HEAD + (int)(mh_y.p + 0.5f) + 1, M_W - 16, M_ROW - 2, 10, 0x2a3248u, 0x2a3248u, (unsigned)(mh_a.p > 1 ? 255 : mh_a.p * 255));
-    for (int r = 0; r < ROWS; r++) {
+    if (!power_pending && mh_a.p > 0.02f) ui_rrect_g(mcol, M_W, mh, 8, M_HEAD + (int)(mh_y.p + 0.5f) + 1, M_W - 16, M_ROW - 2, 10, 0x2a3248u, 0x2a3248u, (unsigned)(mh_a.p > 1 ? 255 : mh_a.p * 255));
+    for (int r = 0; !power_pending && r < ROWS; r++) {
         int y = M_HEAD + r * M_ROW;
-        ui_rrect_g(mcol, M_W, mh, 16, y + 6, 28, 28, 8, ui_shade(ui_app_color(apps[r].label), 18), ui_shade(ui_app_color(apps[r].label), -18), 255);
-        ui_icon(mcol, M_W, mh, 30, y + 20, ui_app_glyph(apps[r].label), 13, 0xffffffu);
-        ui_text(mcol, M_W, mh, 56, y + 25, apps[r].label, UI_REG, 14, UI_TEXT);
-        draw_chip(chip_x(0), y + 7, find(bar, nbar, apps[r].label) >= 0, 0xf0c9);
-        draw_chip(chip_x(1), y + 7, find(dsk, ndsk, apps[r].label) >= 0, 0xf108);
+        const struct ent *app=&apps[menu_first+r];
+        ui_rrect_g(mcol, M_W, mh, 16, y + 6, 28, 28, 8, ui_shade(ui_app_color(app->label), 18), ui_shade(ui_app_color(app->label), -18), 255);
+        ui_icon(mcol, M_W, mh, 30, y + 20, ui_app_glyph(app->label), 13, 0xffffffu);
+        ui_text(mcol, M_W, mh, 56, y + 25, app->label, UI_REG, 14, UI_TEXT);
+        draw_chip(chip_x(0), y + 7, find(bar, nbar, app->label) >= 0, 0xf0c9);
+        draw_chip(chip_x(1), y + 7, find(dsk, ndsk, app->label) >= 0, 0xf108);
     }
     int fy = mh - M_FOOT + 10;
     for (int i = 0; i < 3; i++) {
+        if(power_pending && i==1) continue;
         int x, w; foot_btn_rect(i, &x, &w);
         int on = hover == ROWS + i && mh_foot.p > 0.5f;
         ui_card(mcol, M_W, mh, x, fy, w, 38, 11, on ? (i == 2 ? 0x4a2630u : 0x2a3248u) : 0x1b2130u, on && i == 2 ? 0xb9505eu : 0x34405aU);
         uint32_t ic = i == 0 ? 0xf08b : i == 1 ? IC_REFRESH : IC_POWER;
-        const char *lab = i == 0 ? "Quit" : i == 1 ? "Restart" : "Shut down";
+        const char *lab = power_pending ? (i==0 ? "Cancel" : "Confirm") : i == 0 ? "Quit" : i == 1 ? "Restart" : "Shut down";
         uint32_t c = i == 2 ? 0xff8f9cu : UI_TEXT;
         int tw = ui_text_width(UI_REG, 12, lab);
         ui_icon(mcol, M_W, mh, x + (w - tw - 20) / 2 + 7, fy + 19, ic, 13, c);
@@ -370,12 +386,20 @@ static void menu_close(void) {
     if (mfd < 0) return;
     close(mfd);
     mfd = -1;
+    power_pending = 0;
     if (mpx) shmdt(mpx);
+    if(mshm>=0) {shmctl(mshm,IPC_RMID,0);mshm=-1;}
     mpx = 0;
     closed_ms = ms_now();
 }
 static void menu_open(void) {
     build_apps();
+    int max_h=screen_h-PH-22;
+    if(max_h>700) max_h=700;
+    menu_rows=(max_h-M_HEAD-M_FOOT)/M_ROW;
+    if(menu_rows<1) return;
+    if(menu_rows>napps) menu_rows=napps;
+    menu_first=0;
     hover = -1;
     spring_init(&mh_y, 0, SP_HOVER); spring_init(&mh_a, 0, SP_HOVER); spring_init(&mh_foot, 0, SP_HOVER);
     mh = M_HEAD + ROWS * M_ROW + M_FOOT;
@@ -384,7 +408,7 @@ static void menu_open(void) {
     int key = 0x5800 + (getpid() & 0x7ff);
     mshm = shmget(key, M_W * mh * 4, IPC_CREAT | 0600);
     mpx = mshm >= 0 ? shmat(mshm, 0, 0) : (void *)-1;
-    if (mpx == (void *)-1) { mpx = 0; close(mfd); mfd = -1; return; }
+    if (mpx == (void *)-1) { mpx = 0; menu_close(); return; }
     if (!mcol) { mcol = malloc((size_t)M_W * 700 * 4); mmask = malloc((size_t)M_W * 700 * 4); }
     if (!mcol || !mmask || mh > 700) { menu_close(); return; }
     draw_menu();
@@ -392,9 +416,19 @@ static void menu_open(void) {
     (void)!write(mfd, &m, sizeof m);
     if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { menu_close(); return; }
     shmctl(mshm, IPC_RMID, 0);
+    mshm=-1;
     struct wl_msg pos = { WL_POS, 10, m.c - PH - mh - 2, 0, 0 };
     (void)!write(mfd, &pos, sizeof pos);
     menu_commit();
+}
+static void menu_scroll(int first) {
+    if(power_pending) return;
+    if(first<0) first=0;
+    if(first>napps-ROWS) first=napps-ROWS;
+    if(first==menu_first) return;
+    menu_first=first;
+    menu_hover(-1);
+    draw_menu();menu_commit();
 }
 
 static void launch(const char *cmd) {
@@ -422,7 +456,10 @@ int main(void) {
     if (s < 0) { puts("panel FAIL: connect"); return 1; }
     struct wl_msg m = { WL_HELLO, 0, 0, 0, 0 };
     (void)!write(s, &m, sizeof m);
-    if (read(s, &m, sizeof m) == (ssize_t)sizeof m && m.op == WL_CREATED && m.b >= 320 && m.b <= 4096) PW = (int)m.b;   /* span the screen */
+    if (read(s, &m, sizeof m) == (ssize_t)sizeof m && m.op == WL_CREATED && m.b >= 320 && m.b <= 4096) {
+        PW = (int)m.b;
+        if(m.c>=240&&m.c<=4096) screen_h=(int)m.c;
+    }
     int key = 0x5000 + getpid();
     int id = shmget(key, PW * PH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
@@ -457,7 +494,7 @@ int main(void) {
         time_t now = time(0);
         int minute = (int)(now / 60);
         if (minute != shown) { shown = minute; update_clock(); redraw = 1; }
-        { static long long net_t; long long tn = mo_now_ms(); if (tn - net_t > 1500 || net_t == 0) { net_t = tn; int nu = read_net(); if (nu != net_up) { net_up = nu; redraw = 1; } } }        /* the clock changes once a minute */
+        { static long long net_t; long long tn = mo_now_ms(); if (tn - net_t > 1500 || net_t == 0) { net_t = tn; int nu = read_net(); if (nu != (net_up | (net_wifi << 1))) { net_up = nu & 1; net_wifi = (nu >> 1) & 1; redraw = 1; } } }        /* the clock changes once a minute */
         long long nowm = mo_now_ms();
         float dt = (float)(nowm - last_ms) / 1000.0f;
         last_ms = nowm;
@@ -476,9 +513,17 @@ int main(void) {
         if (poll(pf, 2, dock_busy() || menu_busy() ? MO_FRAME_MS : 2000) <= 0) continue;
         if (mfd >= 0 && pf[1].revents) {                      /* the menu surface: pointer motion, a click in it, or the compositor closed it */
             if (read(mfd, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) { menu_close(); continue; }
+            if(m.op==WL_KEY&&m.b) {
+                if(m.a==0x4B) menu_scroll(menu_first-ROWS);
+                if(m.a==0x4E) menu_scroll(menu_first+ROWS);
+                if(m.a==0x4A) menu_scroll(0);
+                if(m.a==0x4D) menu_scroll(napps-ROWS);
+                continue;
+            }
             if (m.op != WL_POINTER) continue;
+            if(m.c==3) {menu_scroll(menu_first-(int32_t)m.d*3);continue;}
             int x = (int)m.a, y = (int)m.b;
-            int r = y >= M_HEAD && y < M_HEAD + ROWS * M_ROW ? (y - M_HEAD) / M_ROW : -1;
+            int r = !power_pending && y >= M_HEAD && y < M_HEAD + ROWS * M_ROW ? (y - M_HEAD) / M_ROW : -1;
             int fb = -1;
             if (y >= mh - M_FOOT + 10 && y < mh - M_FOOT + 48) for (int i = 0; i < 3; i++) { int bx, bw; foot_btn_rect(i, &bx, &bw); if (x >= bx && x < bx + bw) fb = i; }
             int hv = r >= 0 ? r : fb >= 0 ? ROWS + fb : -1;
@@ -486,6 +531,15 @@ int main(void) {
             if (m.c == 2) { menu_hover(-1); continue; }
             if (m.c != 1) continue;
             if (fb >= 0) {                                    /* Quit desktop / Restart / Shut down */
+                if(!power_pending && fb>0) { power_pending=fb; draw_menu(); menu_commit(); continue; }
+                if(power_pending) {
+                    if(fb==0) { power_pending=0; draw_menu(); menu_commit(); continue; }
+                    if(fb==1) continue;
+                    int action=power_pending;
+                    menu_close();
+                    if(fork()==0) { sync(); execl(action==1 ? "/bin/reboot" : "/bin/poweroff",action==1 ? "reboot" : "poweroff",(char *)0); _exit(127); }
+                    continue;
+                }
                 menu_close();
                 if (fb == 0) {
                     int q = sock_connect();
@@ -498,7 +552,8 @@ int main(void) {
                 }
                 continue;
             }
-            if (r < 0 || r >= napps) continue;
+            if (r < 0 || r >= ROWS) continue;
+            r+=menu_first;
             if (x >= chip_x(0) - 2) {                         /* a pin toggle */
                 if (x < chip_x(1) - 2) toggle_pin(bar, &nbar, MAXB, PANEL_USER, &apps[r]);
                 else toggle_pin(dsk, &ndsk, MAXD, DESK_USER, &apps[r]);
@@ -508,7 +563,7 @@ int main(void) {
                 redraw = 1;
                 continue;
             }
-            char cmd[160];
+            char cmd[1024];
             snprintf(cmd, sizeof cmd, "%s", apps[r].cmd);
             menu_close();
             launch(cmd);
@@ -517,6 +572,7 @@ int main(void) {
         if (!(pf[0].revents & (POLLIN | POLLHUP | POLLERR))) continue;
         if (read(s, &m, sizeof m) != (ssize_t)sizeof m) break;
         if (m.op == WL_CLOSE) break;
+        if (m.op == WL_START) { if(mfd >= 0) menu_close(); else menu_open(); continue; }
         if (m.op == WL_THEME) { ui_theme_load(); redraw = 1; continue; }       /* the dock repaints with the new accent; the menu picks it up when it opens */
         if (m.op == WL_WINBEGIN) { ntb_expect = (int)m.a; ntb_new = 0; if (ntb_expect == 0) { ntb = 0; dock_sync(); log_pending = 1; } continue; }
         if (m.op == WL_WIN) {

@@ -63,17 +63,19 @@ fn write_sockaddr(ptr: u64, lenp: u64, addr: ([u8; 4], u16)) -> i64 {
 }
 
 /// `socketpair(AF_UNIX, SOCK_STREAM, 0, sv)`.
-pub fn sys_socketpair(domain: u64, ty: u64, sv: u64) -> i64 {
+pub fn sys_socketpair(domain: u64, ty: u64, proto: u64, sv: u64) -> i64 {
     if domain != 1 {
         return EAFNOSUPPORT;
     }
-    if ty & 0xF != SOCK_STREAM {
+    if proto != 0 {return EPROTONOSUPPORT;}
+    if ty & !(0xF|SOCK_NONBLOCK|SOCK_CLOEXEC) != 0 {return EINVAL;}
+    if ty & 0xF != SOCK_STREAM && ty & 0xF != 5 {
         return ESOCKTNOSUPPORT;
     }
     if !usercopy::user_ok(sv, 8, true) {
         return EFAULT;
     }
-    let (a, b) = crate::unix::UnixSock::pair();
+    let (a, b) = crate::unix::UnixSock::pair_kind(ty & 0xF == 5);
     if ty & SOCK_NONBLOCK != 0 {
         a.set_nonblock(true);
         b.set_nonblock(true);
@@ -81,9 +83,10 @@ pub fn sys_socketpair(domain: u64, ty: u64, sv: u64) -> i64 {
     let Some(task) = sched::current().task() else { return EBADF };
     let cx = ty & SOCK_CLOEXEC != 0;
     let fa = task.fd_alloc_flags(a, cx);
+    if fa<0 {return fa as i64;}
     let fb = task.fd_alloc_flags(b, cx);
-    let _ = usercopy::write_u32(sv, fa as u32);
-    let _ = usercopy::write_u32(sv + 4, fb as u32);
+    if fb<0 {task.fd_close(fa);return fb as i64;}
+    if usercopy::write_u32(sv,fa as u32).is_err()||usercopy::write_u32(sv+4,fb as u32).is_err(){task.fd_close(fa);task.fd_close(fb);return EFAULT;}
     0
 }
 
@@ -247,20 +250,45 @@ pub fn sys_getpeername(fd: u64, addr: u64, lenp: u64) -> i64 {
     }
 }
 
-/// `setsockopt`: every option is accepted and ignored (REUSEADDR, NODELAY, KEEPALIVE, ...).
-pub fn sys_setsockopt(fd: u64) -> i64 {
+/// Socket options; Unix buffers currently have a fixed, enforced capacity.
+pub fn sys_setsockopt(fd: u64,level:u64,name:u64,val:u64,len:u64) -> i64 {
     match sock_of(fd) {
-        Ok(_) => 0,
+        Ok(f) => {
+            if let Some(u)=f.as_unix() {
+                if level==1&&matches!(name,7|8) {
+                    if len<4{return EINVAL;}
+                    if let Err(e)=usercopy::read_u32(val){return e;}
+                    return -95; // EOPNOTSUPP: no pretend buffer resizing.
+                }
+                if level==1&&name==16 {
+                    if len<4{return EINVAL;}
+                    return match usercopy::read_u32(val){Ok(v)=>u.set_pass_credentials(v!=0),Err(e)=>e};
+                }
+            }
+            0
+        },
         Err(e) => e,
     }
 }
 
-/// `getsockopt`: `SO_ERROR` / `SO_TYPE` are real; everything else reads as 0.
+/// Report actual Unix buffer limits as well as type, credentials and errors.
 pub fn sys_getsockopt(fd: u64, level: u64, name: u64, val: u64, lenp: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     let is_unix = f.as_unix().is_some();
-    let v: u32 = if is_unix && level == 1 && name == 3 {
-        1 // SO_TYPE: SOCK_STREAM
+    if let Some(u)=f.as_unix() {
+        if level==1&&name==17 {
+            let cap=match usercopy::read_u32(lenp){Ok(v)=>v as usize,Err(e)=>return e};
+            let mut data=[0u8;12];for(i,v)in u.peer_credentials().into_iter().enumerate(){data[i*4..i*4+4].copy_from_slice(&v.to_le_bytes());}
+            let b=match usercopy::slice_mut(val,cap.min(12)){Ok(b)=>b,Err(e)=>return e};b.copy_from_slice(&data[..cap.min(12)]);
+            return match usercopy::write_u32(lenp,12){Ok(())=>0,Err(e)=>e};
+        }
+    }
+    let v: u32 = if is_unix&&level==1&&matches!(name,7|8) {
+        f.as_unix().unwrap().buffer_capacity() // SO_SNDBUF / SO_RCVBUF
+    } else if is_unix && level == 1 && name == 3 {
+        f.as_unix().unwrap().socket_type()
+    } else if is_unix&&level==1&&name==16 {
+        f.as_unix().unwrap().pass_credentials() as u32
     } else if is_unix {
         0
     } else if level == 1 && name == 4 {
@@ -270,13 +298,11 @@ pub fn sys_getsockopt(fd: u64, level: u64, name: u64, val: u64, lenp: u64) -> i6
     } else {
         0
     };
-    if val == 0 || lenp == 0 {
-        return 0;
-    }
-    if let Err(e) = usercopy::write_u32(val, v) {
-        return e;
-    }
-    match usercopy::write_u32(lenp, 4) {
+    let cap=match usercopy::read_u32(lenp){Ok(v)=>v as usize,Err(e)=>return e};
+    let n=cap.min(4);
+    let out=match usercopy::slice_mut(val,n){Ok(b)=>b,Err(e)=>return e};
+    out.copy_from_slice(&v.to_le_bytes()[..n]);
+    match usercopy::write_u32(lenp, n as u32) {
         Ok(()) => 0,
         Err(e) => e,
     }
@@ -384,6 +410,7 @@ fn write_scm_rights(msg: u64, files: alloc::vec::Vec<Arc<dyn FileOps>>, cloexec:
     let (Ok(ctl), Ok(space)) = (usercopy::read_u64(msg + 32), usercopy::read_u64(msg + 40)) else { return 0 };
     let Some(task) = sched::current().task() else { return 0 };
     if ctl == 0 || space < 20 {
+        let _=usercopy::write_u64(msg+40,0);
         return MSG_CTRUNC; // no room: the descriptors are dropped (closed)
     }
     let fit = (((space - 16) / 4) as usize).min(files.len());
@@ -392,18 +419,39 @@ fn write_scm_rights(msg: u64, files: alloc::vec::Vec<Arc<dyn FileOps>>, cloexec:
     let _ = usercopy::write_u64(ctl, clen);
     let _ = usercopy::write_u32(ctl + 8, 1); // SOL_SOCKET
     let _ = usercopy::write_u32(ctl + 12, 1); // SCM_RIGHTS
-    for (i, f) in files.into_iter().take(fit).enumerate() {
+    let mut received=0;
+    for f in files.into_iter().take(fit) {
         let fd = task.fd_alloc_flags(f, cloexec);
-        if usercopy::write_u32(ctl + 16 + 4 * i as u64, fd as u32).is_err() {
+        if fd<0 {flags|=MSG_CTRUNC;continue;}
+        if usercopy::write_u32(ctl + 16 + 4 * received as u64, fd as u32).is_err() {
+            task.fd_close(fd);
             flags |= MSG_CTRUNC;
-        }
+        } else {received+=1;}
     }
-    let _ = usercopy::write_u64(msg + 40, (clen + 7) & !7);
+    let clen=16+4*received as u64;
+    let _ = usercopy::write_u64(ctl,clen);
+    let _ = usercopy::write_u64(msg + 40, ((clen + 7) & !7).min(space));
     flags
 }
 
+/// Kernel-captured sender credentials followed by independently bounded rights.
+fn write_packet_control(msg:u64,files:alloc::vec::Vec<Arc<dyn FileOps>>,cred:[u32;3],cloexec:bool)->u32 {
+    let (Ok(ctl),Ok(cap))=(usercopy::read_u64(msg+32),usercopy::read_u64(msg+40)) else{return MSG_CTRUNC};
+    if ctl==0||cap<28||!usercopy::user_ok(ctl,cap as usize,true) {let _=usercopy::write_u64(msg+40,0);return MSG_CTRUNC;}
+    let _=usercopy::write_u64(ctl,28);let _=usercopy::write_u32(ctl+8,1);let _=usercopy::write_u32(ctl+12,2);
+    for(i,v)in cred.into_iter().enumerate(){let _=usercopy::write_u32(ctl+16+4*i as u64,v);}
+    let used=cap.min(32);let mut flags=0;let mut tail=0;
+    if !files.is_empty() {
+        let _=usercopy::write_u64(msg+32,ctl+used);let _=usercopy::write_u64(msg+40,cap-used);
+        flags=write_scm_rights(msg,files,cloexec);
+        tail=usercopy::read_u64(msg+40).unwrap_or(0).min(cap-used);
+        let _=usercopy::write_u64(msg+32,ctl);
+    }
+    let _=usercopy::write_u64(msg+40,(used+tail).min(cap));flags
+}
+
 /// Gather the iovec array of a msghdr into one buffer.
-fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
+fn gather_iov(msg: u64,limit:usize,partial:bool) -> Result<alloc::vec::Vec<u8>, i64> {
     let iov = usercopy::read_u64(msg + 16)?;
     let n = usercopy::read_u64(msg + 24)?;
     if n > 1024 {
@@ -413,10 +461,12 @@ fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
     for i in 0..n {
         let base = usercopy::read_u64(iov + 16 * i)?;
         let len = usercopy::read_u64(iov + 16 * i + 8)? as usize;
-        if out.len() + len > MSG_MAX {
+        if !partial && len>limit-out.len() {
             return Err(-90); // EMSGSIZE
         }
-        out.extend_from_slice(usercopy::slice(base, len)?);
+        let take=len.min(limit-out.len());
+        out.extend_from_slice(usercopy::slice(base,take)?);
+        if partial&&out.len()==limit {break;}
     }
     Ok(out)
 }
@@ -425,7 +475,8 @@ pub fn sys_sendmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     if let Some(u) = f.as_unix() {
         let fds = match read_scm_rights(msg) { Ok(v) => v, Err(e) => return e };
-        return match gather_iov(msg) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }, flags & MSG_DONTWAIT != 0), Err(e) => e };
+        let packet=u.socket_type()==5;
+        return match gather_iov(msg,if packet {u.buffer_capacity() as usize}else{MSG_MAX},!packet) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }, flags & MSG_DONTWAIT != 0), Err(e) => e };
     }
     let name = usercopy::read_u64(msg).unwrap_or(0);
     let namelen = usercopy::read_u32(msg + 8).unwrap_or(0) as u64;
@@ -434,7 +485,7 @@ pub fn sys_sendmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     } else {
         None
     };
-    match gather_iov(msg) {
+    match gather_iov(msg,MSG_MAX,f.as_socket().unwrap().kind()==Kind::Tcp) {
         Ok(data) => f.as_socket().unwrap().send_to(&data, to),
         Err(e) => e,
     }
@@ -450,15 +501,17 @@ pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let mut total = 0usize;
     for i in 0..n {
         match usercopy::read_u64(iov + 16 * i + 8) {
-            Ok(l) => total += l as usize,
+            Ok(l) => match total.checked_add(l as usize) {Some(v)=>total=v,None=>return EINVAL},
             Err(e) => return e,
         }
     }
-    let mut buf = alloc::vec![0u8; total.min(MSG_MAX)];
+    let limit=f.as_unix().filter(|u|u.socket_type()==5).map_or(MSG_MAX,|u|u.buffer_capacity() as usize);
+    let mut buf = alloc::vec![0u8; total.min(limit)];
     let mut rights = alloc::vec::Vec::new();
+    let mut credentials=None;let mut out_flags=0;
     let (got, from) = if let Some(u) = f.as_unix() {
-        let (g, r) = u.recv_fds(&mut buf, flags & MSG_DONTWAIT != 0);
-        rights = r;
+        let (g,r,c,fl)=u.recv_status(&mut buf,flags);
+        rights=r;credentials=c;out_flags=fl;
         (g, None)
     } else {
         f.as_socket().unwrap().recv_from(&mut buf)
@@ -473,7 +526,7 @@ pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
             break;
         }
         let (Ok(base), Ok(len)) = (usercopy::read_u64(iov + 16 * i), usercopy::read_u64(iov + 16 * i + 8)) else { return EFAULT };
-        let take = (len as usize).min(got as usize - off);
+        let take = (len as usize).min((got as usize).min(buf.len()).saturating_sub(off));
         match usercopy::slice_mut(base, take) {
             Ok(b) => b.copy_from_slice(&buf[off..off + take]),
             Err(e) => return e,
@@ -490,8 +543,9 @@ pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
             }
         }
     }
-    let mut out_flags = 0u32;
-    if rights.is_empty() {
+    if let Some(cred)=credentials {
+        out_flags|=write_packet_control(msg,rights,cred,flags&MSG_CMSG_CLOEXEC!=0);
+    } else if rights.is_empty() {
         let _ = usercopy::write_u64(msg + 40, 0); // no control data
     } else {
         out_flags |= write_scm_rights(msg, rights, flags & MSG_CMSG_CLOEXEC != 0);

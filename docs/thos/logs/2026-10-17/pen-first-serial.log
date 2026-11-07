@@ -1,0 +1,125 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800e2535
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1940 MiB in 496282 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496282 -> 496281 -> 496282 (phys 0x794dd000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62529 counts/ms
+THOS: clock            TSC 2493 MHz; RTC 1792202521 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 1
+THOS: AP 3 online     lapic 3
+THOS: AP 2 online     lapic 2
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /desk-gdi-pen.sh
+desk: ready 1280x800
+gdi-pen-ok default-black-pen
+desk: win32 window 1 created 400x240 at 100,80
+gdi-pen-ok initial-dc-pen-color
+gdi-pen-ok rectangle-default-border-fill
+gdi-pen-ok rectangle-right-bottom-excluded
+gdi-pen-ok dc-pen-color-independent-of-solid
+gdi-pen-ok solid-black-not-recolored
+gdi-pen-ok select-dc-pen-returns-old
+gdi-pen-ok dc-pen-real-border
+gdi-pen-ok update-dc-pen-previous-color
+gdi-pen-ok other-window-pen-state-independent
+gdi-pen-ok brush-color-not-pen-color
+gdi-pen-ok hollow-brush-select
+gdi-pen-ok hollow-rectangle-draw
+gdi-pen-ok hollow-interior-preserved
+gdi-pen-ok hollow-border-colored
+gdi-pen-ok partially-clipped-stroke
+gdi-pen-ok clipping-does-not-invent-border
+gdi-pen-ok null-pen-select
+gdi-pen-ok null-pen-pure-fill
+gdi-pen-ok both-hollow-noop
+gdi-pen-ok fillrect-null-brush-noop
+gdi-pen-ok real-owned-pens
+gdi-pen-ok owned-pen-selection
+gdi-pen-ok owned-pen-cannot-delete-selected
+gdi-pen-ok owned-pen-uses-own-color
+gdi-pen-ok one-pixel-wide-rectangle
+gdi-pen-ok one-pixel-high-rectangle
+gdi-pen-ok pen-multiple-dcs-allowed
+gdi-pen-ok window-retains-owned-pen
+gdi-pen-ok unselected-owned-pen-deleted
+gdi-pen-ok stale-owned-pen-refused
+gdi-pen-ok unselected-second-pen-deleted
+gdi-pen-ok unsupported-wide-pen-fails
+gdi-pen-ok unsupported-dashed-pen-fails
+gdi-pen-ok invalid-dc-pen-state
+gdi-pen-ok invalid-dc-no-rectangle
+gdi-pen-ok other-object-classes-preserved
+gdi-pen-ok window-stroke-corner
+gdi-pen-result=PASS
+gdi-pen-ready-close
+gdi-pen-close
+gdi-pen-exit:0
+desk: win32 window 1 closed
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 0 window(s) at exit
+gdi-pen-done
+thos$ 

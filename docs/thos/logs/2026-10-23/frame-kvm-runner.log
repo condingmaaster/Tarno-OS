@@ -1,0 +1,51 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1882:17
+     |
+1882 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.66s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winframe-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (3.0% non-contiguous), 103812/524288 blocks
+winframe-ok adjust-success-preserves-error
+winframe-ok actual-thos-frame
+winframe-ok system-metrics-frame
+winframe-ok translated-client
+winframe-ok empty-client-rectangle
+winframe-ok null-rect
+winframe-ok bad-user-rect
+winframe-ok menu-explicitly-unsupported
+winframe-ok extended-frame-explicitly-unsupported
+winframe-ok child-explicitly-unsupported
+winframe-ok popup-explicitly-unsupported
+winframe-ok underflow-no-write
+winframe-ok overflow-no-write
+winframe-ok inverted-no-write
+winframe-ok class-registered
+winframe-ok adjusted-create
+winframe-ok exact-client-size
+winframe-ok full-client-fill
+winframe-ok bottom-right-client-fill
+winframe-ok client-clipping
+winframe-ok outer-too-small-rejected
+winframe-ok oversize-rejected
+winframe-ok parent-not-silently-ignored
+winframe-ok menu-not-silently-ignored
+winframe-result=PASS
+winframe-ready-close
+winframe-exit:0
+winframe-done

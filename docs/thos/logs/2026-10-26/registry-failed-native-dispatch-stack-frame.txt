@@ -1,0 +1,30 @@
+
+target/thos-kernel-registry-bounded-2026-10-25.elf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+ffffffff80083860 <_RNvNtCsjHZPvmLijDq_11thos_kernel2nt14dispatch_ntdll>:
+ffffffff80083860:	55                   	push   %rbp
+ffffffff80083861:	41 57                	push   %r15
+ffffffff80083863:	41 56                	push   %r14
+ffffffff80083865:	41 55                	push   %r13
+ffffffff80083867:	41 54                	push   %r12
+ffffffff80083869:	53                   	push   %rbx
+ffffffff8008386a:	48 81 ec 00 10 00 00 	sub    $0x1000,%rsp
+ffffffff80083871:	48 c7 04 24 00 00 00 	movq   $0x0,(%rsp)
+ffffffff80083878:	00 
+ffffffff80083879:	48 81 ec 58 01 00 00 	sub    $0x158,%rsp
+ffffffff80083880:	66 89 7c 24 56       	mov    %di,0x56(%rsp)
+ffffffff80083885:	66 83 ff 2a          	cmp    $0x2a,%di
+ffffffff80083889:	0f 87 11 18 00 00    	ja     ffffffff800850a0 <_RNvNtCsjHZPvmLijDq_11thos_kernel2nt14dispatch_ntdll+0x1840>
+ffffffff8008388f:	4c 8b 76 38          	mov    0x38(%rsi),%r14
+ffffffff80083893:	4c 8b 7e 40          	mov    0x40(%rsi),%r15
+ffffffff80083897:	4c 8b 66 58          	mov    0x58(%rsi),%r12
+ffffffff8008389b:	4c 8b 6e 48          	mov    0x48(%rsi),%r13
+ffffffff8008389f:	48 8d ae 80 00 00 00 	lea    0x80(%rsi),%rbp
+ffffffff800838a6:	0f b7 c7             	movzwl %di,%eax
+ffffffff800838a9:	ff 24 c5 98 5e 11 80 	jmp    *-0x7feea168(,%rax,8)
+ffffffff800838b0:	31 db                	xor    %ebx,%ebx
+ffffffff800838b2:	e9                   	.byte 0xe9
+ffffffff800838b3:	73 29                	jae    ffffffff800838de <_RNvNtCsjHZPvmLijDq_11thos_kernel2nt14dispatch_ntdll+0x7e>

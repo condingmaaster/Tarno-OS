@@ -1,0 +1,115 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800f2f15
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1939 MiB in 496239 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496239 -> 496238 -> 496239 (phys 0x794b2000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 66546 counts/ms
+THOS: clock            TSC 2615 MHz; RTC 1792807267 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    7 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 2 online     lapic 3
+THOS: AP 3 online     lapic 2
+THOS: AP 1 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /winlocale.exe
+winlocale-start
+winlocale-ok wide-size-query
+winlocale-ok wide-short-buffer-untouched
+winlocale-ok wide-name-data-and-boundary
+winlocale-ok ansi-name
+winlocale-ok english-language-name
+winlocale-ok native-language-name
+winlocale-ok currency-utf16
+winlocale-ok currency-acp1252
+winlocale-ok german-date
+winlocale-ok numeric-size-in-tchars
+winlocale-ok numeric-wide
+winlocale-ok numeric-ansi
+winlocale-ok numeric-string-field-invalid
+winlocale-ok unknown-locale-rejected
+winlocale-ok unknown-field-not-empty-success
+winlocale-ok unknown-flags-rejected
+winlocale-ok default-aliases
+winlocale-ok locale-validity-export
+winlocale-ok supported-catalog-valid
+winlocale-ok default-validity-aliases
+winlocale-ok no-full-installed-validity-success
+winlocale-ok unknown-locale-not-supported
+winlocale-ok validity-conflicting-flags
+winlocale-ok enumeration-exports
+winlocale-ok callback-context
+winlocale-ok no-complete-installed-locale-claimed
+winlocale-ok default-callback-buffers-fresh
+winlocale-ok ansi-callbacks
+winlocale-ok reentrant-callbacks
+winlocale-ok callback-cancellation
+winlocale-ok no-alternate-sort-records
+winlocale-ok conflicting-enum-flags
+winlocale-ok null-callback
+winlocale-ok null-output-rejected
+winlocale-ok parallel-callbacks-and-data
+winlocale-ok context-release
+winlocale-result=PASS
+winlocale-done
+thos$ 

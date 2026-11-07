@@ -6,6 +6,7 @@
 //   images open in the viewer, text files in `less`.
 #define _GNU_SOURCE
 #include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,11 +19,13 @@
 #include <time.h>
 #include <unistd.h>
 #include "thoswl.h"
+#include "thosresize.h"
+#include "thoscommand.h"
 #include "thosgfx.h"
 #include "thosui.h"
 
-#define FW 780
-#define FH 500
+static int FW=780;
+static int FH=500;
 #define SIDE 176
 #define TOP 52
 #define FOOT 30
@@ -32,8 +35,9 @@
 #define MAXE 512
 static uint32_t *px;
 static int sock;
+static struct thos_resize resize;
 static char cwd[512] = "/";
-static struct ent { char name[96]; int dir, exec; long long size; } ent[MAXE];
+static struct ent { char name[256]; int dir, exec; long long size; } ent[MAXE];
 static int nent, side_hover = -1, side_hot = -1;
 static struct ui_list list;
 static struct spring side_hl;                  /* the sidebar's hover highlight: a pill that glides between places */
@@ -76,7 +80,7 @@ static void load(void) {
         if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..") || e->d_name[0] == '.') continue;
         struct ent *n = &ent[nent];
         snprintf(n->name, sizeof n->name, "%s", e->d_name);
-        char full[700];
+        char full[800];
         snprintf(full, sizeof full, "%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", n->name);
         struct stat st;
         n->dir = 0; n->exec = 0; n->size = 0;
@@ -104,7 +108,10 @@ static void kind_of(const struct ent *e, uint32_t *glyph, uint32_t *color) {
     else if (e->exec) { *glyph = IC_TERMINAL; *color = 0x4cc38a; }
     else if (has_suffix(e->name, ".sh")) { *glyph = IC_TERMINAL; *color = 0x4cc38a; }
 }
-static void render(void) {
+static struct mo_perf perf_render = { "files-render" };
+static void render_inner(void);
+static void render(void) { mo_perf_begin(&perf_render); render_inner(); mo_perf_end(&perf_render); }
+static void render_inner(void) {
     for (int i = 0; i < FW * FH; i++) px[i] = UI_SURFACE;
     /* sidebar */
     for (int y = 0; y < FH; y++) for (int x = 0; x < SIDE; x++) px[y * FW + x] = 0x121620;
@@ -178,13 +185,13 @@ static void in_terminal(const char *cmd) {
 }
 static void open_entry(struct ent *e) {
     if (e->dir) { go(e->name); return; }
-    if (strchr(e->name, '\'')) { snprintf(status, sizeof status, "That name has a quote in it"); return; }
-    char full[700], cmd[900];
+    char full[800], quoted[3204], cmd[4096];
     snprintf(full, sizeof full, "%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", e->name);
+    if(!thos_command_quote(full,quoted,sizeof quoted)) {snprintf(status,sizeof status,"The file path is too long to open.");return;}
     static const char *pkg[] = { ".deb", ".rpm", ".zip", ".tar.gz", ".tgz", ".tar.xz", ".txz", ".tar.bz2", ".msi" };
     for (unsigned k = 0; k < sizeof pkg / sizeof pkg[0]; k++)
         if (has_suffix(e->name, pkg[k])) {
-            snprintf(cmd, sizeof cmd, "/bin/thos-pkg install '%s'", full);
+            snprintf(cmd, sizeof cmd, "/bin/thos-pkg install %s", quoted);
             in_terminal(cmd);
             snprintf(status, sizeof status, "Installing %s ...", e->name);
             return;
@@ -201,9 +208,16 @@ static void open_entry(struct ent *e) {
             snprintf(status, sizeof status, "Opening %s ...", e->name);
             return;
         }
-    if (has_suffix(e->name, ".sh")) snprintf(cmd, sizeof cmd, "/busybox sh '%s'", full);
-    else if (has_suffix(e->name, ".exe") || e->exec) snprintf(cmd, sizeof cmd, "'%s'", full);
-    else snprintf(cmd, sizeof cmd, "/busybox less '%s'", full);
+    unsigned char magic[4]={0};
+    if(!e->exec&&!has_suffix(e->name,".exe")&&!has_suffix(e->name,".sh")) {
+        int probe=open(full,O_RDONLY|O_NONBLOCK|O_CLOEXEC);
+        if(probe>=0){struct stat st;if(!fstat(probe,&st)&&S_ISREG(st.st_mode))(void)read(probe,magic,sizeof magic);close(probe);}
+    }
+    if (has_suffix(e->name, ".sh")) snprintf(cmd, sizeof cmd, "/busybox sh %s", quoted);
+    else if(has_suffix(e->name,".exe")) snprintf(cmd,sizeof cmd,"/thosrun --windows %s",quoted);
+    else if(!memcmp(magic,"\177ELF",4)) snprintf(cmd,sizeof cmd,"/thosrun %s",quoted);
+    else if(e->exec) snprintf(cmd,sizeof cmd,"%s",quoted);
+    else snprintf(cmd, sizeof cmd, "/busybox less %s", quoted);
     in_terminal(cmd);
 }
 static void select_to(int i) { armed = -1; ui_list_select(&list, i); }
@@ -217,10 +231,11 @@ int main(void) {
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
     if (connect(sock, (void *)&a, 2 + WL_SOCK_LEN) != 0) { puts("files FAIL: connect"); return 1; }
-    struct wl_msg m = { WL_CREATE, FW, FH, (uint32_t)key, 0 };
+    struct wl_msg m = { WL_CREATE, FW, FH, (uint32_t)key, WL_RESIZABLE };
     (void)!write(sock, &m, sizeof m);
-    if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("files FAIL: no CREATED"); return 1; }
+    if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("files FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);
+    thos_resize_limits(sock,520,320);
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
     memcpy(&t.a, "Files", 5);
     (void)!write(sock, &t, sizeof t);
@@ -244,7 +259,12 @@ int main(void) {
         clk = nowt;
         if (busy) { ui_list_step(&list, dt); spring_step(&side_hl, dt); render(); }
         if (pr <= 0) continue;
-        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        int resized=thos_resize_event(sock,&m,&resize,&px,&FW,&FH);
+        if(resized) {
+            if(resized==2) {list.view_h=LIST_H;ui_list_clamp(&list);render();thos_resize_continue(sock,&resize);}
+            continue;
+        }
         if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op == WL_POINTER && m.c == 1) {
             long long now = mo_now_ms();
@@ -270,12 +290,17 @@ int main(void) {
             int x = (int)m.a, y = (int)m.b;
             int h = x < SIDE && y >= 52 && (y - 52) / 38 < NPLACES ? (y - 52) / 38 : -1;
             int hot = y < TOP && x >= SIDE + 12 && x < SIDE + 46 ? 100 : -1;
+            int row = x >= SIDE && y >= LIST_Y ? ui_list_at(&list, y - LIST_Y) : -1;
+            if (row >= nent) row = -1;
+            int changed = h != side_hover || hot != side_hot || row != list.hover;
             if (h >= 0 && side_hover < 0) spring_init(&side_hl, (float)(h * 38), SP_HOVER);
             if (h >= 0) spring_to(&side_hl, (float)(h * 38));
             side_hover = h; side_hot = hot;
-            ui_list_hover(&list, x >= SIDE && y >= LIST_Y ? ui_list_at(&list, y - LIST_Y) : -1);
+            ui_list_hover(&list, row);
             ui_cursor(sock, h >= 0 || hot >= 0 || (x >= SIDE && y >= LIST_Y && ui_list_at(&list, y - LIST_Y) >= 0) ? 2 : 0);
-            render();
+            /* Moving inside the same hit target changes only the compositor's cursor.
+               Animation frames still repaint through the busy path above. */
+            if (changed) render();
         } else if (m.op == WL_KEY && m.b) {
             switch (m.a) {
                 case 0x52: select_to(list.sel - 1); break;
@@ -290,7 +315,7 @@ int main(void) {
                     if (!nent) break;
                     if (armed != list.sel) { armed = list.sel; snprintf(status, sizeof status, "Press Delete again to remove %.60s", ent[list.sel].name); }
                     else {
-                        char full[700];
+                        char full[800];
                         snprintf(full, sizeof full, "%s%s%s", cwd, strcmp(cwd, "/") ? "/" : "", ent[list.sel].name);
                         int rc = ent[list.sel].dir ? rmdir(full) : unlink(full);
                         snprintf(status, sizeof status, rc == 0 ? "Removed %.60s" : "Could not remove %.60s", ent[list.sel].name);
@@ -307,5 +332,6 @@ int main(void) {
         }
     }
     printf("files done\n");
+    thos_resize_dispose(&resize);
     return 0;
 }

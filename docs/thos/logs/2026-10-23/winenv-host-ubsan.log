@@ -1,0 +1,1 @@
+environment host stress PASS: 10000 replacements, 1000 dual snapshots, allocation failure, 32767-unit boundary, 8x1000 threads, table cap; no live allocation growth

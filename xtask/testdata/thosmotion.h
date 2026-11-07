@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <time.h>
+#include <stdio.h>
+#include <unistd.h>
 
 /* ---- time ---- */
 /* THOS_SLOMO=n slows the animation clock down n times: the test harness films animations by taking screenshots in slow motion */
@@ -68,5 +70,18 @@ static inline float tween_value(const struct tween *w, float (*ease)(float)) {
     if (t >= 1) return w->to;
     if (t < 0) t = 0;
     return w->from + (w->to - w->from) * ease(t);
+}
+
+/* ---- frame-time probes: `touch /tmp/thos-perf` before starting the desktop and every probe prints "perf name: n= avg= max=" every 2 s ---- */
+struct mo_perf { const char *name; long long t0, tot, max, n, shown; };
+static inline long long mo_us(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (long long)t.tv_sec * 1000000 + t.tv_nsec / 1000; }
+static inline int mo_perf_on(void) { static int on = -1; if (on < 0) on = access("/tmp/thos-perf", 0) == 0; return on; }
+static inline void mo_perf_begin(struct mo_perf *p) { if (mo_perf_on()) p->t0 = mo_us(); }
+static inline void mo_perf_end(struct mo_perf *p) {
+    if (!mo_perf_on()) return;
+    long long now = mo_us(), d = now - p->t0;
+    p->tot += d; p->n++; if (d > p->max) p->max = d;
+    if (p->shown == 0) p->shown = now;
+    if (now - p->shown > 2000000) { printf("perf %s: n=%lld avg=%lldus max=%lldus\n", p->name, p->n, p->n ? p->tot / p->n : 0, p->max); fflush(stdout); p->tot = p->max = p->n = 0; p->shown = now; }
 }
 #endif

@@ -31,6 +31,10 @@ extern crate alloc;
 mod acpi;
 mod ahci;
 mod blk;
+mod mtrr;
+mod pat;
+mod net_config;
+mod fb_cache_range;
 mod rawdisk;
 mod apc;
 mod apic;
@@ -43,9 +47,18 @@ mod e1000;
 mod elf;
 mod execgate;
 mod ext2;
+mod ext2_blocks;
+mod block_bitmap;
+mod sector_cache;
+mod io_mutex;
 mod fat;
 mod file;
+mod flock;
+mod record_locks;
 mod gdi;
+mod gdi_blit;
+mod gdi_font;
+mod gdi_memory;
 mod gdt;
 mod gpt;
 mod idt;
@@ -55,11 +68,25 @@ mod integrity;
 #[cfg(feature = "interactive")]
 mod login;
 mod mm;
+#[cfg(feature="small-block-heap")]
+mod small_heap;
 mod nt;
+mod nt_registry_name;
 mod object;
 mod pci;
+mod bcma_erom;
+mod bcma_core;
+mod brcm_firmware;
+mod firmware;
+mod wlan;
+mod radeon;
 mod pe;
 mod process;
+mod process_snapshot_layout;
+mod nt_toolhelp;
+mod nt_thread;
+mod thread_cpu_accounting;
+mod thread_cpu;
 mod pty;
 mod procfs;
 mod registry;
@@ -82,14 +109,28 @@ mod virtio_net;
 mod vfs;
 mod vmm;
 mod window;
+mod window_frame;
+mod synth_layout;
+mod pe_export_bounds;
+mod pe_exports;
+mod pe_ldr_layout;
+mod pe_search;
+mod winclass;
+mod winargs;
+mod winunicode;
 mod fbcon;
 mod futex;
+mod futex_registry;
 mod power;
 mod mbr;
 mod ps2;
 mod random;
 mod rtc;
 mod ehci;
+mod ehci_layout;
+mod hid_mouse;
+mod dma_region;
+mod anon_regions;
 mod hda;
 mod eventpoll;
 mod xhci;
@@ -131,6 +172,10 @@ static MEMMAP_REQUEST: MemmapRequest = MemmapRequest::new();
 #[used]
 #[link_section = ".requests"]
 static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static CMDLINE_REQUEST: limine::request::ExecutableCmdlineRequest = limine::request::ExecutableCmdlineRequest::new();
 
 #[used]
 #[link_section = ".requests"]
@@ -186,7 +231,9 @@ extern "C" fn kmain() -> ! {
     acpi_apic_bringup();
     fbcon::suspend(); // the FB mapping changes under vmm_bringup
     vmm_bringup();
+    pat::init();
     gdi_bringup();
+    mtrr_bringup();
     fbcon::resume();
     fbcon::splash_progress(30);
     #[cfg(feature = "selftest")]
@@ -221,7 +268,14 @@ extern "C" fn kmain() -> ! {
         // session is over: back to the login prompt, never a dead console.
         loop {
             let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
-            let session = login::establish(&fs);
+            // boot menu entry "THOS Installer" (kernel command line `install`): no login, the installer runs as root on the console
+            let installer = CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "install"));
+            let session = if installer {
+                fbcon::theme_login();
+                login::Session { name: alloc::string::String::from("installer"), uid: 0 }
+            } else {
+                login::establish(&fs)
+            };
             process::set_session(&session.name, session.uid);
             fbcon::theme_shell();
             kprintln!("THOS: session          {} (uid {})", session.name, session.uid);
@@ -241,9 +295,10 @@ extern "C" fn kmain() -> ! {
             }
             let home_env = alloc::format!("HOME={home}");
             let user_env = alloc::format!("USER={}", session.name);
+            let argv: &[&str] = if installer { &["sh", "-c", "/bin/thos-install --installer; exec /busybox sh"] } else { &["sh"] };
             let pid = process::spawn_init(
                 &sh,
-                &["sh"],
+                argv,
                 &[
                     home_env.as_str(),
                     user_env.as_str(),
@@ -409,6 +464,16 @@ fn vmm_bringup() {
 /// Map the boot framebuffer into THOS's own tables — the GDI32/User32
 /// skeleton's one and only "device context". Must run after `vmm_bringup`
 /// (needs `vmm::map_mmio`, which needs the kernel PML4).
+/// Configure write-combining using actual RAM intervals, including RAM above 4GiB.
+fn mtrr_bringup() {
+    if pat::configured() { return; }
+    use limine::memmap::{MEMMAP_ACPI_NVS, MEMMAP_ACPI_RECLAIMABLE, MEMMAP_BOOTLOADER_RECLAIMABLE, MEMMAP_EXECUTABLE_AND_MODULES, MEMMAP_USABLE};
+    let (Some((phys, len)), Some(mm)) = (gdi::fb_phys(), MEMMAP_REQUEST.response()) else { return };
+    let entries = mm.entries();
+    let ram = entries.iter().filter(|e| matches!(e.type_, MEMMAP_USABLE | MEMMAP_ACPI_RECLAIMABLE | MEMMAP_ACPI_NVS | MEMMAP_BOOTLOADER_RECLAIMABLE | MEMMAP_EXECUTABLE_AND_MODULES)).map(|e| (e.base, e.length));
+    mtrr::prepare(phys, len, ram);
+}
+
 fn gdi_bringup() {
     let hhdm = HHDM_REQUEST.response().expect("HHDM request unanswered").offset;
     match FRAMEBUFFER_REQUEST.response().and_then(|r| r.framebuffers().first()) {
@@ -1599,9 +1664,13 @@ fn start_input_devices() {
             Err(e) => kprintln!("THOS: ehci             {}", e),
         }
     }
-    if EHCI.lock().as_ref().is_some_and(|e| e.has_keyboard()) {
+    if EHCI.lock().is_some() {
         sched::spawn("ehci-poll", ehci_poll_thread, 0);
-        kprintln!("THOS: ehci ok          USB keyboard attached (poll thread up)");
+        kprintln!("THOS: ehci ok          controller input/hotplug worker ready");
+    }
+
+    if ehci::has_aux_controllers() {
+        sched::spawn("ehci-aux-poll",ehci_aux_poll_thread,0);
     }
 
     match hda::init() {
@@ -1609,7 +1678,10 @@ fn start_input_devices() {
         Err(e) => kprintln!("THOS: hda              {}", e),
     }
 
-    // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).
+    // Diagnostics for the Acer adapters; retain existing Ethernet and display paths.
+    wlan::init();
+    radeon::init();
+    // Network: virtio-net/e1000 in QEMU, tg3 on the Acer.
     match net::init() {
         Ok(()) => {
             sched::spawn("net", net::net_thread, 0);
@@ -1647,9 +1719,9 @@ fn boot_system() {
         kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk");
         if let Some(r) = MODULES_REQUEST.response() {
             for f in r.modules() {
-                if f.path().ends_with("thos-root.ext2") {
+                if f.path().ends_with("thos-disk.img") || f.path().ends_with("thos-root.ext2") {
                     let d = f.data();
-                    kprintln!("THOS: boot             root file system module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
+                    kprintln!("THOS: boot             system disk image module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
                     blk::use_ram(d.as_ptr() as u64, d.len() as u64);
                     ext2::reset_cache();
                     have_root = ext2::open().is_ok();
@@ -1725,16 +1797,26 @@ extern "C" fn ncq_io_worker(i: usize) -> ! {
     sched::exit()
 }
 
-static EHCI: spin::Mutex<Option<ehci::Ehci>> = spin::Mutex::new(None);
+// EHCI control/bulk transfers can sleep. Keyboard and disk users must park
+// on contention instead of spinning on another CPU with interrupts disabled.
+static EHCI: io_mutex::IoMutex<Option<ehci::Ehci>> = io_mutex::IoMutex::new(None);
 
 extern "C" fn ehci_poll_thread(_: usize) -> ! {
     loop {
-        let rep = EHCI.lock().as_mut().and_then(|e| e.poll_keyboard());
+        let (rep,mouse,active) = {
+            let mut controller=EHCI.lock();
+            if let Some(e)=controller.as_mut() {e.scan_connections();(e.poll_keyboard(),e.poll_mouse(),e.has_keyboard()||e.has_mouse())}else{(None,None,false)}
+        };
         if let Some(r) = rep {
             console::feed_report(&r);
         }
-        timer::sleep_ns(12_000_000);
+        if let Some((source,r))=mouse {ps2::usb_mouse_event(source,r.buttons,r.dx,r.dy,r.wheel);}
+        timer::sleep_ns(if active{4_000_000}else{50_000_000});
     }
+}
+
+extern "C" fn ehci_aux_poll_thread(_:usize)->! {
+    loop {let active=ehci::poll_aux_input();timer::sleep_ns(if active{4_000_000}else{50_000_000});}
 }
 
 static XHCI: spin::Mutex<Option<xhci::Xhci>> = spin::Mutex::new(None);
@@ -1757,7 +1839,7 @@ extern "C" fn xhci_poll_thread(_: usize) -> ! {
         for r in &batch[..n] {
             console::feed_report(r);
         }
-        sched::yield_now();
+        if n == 0 { timer::sleep_ns(1_000_000); } else { sched::yield_now(); }
     }
 }
 

@@ -1,0 +1,116 @@
+The Import Tables (interpreted .idata section contents)
+ vma:            Hint    Time      Forward  DLL       First
+                 Table   Stamp     Chain    Name      Thunk
+ 00010000	00010078 00000000 00000000 00010b50 00010348
+
+	DLL Name: GDI32.dll
+	vma:     Ordinal  Hint  Member-Name  Bound-To
+	00010348  <none>  0013  BitBlt
+	00010350  <none>  0030  CreateCompatibleBitmap
+	00010358  <none>  0031  CreateCompatibleDC
+	00010360  <none>  0044  CreateFontW
+	00010368  <none>  0180  DeleteDC
+	00010370  <none>  0183  DeleteObject
+	00010378  <none>  02bf  GetStockObject
+	00010380  <none>  0323  Rectangle
+	00010388  <none>  0365  SelectObject
+	00010390  <none>  036d  SetBkMode
+	00010398  <none>  0373  SetDCBrushColor
+	000103a0  <none>  0374  SetDCPenColor
+	000103a8  <none>  0394  SetTextColor
+
+ 00010014	000100e8 00000000 00000000 00010b94 000103b8
+
+	DLL Name: KERNEL32.dll
+	vma:     Ordinal  Hint  Member-Name  Bound-To
+	000103b8  <none>  0124  DeleteCriticalSection
+	000103c0  <none>  014a  EnterCriticalSection
+	000103c8  <none>  0283  GetLastError
+	000103d0  <none>  02f9  GetStartupInfoW
+	000103d8  <none>  0334  GetTickCount
+	000103e0  <none>  0391  InitializeCriticalSection
+	000103e8  <none>  03ac  IsDBCSLeadByteEx
+	000103f0  <none>  03ef  LeaveCriticalSection
+	000103f8  <none>  0423  MultiByteToWideChar
+	00010400  <none>  0593  SetUnhandledExceptionFilter
+	00010408  <none>  05a3  Sleep
+	00010410  <none>  05c7  TlsGetValue
+	00010418  <none>  05f6  VirtualProtect
+	00010420  <none>  05f8  VirtualQuery
+
+ 00010028	00010160 00000000 00000000 00010ba8 00010430
+
+	DLL Name: MSIMG32.dll
+	vma:     Ordinal  Hint  Member-Name  Bound-To
+	00010430  <none>  0000  AlphaBlend
+
+ 0001003c	00010170 00000000 00000000 00010c3c 00010440
+
+	DLL Name: msvcrt.dll
+	vma:     Ordinal  Hint  Member-Name  Bound-To
+	00010440  <none>  000f  fwprintf
+	00010448  <none>  006a  __C_specific_handler
+	00010450  <none>  007e  ___lc_codepage_func
+	00010458  <none>  0081  ___mb_cur_max_func
+	00010460  <none>  0094  __iob_func
+	00010468  <none>  00a1  __set_app_type
+	00010470  <none>  00a3  __setusermatherr
+	00010478  <none>  00b0  __wgetmainargs
+	00010480  <none>  00b1  __winitenv
+	00010488  <none>  00c0  _amsg_exit
+	00010490  <none>  00d3  _cexit
+	00010498  <none>  00e1  _commode
+	000104a0  <none>  010b  _errno
+	000104a8  <none>  012d  _fmode
+	000104b0  <none>  017c  _initterm
+	000104b8  <none>  028c  _onexit
+	000104c0  <none>  03ba  _wcmdln
+	000104c8  <none>  0411  abort
+	000104d0  <none>  0421  calloc
+	000104d8  <none>  042d  exit
+	000104e0  <none>  043f  fprintf
+	000104e8  <none>  0442  fputwc
+	000104f0  <none>  0445  free
+	000104f8  <none>  044d  fwrite
+	00010500  <none>  0473  localeconv
+	00010508  <none>  047a  malloc
+	00010510  <none>  0480  memcpy
+	00010518  <none>  0482  memset
+	00010520  <none>  049b  signal
+	00010528  <none>  04ab  strerror
+	00010530  <none>  04ad  strlen
+	00010538  <none>  04af  strncmp
+	00010540  <none>  04d1  vfprintf
+	00010548  <none>  04e3  wcslen
+
+ 00010050	00010288 00000000 00000000 00010ca4 00010558
+
+	DLL Name: USER32.dll
+	vma:     Ordinal  Hint  Member-Name  Bound-To
+	00010558  <none>  0002  AdjustWindowRect
+	00010560  <none>  0010  BeginPaint
+	00010568  <none>  0073  CreateWindowExW
+	00010570  <none>  00a4  DefWindowProcW
+	00010578  <none>  00b0  DestroyWindow
+	00010580  <none>  00b9  DispatchMessageW
+	00010588  <none>  00da  DrawTextW
+	00010590  <none>  00f0  EndPaint
+	00010598  <none>  010c  FillRect
+	000105a0  <none>  017f  GetMessageW
+	000105a8  <none>  0209  InvalidateRect
+	000105b0  <none>  0237  KillTimer
+	000105b8  <none>  023f  LoadCursorW
+	000105c0  <none>  026b  MessageBoxW
+	000105c8  <none>  028f  PostQuitMessage
+	000105d0  <none>  0298  PtInRect
+	000105d8  <none>  02b9  RegisterClassExW
+	000105e0  <none>  0326  SetProcessDPIAware
+	000105e8  <none>  032f  SetRect
+	000105f0  <none>  033f  SetTimer
+	000105f8  <none>  0360  ShowWindow
+	00010600  <none>  0380  TranslateMessage
+	00010608  <none>  0399  UpdateWindow
+
+ 00010064	00000000 00000000 00000000 00000000 00000000
+
+The Function Table (interpreted .pdata section contents)

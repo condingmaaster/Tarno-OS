@@ -1,0 +1,8 @@
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1089/32768 files (2.3% non-contiguous), 98843/524288 blocks
+Candidate only; no promotion yet c75ee952e76c7d44a4b9464a67f3fb052503ba54dd9e749e6e35b5e2371a3e9c

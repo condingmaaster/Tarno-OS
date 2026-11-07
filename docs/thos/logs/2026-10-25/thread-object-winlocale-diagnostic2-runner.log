@@ -1,0 +1,99 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1997:17
+     |
+1997 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winlocale-probe`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (3.0% non-contiguous), 103823/524288 blocks
+winlocale-start
+winlocale-ok wide-size-query
+winlocale-ok wide-short-buffer-untouched
+winlocale-ok wide-name-data-and-boundary
+winlocale-ok ansi-name
+winlocale-ok english-language-name
+winlocale-ok native-language-name
+winlocale-ok currency-utf16
+winlocale-ok currency-acp1252
+winlocale-ok german-date
+winlocale-ok numeric-size-in-tchars
+winlocale-ok numeric-wide
+winlocale-ok numeric-ansi
+winlocale-ok numeric-string-field-invalid
+winlocale-ok unknown-locale-rejected
+winlocale-ok unknown-field-not-empty-success
+winlocale-ok unknown-flags-rejected
+winlocale-ok default-aliases
+winlocale-ok locale-validity-export
+winlocale-ok supported-catalog-valid
+winlocale-ok default-validity-aliases
+winlocale-ok no-full-installed-validity-success
+winlocale-ok unknown-locale-not-supported
+winlocale-ok validity-conflicting-flags
+winlocale-ok enumeration-exports
+winlocale-ok callback-context
+winlocale-ok no-complete-installed-locale-claimed
+winlocale-ok default-callback-buffers-fresh
+winlocale-ok ansi-callbacks
+winlocale-ok reentrant-callbacks
+winlocale-ok callback-cancellation
+winlocale-ok no-alternate-sort-records
+winlocale-ok conflicting-enum-flags
+winlocale-ok null-callback
+winlocale-ok null-output-rejected
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-create-error=00000032
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-wait-result=ffffffff
+winlocale-exit-query=00000000
+winlocale-last-error=00000032
+winlocale-worker-code=00000009
+winlocale-FAIL parallel-callbacks-and-data
+winlocale-ok context-release
+winlocale-result=FAIL
+winlocale-done

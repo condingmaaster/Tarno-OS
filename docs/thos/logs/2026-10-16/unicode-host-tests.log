@@ -1,0 +1,9 @@
+
+running 4 tests
+test tests::invalid_utf16 ... ok
+test tests::invalid_utf8 ... ok
+test tests::known_values ... ok
+test tests::every_scalar_roundtrip ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.61s
+

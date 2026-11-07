@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! EHCI (USB 2.0) host controller and a USB HID boot-protocol keyboard, polled with control transfers.
-//!
-//! The Acer's two EHCI controllers (Intel 5 Series) have only an internal rate-matching hub on their root
-//! ports, so devices sit behind a high-speed hub: this driver walks root ports and (one level of) hubs,
-//! addresses every device with control transfers on the asynchronous schedule (full/low-speed devices
-//! behind a hub use split transactions, which for control endpoints is just the hub-address/port fields
-//! of the queue head), and picks the first HID boot keyboard it finds. Reports are fetched with the HID
-//! class request GET_REPORT every few milliseconds — no periodic schedule needed.
+//! EHCI control/bulk storage, boot keyboards, and relative HID mice.
+//! Mouse interrupt-IN reports use a real periodic schedule, while control and
+//! storage transfers retain their asynchronous path. Input on other controllers
+//! is preserved, and port changes are monitored without resetting mounted media.
+//! The Acer's internal high-speed hubs require TT split transactions; that path
+//! still needs physical verification. UHCI/OHCI companion controllers are not implemented.
 
 use alloc::vec::Vec;
 
@@ -27,12 +25,15 @@ const CMD: u64 = 0x00;
 const STS: u64 = 0x04;
 const CTRLDSSEG: u64 = 0x10;
 const ASYNCLIST: u64 = 0x18;
+const PERIODICLIST: u64 = 0x14;
 const CONFIGFLAG: u64 = 0x40;
 const PORTSC: u64 = 0x44;
 
 const CMD_RUN: u32 = 1;
 const CMD_RESET: u32 = 2;
 const CMD_ASYNC: u32 = 1 << 5;
+const CMD_PERIODIC: u32 = 1 << 4;
+const STS_PSS: u32 = 1 << 14;
 const STS_HALTED: u32 = 1 << 12;
 const STS_ASS: u32 = 1 << 15;
 
@@ -47,6 +48,7 @@ struct Msc {
     toggle_out: bool,
     tag: u32,
     sectors: u64,
+    online: bool,
 }
 
 enum Data<'a> {
@@ -62,6 +64,11 @@ pub struct Ehci {
     dma_phys: u64,
     dma: *mut u8,
     kbd: Option<Kbd>,
+    mouse: Option<Mouse>,
+    devices: Vec<Dev>,
+    roots_seen: u32,
+    hubs: Vec<Hub>,
+    scan_at: u64,
     msc: Option<Msc>,
     /// USB bulk DMA area: queue head 0x0000, qTDs 0x0100.., CBW/CSW 0x1000, data bounce 0x2000..0x12000.
     ud_phys: u64,
@@ -75,11 +82,43 @@ struct Dev {
     mps: u16,
     hub_addr: u8,
     hub_port: u8,
+    root_port: u8,
+    depth: u8,
 }
 
 struct Kbd {
     dev: Dev,
     iface: u8,
+}
+
+#[derive(Clone, Copy)]
+struct Hub {dev: Dev, ports: u8, seen: u32}
+
+struct Mouse {
+    dev: Dev,
+    source: usize,
+    format: crate::hid_mouse::Format,
+    packet: usize,
+    dma_phys: u64,
+    dma: *mut u8,
+    list_phys: u64,
+    list: *mut u8,
+    toggle: bool,
+}
+impl Mouse {
+    fn put(&self, off: usize, value: u32) { unsafe { core::ptr::write_volatile(self.dma.add(off) as *mut u32, value); } }
+    fn get(&self, off: usize) -> u32 { unsafe { core::ptr::read_volatile(self.dma.add(off) as *const u32) } }
+    fn arm(&self) {
+        // qTD at 0x80; one interrupt packet, with explicit data toggle.
+        for i in 0..16 { self.put(0x80 + i*4,0); }
+        self.put(0x80,1); self.put(0x84,1);
+        self.put(0x8c,(self.dma_phys+0x100) as u32);
+        self.put(0x88,((self.toggle as u32)<<31)|((self.packet as u32)<<16)|(3<<10)|(1<<8)|0x80);
+        for i in 0..12 { self.put(0x18+i*4,0); }
+        self.put(0x0c,0); self.put(0x14,1);
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        self.put(0x10,(self.dma_phys+0x80) as u32);
+    }
 }
 
 unsafe impl Send for Ehci {}
@@ -165,7 +204,7 @@ impl Ehci {
         let ctrl_flag = (dev.speed != 2) as u32;
         self.p32(0x80, (ph(0) as u32) | 2); // horizontal link: back to the head QH
         self.p32(0x84, (15 << 28) | (ctrl_flag << 27) | ((dev.mps as u32) << 16) | (1 << 14) | (eps << 12) | dev.addr as u32);
-        self.p32(0x88, (1 << 30) | ((dev.hub_addr as u32) << 23) | ((dev.hub_port as u32) << 16));
+        self.p32(0x88, crate::ehci_layout::queue_caps(dev.hub_addr,dev.hub_port,0));
         self.p32(0x8C, 0);
         self.p32(0x90, ph(td(0) as u64) as u32); // next qTD
         self.p32(0x94, 1);
@@ -216,15 +255,19 @@ impl Ehci {
     }
 
     /// Address and configure the device on a freshly reset port (it answers at address 0).
-    fn enumerate(&mut self, speed: u8, hub_addr: u8, hub_port: u8, next_addr: &mut u8) -> Result<Dev, &'static str> {
-        let mut dev = Dev { addr: 0, speed, mps: if speed == 2 { 64 } else { 8 }, hub_addr, hub_port };
+    fn enumerate(&mut self, speed: u8, hub_addr: u8, hub_port: u8, root_port: u8) -> Result<Dev, &'static str> {
+        let depth=if hub_addr==0 {0}else{self.devices.iter().find(|d|d.addr==hub_addr).map_or(6,|d|d.depth.saturating_add(1))};
+        if depth>5{return Err("EHCI: USB topology exceeds supported tiers");}
+        let mut dev = Dev { addr: 0, speed, mps: if speed == 2 { 64 } else { 8 }, hub_addr, hub_port, root_port,depth };
         let d8 = self.get_descriptor(dev, 1, 0, 8)?;
         if d8.len() < 8 {
             return Err("EHCI: short device descriptor");
         }
         dev.mps = d8[7].max(8) as u16;
-        let addr = *next_addr;
-        *next_addr += 1;
+        let addr=(1u8..=127).find(|a|!self.devices.iter().any(|d|d.addr==*a)).ok_or("EHCI: USB address space exhausted")?;
+        // Keep the address reserved even if the SET_ADDRESS status handshake is lost.
+        // A later port disconnect/reset releases that device's records before reuse.
+        self.devices.push(Dev{addr,..dev});
         self.control(dev, setup_pkt(0, 5, addr as u16, 0, 0), false, 0)?;
         ms(10);
         dev.addr = addr;
@@ -254,22 +297,25 @@ impl Ehci {
         }
     }
 
-    fn hub_ports(&mut self, hub: Dev) -> Result<(), &'static str> {
+    fn hub_ports(&mut self, hub: Dev, allow_storage: bool) -> Result<(), &'static str> {
+        if hub.depth>=5{return Err("EHCI: too many hub tiers");}
         // SET_CONFIGURATION 1, hub descriptor, power all ports
         self.control(hub, setup_pkt(0, 9, 1, 0, 0), false, 0)?;
         let hd = self.control(hub, setup_pkt(0xA0, 6, 0x2900, 0, 8), true, 8)?;
         let n = *hd.get(2).ok_or("EHCI: short hub descriptor")? as u16;
+        if n==0 || n>31 {return Err("EHCI: unsupported hub port count");}
+        let mut seen=0u32;
         crate::kprintln!("THOS: usb              hub with {} ports", n);
         for p in 1..=n {
             let _ = self.control(hub, setup_pkt(0x23, 3, 8, p, 0), false, 0); // PORT_POWER
         }
         ms(200);
-        let mut next = 20u8;
         for p in 1..=n {
             let st = self.control(hub, setup_pkt(0xA3, 0, 0, p, 4), true, 4)?;
             if st.len() < 4 || st[0] & 1 == 0 {
                 continue; // nothing connected
             }
+            seen|=1<<p;
             crate::kprintln!("THOS: usb              hub port {}: device connected (status {:02x}{:02x})", p, st[1], st[0]);
             let _ = self.control(hub, setup_pkt(0x23, 3, 4, p, 0), false, 0); // PORT_RESET
             ms(80);
@@ -279,52 +325,220 @@ impl Ehci {
                 continue; // not enabled
             }
             let speed = if st[1] & 4 != 0 { 2 } else if st[1] & 2 != 0 { 1 } else { 0 };
-            let _ = self.control(hub, setup_pkt(0x23, 1, 0x10, p, 0), false, 0); // clear C_PORT_RESET
-            match self.enumerate(speed, hub.addr, p as u8, &mut next) {
+            let _ = self.control(hub, setup_pkt(0x23, 1, 20, p, 0), false, 0); // clear C_PORT_RESET
+            let _ = self.control(hub, setup_pkt(0x23, 1, 16, p, 0), false, 0); // clear C_PORT_CONNECTION
+            match self.enumerate(speed, hub.addr, p as u8, hub.root_port) {
                 Ok(dev) => {
                     if let Ok(dd) = self.get_descriptor(dev, 1, 0, 18) {
                         crate::kprintln!("THOS: usb              hub port {}: device {:02x}{:02x}:{:02x}{:02x} class {} speed {}", p, dd.get(9).copied().unwrap_or(0), dd.get(8).copied().unwrap_or(0), dd.get(11).copied().unwrap_or(0), dd.get(10).copied().unwrap_or(0), dd.get(4).copied().unwrap_or(0), speed);
                     }
-                    let _ = self.try_keyboard(dev); // keyboard and/or mass storage: look at every port
+                    let _ = self.try_keyboard(dev,allow_storage); // visit every input/storage port
                 }
                 Err(why) => crate::kprintln!("THOS: usb              hub port {}: could not enumerate: {}", p, why),
             }
         }
+        self.hubs.push(Hub{dev:hub,ports:n as u8,seen});
         Ok(())
     }
 
-    /// Is `dev` a HID boot keyboard? If so configure it and remember it.
-    fn try_keyboard(&mut self, dev: Dev) -> bool {
+    fn ack_root(&self,p:u32) {
+        let address=self.op+PORTSC+p as u64*4;
+        // PORTSC change bits are write-one-to-clear; preserve the remaining controls.
+        w32(address,r32(address));
+    }
+    fn detach_port(&mut self,hub:u8,port:u8,root:u8) {
+        let mut removed=Vec::new();
+        loop {
+            let mut changed=false;
+            for h in &self.hubs {
+                let gone=if hub==0 {h.dev.root_port==root}else{
+                    (h.dev.hub_addr==hub&&h.dev.hub_port==port)||removed.contains(&h.dev.hub_addr)
+                };
+                if gone&&!removed.contains(&h.dev.addr){removed.push(h.dev.addr);changed=true;}
+            }
+            if !changed{break;}
+        }
+        let lost=|d:Dev|if hub==0 {d.root_port==root}else{
+            (d.hub_addr==hub&&d.hub_port==port)||removed.contains(&d.hub_addr)
+        };
+        if self.kbd.as_ref().is_some_and(|k|lost(k.dev)) {
+            self.kbd=None;crate::console::feed_report(&[0;8]);
+            crate::kprintln!("THOS: usb              keyboard disconnected");
+        }
+        if self.mouse.as_ref().is_some_and(|m|lost(m.dev)) {
+            self.cmd(0,CMD_PERIODIC);let stopped=self.wait_sts(STS_PSS,false);
+            let m=self.mouse.take().unwrap();crate::ps2::usb_mouse_detach(m.source);
+            if stopped {
+                let mut frames=FRAME_ALLOC.lock();
+                frames.dealloc(x86_64::structures::paging::PhysFrame::containing_address(x86_64::PhysAddr::new(m.dma_phys)));
+                frames.dealloc(x86_64::structures::paging::PhysFrame::containing_address(x86_64::PhysAddr::new(m.list_phys)));
+            } // If the controller failed to stop, never recycle memory it might still access.
+            crate::kprintln!("THOS: usb              mouse disconnected (periodic stopped {})",stopped);
+        }
+        if let Some(m)=self.msc.as_mut().filter(|m|lost(m.dev)){m.online=false;}
+        self.hubs.retain(|h|!removed.contains(&h.dev.addr));
+        self.devices.retain(|d|!lost(*d));
+    }
+    /// Discover only changed ports. Existing storage is never reset or replaced by hotplug.
+    pub fn scan_connections(&mut self) {
+        let now=crate::timer::monotonic_ns();if now<self.scan_at{return;}
+        self.scan_at=now.saturating_add(1_000_000_000);
+        for p in 0..self.ports {
+            let sc=r32(self.op+PORTSC+p as u64*4);let present=sc&1!=0;let was=self.roots_seen&(1<<p)!=0;
+            let changed=sc&(1<<1)!=0;
+            if was&&(!present||changed){self.detach_port(0,0,p as u8);}
+            if present&&(!was||changed) {
+                if let Some(speed)=self.reset_root_port(p) {
+                    match self.enumerate(speed,0,0,p as u8) {
+                        Ok(d)=>{let bound=self.try_keyboard(d,false);crate::kprintln!("THOS: usb              hotplug root {} addr {} input {}",p+1,d.addr,bound);}
+                        Err(e)=>crate::kprintln!("THOS: usb              hotplug root {}: {}",p+1,e),
+                    }
+                }
+            }
+            if present{self.roots_seen|=1<<p;}else{self.roots_seen&=!(1<<p);}
+            if sc&((1<<1)|(1<<3)|(1<<5))!=0{self.ack_root(p);}
+        }
+        // Internal high-speed hubs keep their root port connected when an external mouse changes.
+        for snapshot in self.hubs.clone() {
+            if !self.hubs.iter().any(|h|h.dev.addr==snapshot.dev.addr){continue;}
+            for p in 1..=snapshot.ports {
+                let Ok(st)=self.control(snapshot.dev,setup_pkt(0xa3,0,0,p as u16,4),true,4)else{continue};
+                if st.len()<4{continue;}
+                let present=st[0]&1!=0;let was=snapshot.seen&(1<<p)!=0;let changed=st[2]&1!=0;
+                if was&&(!present||changed){self.detach_port(snapshot.dev.addr,p,snapshot.dev.root_port);}
+                if present&&(!was||changed) {
+                    let _=self.control(snapshot.dev,setup_pkt(0x23,3,4,p as u16,0),false,0);ms(80);
+                    if let Ok(status)=self.control(snapshot.dev,setup_pkt(0xa3,0,0,p as u16,4),true,4) {
+                        if status.len()>=4&&status[0]&2!=0 {
+                            let speed=if status[1]&4!=0{2}else if status[1]&2!=0{1}else{0};
+                            match self.enumerate(speed,snapshot.dev.addr,p,snapshot.dev.root_port) {
+                                Ok(d)=>{let bound=self.try_keyboard(d,false);crate::kprintln!("THOS: usb              hotplug hub {} port {} addr {} input {}",snapshot.dev.addr,p,d.addr,bound);}
+                                Err(e)=>crate::kprintln!("THOS: usb              hub hotplug: {}",e),
+                            }
+                        }
+                    }
+                    let _=self.control(snapshot.dev,setup_pkt(0x23,1,20,p as u16,0),false,0);
+                }
+                if changed{let _=self.control(snapshot.dev,setup_pkt(0x23,1,16,p as u16,0),false,0);}
+                if let Some(h)=self.hubs.iter_mut().find(|h|h.dev.addr==snapshot.dev.addr) {
+                    if present{h.seen|=1<<p;}else{h.seen&=!(1<<p);}
+                }
+            }
+        }
+    }
+
+    /// Discover boot HID interfaces and their interrupt endpoint without guessing report layouts.
+    fn try_keyboard(&mut self, dev: Dev, allow_storage: bool) -> bool {
         let Ok(dd) = self.get_descriptor(dev, 1, 0, 18) else { return false };
-        let class = dd.get(4).copied().unwrap_or(0xFF);
-        let Ok(cfg) = self.get_descriptor(dev, 2, 0, 64) else { return false };
-        // walk interface descriptors
-        let (mut off, mut hid_iface) = (0usize, None);
-        while off + 2 <= cfg.len() && cfg[off] != 0 {
-            if cfg[off + 1] == 4 && off + 9 <= cfg.len() && cfg[off + 5] == 3 && cfg[off + 6] == 1 && cfg[off + 7] == 1 {
-                hid_iface = Some(cfg[off + 2]);
-                break;
+        if dd.get(4) == Some(&9) {
+            return self.hub_ports(dev,allow_storage).is_ok() && (self.has_keyboard() || self.has_mouse() || self.has_msc());
+        }
+        let Ok(cfg) = self.get_descriptor(dev, 2, 0, 512) else { return false };
+        let (mut off, mut keyboard, mut mouse, mut mouse_iface,mut report_len) = (0usize, None, None, None,0usize);
+        while off+2 <= cfg.len() {
+            let len=cfg[off] as usize;
+            if len<2 || off+len>cfg.len() {break;}
+            if cfg[off+1]==4 && len>=9 {
+                mouse_iface=None;report_len=0;
+                if cfg[off+3]==0 && cfg[off+5]==3 && cfg[off+6]==1 {
+                    if cfg[off+7]==1 {keyboard=Some(cfg[off+2]);}
+                    if cfg[off+7]==2 {mouse_iface=Some(cfg[off+2]);}
+                }
+            } else if cfg[off+1]==0x21 && len>=9 && mouse_iface.is_some() {
+                for i in 0..cfg[off+5] as usize {
+                    let at=off+6+i*3;
+                    if at+3<=off+len&&cfg[at]==0x22 {report_len=u16::from_le_bytes([cfg[at+1],cfg[at+2]]) as usize;}
+                }
+            } else if cfg[off+1]==5 && len>=7 && cfg[off+2]&0x80!=0 && cfg[off+3]&3==3 {
+                if let Some(iface)=mouse_iface {
+                    let mps=u16::from_le_bytes([cfg[off+4],cfg[off+5]])&0x7ff;
+                    if mps>=3 && mps<=64 && cfg[off+6]!=0 {mouse=Some((iface,cfg[off+2]&15,mps,cfg[off+6],report_len));}
+                }
             }
-            off += cfg[off] as usize;
+            off+=len;
         }
-        if let (Some(iface), true) = (hid_iface, self.kbd.is_none()) {
-            let cfgval = cfg.get(5).copied().unwrap_or(1);
-            if self.control(dev, setup_pkt(0, 9, cfgval as u16, 0, 0), false, 0).is_err() {
-                return false;
+        // Storage initialization may set configuration; finish it before enabling HID reporting.
+        if allow_storage && self.msc.is_none() {self.try_msc(dev,&cfg);}
+        if (keyboard.is_some()&&self.kbd.is_none()) || (mouse.is_some()&&self.mouse.is_none()) {
+            let cfgval=cfg.get(5).copied().unwrap_or(1);
+            if self.control(dev,setup_pkt(0,9,cfgval as u16,0,0),false,0).is_err(){return false;}
+            if let Some(storage)=self.msc.as_mut().filter(|m|m.dev.addr==dev.addr){storage.toggle_in=false;storage.toggle_out=false;}
+        }
+        if let Some(iface)=keyboard.filter(|_|self.kbd.is_none()) {
+            let _=self.control(dev,setup_pkt(0x21,0x0b,0,iface as u16,0),false,0);
+            let _=self.control(dev,setup_pkt(0x21,0x0a,0,iface as u16,0),false,0);
+            self.kbd=Some(Kbd{dev,iface});
+        }
+        if let Some((iface,ep,mps,interval,report_len))=mouse.filter(|_|self.mouse.is_none()) {
+            let mut format=crate::hid_mouse::Format::boot();let mut protocol=0;
+            if report_len>0 && report_len<=512 {
+                if let Ok(descriptor)=self.control(dev,setup_pkt(0x81,6,0x2200,iface as u16,report_len as u16),true,report_len) {
+                    if let Some(parsed)=crate::hid_mouse::parse(&descriptor).filter(|f|f.bytes()<=mps as usize) {format=parsed;protocol=1;}
+                }
             }
-            let _ = self.control(dev, setup_pkt(0x21, 0x0B, 0, iface as u16, 0), false, 0); // SET_PROTOCOL(boot)
-            let _ = self.control(dev, setup_pkt(0x21, 0x0A, 0, iface as u16, 0), false, 0); // SET_IDLE(0)
-            self.kbd = Some(Kbd { dev, iface });
-            return true;
+            let mut ready=self.control(dev,setup_pkt(0x21,0x0b,protocol,iface as u16,0),false,0).is_ok();
+            if !ready && protocol!=0 {format=crate::hid_mouse::Format::boot();ready=self.control(dev,setup_pkt(0x21,0x0b,0,iface as u16,0),false,0).is_ok();}
+            if ready {
+                let wheel=format.has_wheel();
+                match self.start_mouse(dev,ep,mps,interval,format) {
+                    Ok(())=>crate::kprintln!("THOS: usb              boot mouse addr {} endpoint {} periodic input (wheel {})",dev.addr,ep,wheel),
+                    Err(why)=>crate::kprintln!("THOS: usb              mouse: {}",why),
+                }
+            }
         }
-        if class == 9 {
-            // a hub: configure and look behind it
-            return self.hub_ports(dev).is_ok() && (self.kbd.is_some() || self.msc.is_some());
+        self.has_keyboard()||self.has_mouse()
+    }
+
+    fn start_mouse(&mut self,dev:Dev,ep:u8,mps:u16,interval:u8,format:crate::hid_mouse::Format)->Result<(),&'static str> {
+        self.cmd(0,CMD_PERIODIC);
+        if !self.wait_sts(STS_PSS,false){return Err("periodic schedule did not stop");}
+        let list_frame=FRAME_ALLOC.lock().alloc_below(1u64<<32).ok_or("no low periodic frame")?;
+        let allocated={FRAME_ALLOC.lock().alloc_below(1u64<<32)};
+        let dma_frame=match allocated {
+            Some(f)=>f,None=>{FRAME_ALLOC.lock().dealloc(list_frame);return Err("no low mouse DMA frame");}
+        };
+        let mut m=Mouse{dev,source:0,format,packet:mps as usize,dma_phys:dma_frame.start_address().as_u64(),dma:phys_to_virt(dma_frame.start_address()).as_mut_ptr(),
+            list_phys:list_frame.start_address().as_u64(),list:phys_to_virt(list_frame.start_address()).as_mut_ptr(),toggle:false};
+        unsafe {core::ptr::write_bytes(m.dma,0,4096);}
+        let (period,masks)=if dev.speed==2 {
+            let micro=1u32<<interval.min(16).saturating_sub(1);
+            let mask=if micro<8 { (0..8).filter(|i|i%micro==0).fold(0u16,|a,i|a|(1<<i)) }else{1};
+            ((micro/8).max(1).min(1024),mask)
+        }else{
+            let frames=1u32<<(31-(interval as u32).leading_zeros());
+            (frames,0x1c01)
+        };
+        // Periodic QHs use a terminated horizontal link, not the asynchronous reclamation-head bit.
+        m.put(0,1);
+        m.put(4,((mps as u32)<<16)|(1<<14)|((dev.speed as u32)<<12)|((ep as u32)<<8)|dev.addr as u32);
+        m.put(8,crate::ehci_layout::queue_caps(dev.hub_addr,dev.hub_port,masks));
+        m.arm();
+        for i in 0..1024u32 {unsafe{core::ptr::write_volatile(m.list.add(i as usize*4) as *mut u32,
+            if i%period==0 {m.dma_phys as u32|2}else{1});}}
+        w32(self.op+PERIODICLIST,m.list_phys as u32);
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        self.cmd(CMD_PERIODIC,0);
+        if !self.wait_sts(STS_PSS,true) {return Err("periodic schedule did not start");}
+        m.source=crate::ps2::usb_mouse_attach();self.mouse=Some(m);Ok(())
+    }
+    pub fn has_mouse(&self)->bool {self.mouse.is_some()}
+    pub fn poll_mouse(&mut self)->Option<(usize,crate::hid_mouse::Sample)> {
+        let token=self.mouse.as_ref()?.get(0x88);
+        if token&0x80!=0 {return None;}
+        self.cmd(0,CMD_PERIODIC);
+        if !self.wait_sts(STS_PSS,false) {return None;}
+        let m=self.mouse.as_mut()?;
+        let mut report=None;
+        if token&0x7c==0 {
+            let left=((token>>16)&0x7fff) as usize;
+            if left<=m.packet {
+                let got=m.packet-left;let mut data=[0u8;64];
+                for(i,b)in data[..got].iter_mut().enumerate(){*b=unsafe{core::ptr::read_volatile(m.dma.add(0x100+i))};}
+                m.toggle=!m.toggle;
+                report=m.format.decode(&data[..got]).map(|r|(m.source,r));
+            }
         }
-        if self.msc.is_none() {
-            self.try_msc(dev, &cfg);
-        }
-        false
+        m.arm();self.cmd(CMD_PERIODIC,0);report
     }
 
     /// Is `dev` a Bulk-Only mass-storage device (class 8, subclass 6 SCSI, protocol 0x50)? If so bring it up.
@@ -354,7 +568,7 @@ impl Ehci {
         if self.control(dev, setup_pkt(0, 9, cfgval as u16, 0, 0), false, 0).is_err() {
             return;
         }
-        let mut m = Msc { dev, ep_in, ep_out, mps_in, mps_out, toggle_in: false, toggle_out: false, tag: 1, sectors: 0 };
+        let mut m = Msc { dev, ep_in, ep_out, mps_in, mps_out, toggle_in: false, toggle_out: false, tag: 1, sectors: 0, online:true };
         // spin-up: wait until the unit answers TEST UNIT READY
         let mut ready = false;
         for _ in 0..40 {
@@ -426,7 +640,7 @@ impl Ehci {
         let eps = dev.speed as u32;
         w(self, 0x00, self.dma_phys as u32 | 2); // horizontal link: back to the head QH (in the control frame)
         w(self, 0x04, (15 << 28) | ((mps as u32) << 16) | (1 << 14) | (eps << 12) | ((ep as u32) << 8) | dev.addr as u32);
-        w(self, 0x08, (1 << 30) | ((dev.hub_addr as u32) << 23) | ((dev.hub_port as u32) << 16));
+        w(self, 0x08, crate::ehci_layout::queue_caps(dev.hub_addr,dev.hub_port,0));
         w(self, 0x0C, 0);
         w(self, 0x10, ph(0x100) as u32);
         w(self, 0x14, 1);
@@ -568,7 +782,7 @@ impl Ehci {
     }
 
     pub fn has_msc(&self) -> bool {
-        self.msc.is_some()
+        self.msc.as_ref().is_some_and(|m|m.online)
     }
 
     pub fn msc_sectors(&self) -> u64 {
@@ -577,6 +791,7 @@ impl Ehci {
 
     /// READ(10)/WRITE(10) in pieces of at most 64 KiB, each retried a few times (sticks glitch on the first command after a pause).
     fn msc_rw(&mut self, lba: u64, buf: &mut [u8], write: bool) -> Result<(), &'static str> {
+        if self.msc.as_ref().is_some_and(|m|!m.online){return Err("USB: storage disconnected");}
         let mut m = self.msc.take().ok_or("USB: no mass-storage device")?;
         let mut res = Ok(());
         let total = buf.len() / 512;
@@ -614,6 +829,7 @@ impl Ehci {
     }
 
     pub fn msc_flush(&mut self) -> Result<(), &'static str> {
+        if self.msc.as_ref().is_some_and(|m|!m.online){return Err("USB: storage disconnected");}
         let mut m = self.msc.take().ok_or("USB: no mass-storage device")?;
         let r = self.scsi(&mut m, &[0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0], None);
         self.msc = Some(m);
@@ -642,35 +858,48 @@ impl Ehci {
 
 /// Bring up every EHCI controller until one has the stick (or a keyboard), trying up to three rounds: a stick can need seconds to
 /// show up. Every step is logged, because a hang or failure on real hardware can only be diagnosed from the screen.
+static AUX_INPUT: crate::io_mutex::IoMutex<Vec<Ehci>> = crate::io_mutex::IoMutex::new(Vec::new());
+pub fn has_aux_controllers()->bool {!AUX_INPUT.lock().is_empty()}
+pub fn poll_aux_input()->bool {
+    let mut active=false;
+    let (mut keys,mut mice)=(Vec::new(),Vec::new());
+    {
+        let mut controllers=AUX_INPUT.lock();
+        for e in controllers.iter_mut() {
+            e.scan_connections();active|=e.has_keyboard()||e.has_mouse();
+            if let Some(r)=e.poll_keyboard(){keys.push(r);}
+            if let Some(r)=e.poll_mouse(){mice.push(r);}
+        }
+    }
+    for r in keys {crate::console::feed_report(&r);}
+    for (source,r) in mice {crate::ps2::usb_mouse_event(source,r.buttons,r.dx,r.dy,r.wheel);}
+    active
+}
 pub fn init() -> Result<Ehci, &'static str> {
-    let locs = pci::find_class_all(0x0C, 0x03, 0x20);
-    if locs.is_empty() {
-        return Err("no EHCI controller");
-    }
-    crate::kprintln!("THOS: usb              {} EHCI controller(s) on PCI bus 0", locs.len());
-    let mut last = "EHCI: no controller brought up";
-    let mut kbd_only: Option<Ehci> = None;
+    let locs=pci::find_class_all(0x0c,0x03,0x20);
+    if locs.is_empty(){return Err("no EHCI controller");}
+    crate::kprintln!("THOS: usb              {} EHCI controller(s) on PCI bus 0",locs.len());
+    let mut last="EHCI: no controller brought up";
+    let mut controllers:Vec<Option<Ehci>>=locs.iter().map(|_|None).collect();
     for round in 0..3 {
-        for &loc in &locs {
-            match init_at(loc, round) {
-                Ok(e) if e.has_msc() => return Ok(e),
-                Ok(e) => {
-                    if kbd_only.is_none() {
-                        kbd_only = Some(e);
-                    }
-                }
-                Err(why) => last = why,
-            }
+        for(i,&loc)in locs.iter().enumerate() {
+            // Never reset a controller whose periodic/input or storage state is already live.
+            if controllers[i].is_some(){continue;}
+            match init_at(loc,round){Ok(e)=>controllers[i]=Some(e),Err(e)=>last=e}
         }
-        if round < 2 {
-            crate::kprintln!("THOS: usb              no storage yet (round {}), waiting 2 s and trying again", round + 1);
-            ms(2000);
-        }
+        // Complete the whole PCI scan before choosing storage: input may be on the other controller.
+        if controllers.iter().all(Option::is_some) {break;}
+        if round<2 {crate::kprintln!("THOS: usb              no storage yet, waiting 2 s");ms(2000);}
     }
-    match kbd_only {
-        Some(e) => Ok(e),
-        None => Err(last),
-    }
+    let primary=controllers.iter().position(|e|e.as_ref().is_some_and(|e|e.has_msc()))
+        .or_else(||controllers.iter().position(|e|e.as_ref().is_some_and(|e|e.has_keyboard()||e.has_mouse())))
+        .or_else(||controllers.iter().position(Option::is_some));
+    let Some(index)=primary else{return Err(last)};
+    let selected=controllers[index].take().unwrap();
+    let aux:Vec<_>=controllers.into_iter().flatten().collect();
+    crate::kprintln!("THOS: usb              {} auxiliary input controller(s)",aux.len());
+    *AUX_INPUT.lock()=aux;
+    Ok(selected)
 }
 
 fn init_at(loc: pci::Location, round: u32) -> Result<Ehci, &'static str> {
@@ -723,7 +952,9 @@ fn init_at(loc: pci::Location, round: u32) -> Result<Ehci, &'static str> {
         ms(2);
     }
     let wide = hcc & 1 != 0;
-    let frame = FRAME_ALLOC.lock().alloc().ok_or("EHCI: no DMA frame")?;
+    // QH links share CTRLDSSEG=0 with the low bulk arena, including on a
+    // controller capable of 64-bit buffer pointers.
+    let frame = FRAME_ALLOC.lock().alloc_below(1u64<<32).ok_or("EHCI: no low DMA frame")?;
     let dma_phys = frame.start_address().as_u64();
     if !wide && dma_phys >= 1 << 32 {
         return Err("EHCI: DMA frame above 4 GiB on a 32-bit controller");
@@ -741,7 +972,7 @@ fn init_at(loc: pci::Location, round: u32) -> Result<Ehci, &'static str> {
         return Err("EHCI: USB DMA region above 4 GiB");
     }
     unsafe { core::ptr::write_bytes(ud, 0, 0x2000) };
-    let mut e = Ehci { op, ports, wide, dma_phys, dma, kbd: None, msc: None, ud_phys, ud };
+    let mut e = Ehci { op, ports, wide, dma_phys, dma, kbd: None, mouse: None, devices:Vec::new(), roots_seen:0,hubs:Vec::new(),scan_at:crate::timer::monotonic_ns()+1_000_000_000,msc: None, ud_phys, ud };
     let _ = e.wide;
     for p in 0..ports {
         let a = op + PORTSC + 4 * p as u64;
@@ -750,32 +981,28 @@ fn init_at(loc: pci::Location, round: u32) -> Result<Ehci, &'static str> {
         }
     }
     ms(100);
-    let mut next = 1u8;
     for p in 0..e.ports {
         let a = op + PORTSC + 4 * p as u64;
         let sc = r32(a);
         if sc & 1 == 0 {
             continue; // nothing connected
         }
+        e.roots_seen|=1<<p;
+        e.ack_root(p);
         let Some(speed) = e.reset_root_port(p) else {
             crate::kprintln!("THOS: usb              port {} PORTSC {:#x}: a full/low-speed device: handed to the companion controller (not supported)", p + 1, sc);
             continue;
         };
-        match e.enumerate(speed, 0, 0, &mut next) {
+        match e.enumerate(speed, 0, 0, p as u8) {
             Ok(dev) => {
                 if let Ok(dd) = e.get_descriptor(dev, 1, 0, 18) {
                     crate::kprintln!("THOS: usb              port {}: device {:02x}{:02x}:{:02x}{:02x} class {}", p + 1, dd.get(9).copied().unwrap_or(0), dd.get(8).copied().unwrap_or(0), dd.get(11).copied().unwrap_or(0), dd.get(10).copied().unwrap_or(0), dd.get(4).copied().unwrap_or(0));
                 }
-                if e.try_keyboard(dev) && e.has_msc() {
-                    break;
-                }
+                let _ = e.try_keyboard(dev,true);
             }
             Err(why) => crate::kprintln!("THOS: usb              port {}: could not enumerate the device: {}", p + 1, why),
         }
     }
-    if e.has_keyboard() || e.has_msc() {
-        Ok(e)
-    } else {
-        Err("EHCI: controller up, no USB keyboard or storage found")
-    }
+    for p in 0..e.ports {e.ack_root(p);}
+    Ok(e)
 }

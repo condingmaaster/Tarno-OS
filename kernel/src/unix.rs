@@ -39,6 +39,13 @@ struct Chan {
     wr_closed: AtomicBool,
     rd_closed: AtomicBool,
     wq: WaitQueue,
+    packets: Mutex<Packets>,
+}
+#[derive(Clone)]
+struct Packet { data: Vec<u8>, fds: Vec<Arc<dyn FileOps>>, cred: [u32;3] }
+struct Packets { queue: VecDeque<Packet>, bytes: usize }
+fn credentials()->[u32;3] {
+    crate::sched::current().task().map_or([0;3],|t|[t.pid as u32,t.uid,t.gid])
 }
 
 impl Chan {
@@ -49,6 +56,7 @@ impl Chan {
             wr_closed: AtomicBool::new(false),
             rd_closed: AtomicBool::new(false),
             wq: WaitQueue::new(),
+            packets: Mutex::new(Packets {queue:VecDeque::new(),bytes:0}),
         })
     }
 }
@@ -69,21 +77,80 @@ enum State {
 pub struct UnixSock {
     st: Mutex<State>,
     nonblock: AtomicBool,
+    seqpacket: bool,
+    passcred: AtomicBool,
+    peercred: [u32;3],
 }
 
 static REGISTRY: Mutex<Vec<(Vec<u8>, Arc<Listener>)>> = Mutex::new(Vec::new());
 
 impl UnixSock {
+    /// Both directions enforce this byte bound for streams and packet queues.
+    pub fn buffer_capacity(&self)->u32 {CAP as u32}
+    pub fn socket_type(&self)->u32 {if self.seqpacket {5}else{1}}
+    pub fn available_bytes(&self)->i64 {
+        let Some((rx,_))=self.chans() else{return ENOTCONN};
+        if self.seqpacket {rx.packets.lock().queue.front().map_or(0,|p|p.data.len()) as i64}
+        else {rx.buf.lock().len() as i64}
+    }
+    pub fn peer_credentials(&self)->[u32;3] {self.peercred}
+    pub fn pass_credentials(&self)->bool {self.passcred.load(Ordering::Relaxed)}
+    pub fn set_pass_credentials(&self,on:bool)->i64 {
+        if !self.seqpacket {return -92;}
+        self.passcred.store(on,Ordering::Relaxed);0
+    }
+    pub fn recv_status(&self,buf:&mut [u8],flags:u64)->(i64,Vec<Arc<dyn FileOps>>,Option<[u32;3]>,u32) {
+        if !self.seqpacket {let(n,f)=self.recv_fds(buf,flags&0x40!=0);return(n,f,None,0);}
+        let Some((rx,_))=self.chans() else{return(ENOTCONN,Vec::new(),None,0)};
+        loop {
+            let result=x86_64::instructions::interrupts::without_interrupts(|| {
+                let mut q=rx.packets.lock();
+                let first=q.queue.front()?;let len=first.data.len();let n=buf.len().min(len);
+                buf[..n].copy_from_slice(&first.data[..n]);
+                let cred=self.pass_credentials().then_some(first.cred);
+                let fds=if flags&2!=0 {first.fds.clone()}else{
+                    let p=q.queue.pop_front().unwrap();q.bytes-=len;p.fds
+                };
+                Some((if flags&0x20!=0 {len}else{n},fds,cred,if n<len {0x20}else{0}))
+            });
+            if let Some((n,f,c,fl))=result {if flags&2==0 {rx.wq.wake_all();}return(n as i64,f,c,fl);}
+            if rx.wr_closed.load(Ordering::Acquire)||rx.rd_closed.load(Ordering::Acquire) {return(0,Vec::new(),None,0);}
+            if flags&0x40!=0||self.nonblock.load(Ordering::Relaxed) {return(EAGAIN,Vec::new(),None,0);}
+            if crate::signal::interrupted(){return(EINTR,Vec::new(),None,0);}
+            rx.wq.wait_if_intr(||rx.packets.lock().queue.is_empty()&&!rx.wr_closed.load(Ordering::Acquire)&&!rx.rd_closed.load(Ordering::Acquire));
+        }
+    }
+    fn send_packet(&self,data:&[u8],mut fds:Option<Vec<Arc<dyn FileOps>>>,nb:bool)->i64 {
+        if data.len()>CAP{return -90;}
+        let Some((_,tx))=self.chans() else{return EPIPE};
+        let cred=credentials();
+        loop {
+            if tx.rd_closed.load(Ordering::Acquire)||tx.wr_closed.load(Ordering::Acquire){return EPIPE;}
+            let sent=x86_64::instructions::interrupts::without_interrupts(||{
+                let mut q=tx.packets.lock();
+                if q.bytes+data.len()>CAP||q.queue.len()>=1024 {return false;}
+                q.queue.push_back(Packet {data:data.to_vec(),fds:fds.take().unwrap_or_default(),cred});q.bytes+=data.len();true
+            });
+            if sent {tx.wq.wake_all();return data.len() as i64;}
+            if nb||self.nonblock.load(Ordering::Relaxed){return EAGAIN;}
+            if crate::signal::interrupted(){return EINTR;}
+            tx.wq.wait_if_intr(||{let q=tx.packets.lock();(q.bytes+data.len()>CAP||q.queue.len()>=1024)&&!tx.rd_closed.load(Ordering::Acquire)&&!tx.wr_closed.load(Ordering::Acquire)});
+        }
+    }
     pub fn new() -> Arc<Self> {
-        Arc::new(UnixSock { st: Mutex::new(State::Fresh), nonblock: AtomicBool::new(false) })
+        Arc::new(UnixSock { st: Mutex::new(State::Fresh), nonblock: AtomicBool::new(false),seqpacket:false,passcred:AtomicBool::new(false),peercred:credentials() })
     }
 
     pub fn pair() -> (Arc<Self>, Arc<Self>) {
+        Self::pair_kind(false)
+    }
+    pub fn pair_kind(seqpacket:bool) -> (Arc<Self>, Arc<Self>) {
         let (ab, ba) = (Chan::new(), Chan::new());
         let mk = |rx: &Arc<Chan>, tx: &Arc<Chan>| {
             Arc::new(UnixSock {
                 st: Mutex::new(State::Connected { rx: rx.clone(), tx: tx.clone(), peer: None, me: None }),
                 nonblock: AtomicBool::new(false),
+                seqpacket,passcred:AtomicBool::new(false),peercred:credentials(),
             })
         };
         (mk(&ba, &ab), mk(&ab, &ba))
@@ -131,6 +198,7 @@ impl UnixSock {
         let server = Arc::new(UnixSock {
             st: Mutex::new(State::Connected { rx: ab.clone(), tx: ba.clone(), peer: None, me: Some(path.clone()) }),
             nonblock: AtomicBool::new(false),
+            seqpacket:false,passcred:AtomicBool::new(false),peercred:credentials(),
         });
         *st = State::Connected { rx: ba, tx: ab, peer: Some(path), me: None };
         l.queue.lock().push_back(server);
@@ -216,6 +284,7 @@ impl UnixSock {
     /// Read up to `buf.len()` bytes; the second value holds the descriptors that were sent with them.
     /// A read never runs across the start of a later descriptor group, so descriptors stay with their message.
     pub fn recv_fds(&self, buf: &mut [u8], nb: bool) -> (i64, Vec<Arc<dyn FileOps>>) {
+        if self.seqpacket {let(n,f,_,_)=self.recv_status(buf,if nb {0x40}else{0});return(n,f);}
         let Some((rx, _)) = self.chans() else { return (ENOTCONN, Vec::new()) };
         if buf.is_empty() {
             return (0, Vec::new());
@@ -261,6 +330,7 @@ impl UnixSock {
 
     /// Write `data`; `fds` (if any) ride with its first byte.
     pub fn send_fds(&self, data: &[u8], mut fds: Option<Vec<Arc<dyn FileOps>>>, nb: bool) -> i64 {
+        if self.seqpacket {return self.send_packet(data,fds,nb);}
         let Some((_, tx)) = self.chans() else { return EPIPE };
         let mut done = 0;
         while done < data.len() {
@@ -326,6 +396,13 @@ impl FileOps for UnixSock {
                 }
             }
             State::Connected { rx, tx, .. } => {
+                if self.seqpacket {
+                    if want&POLLIN!=0&&!rx.packets.lock().queue.is_empty(){r|=POLLIN;}
+                    if rx.wr_closed.load(Ordering::Acquire){r|=POLLHUP|(want&POLLIN);}
+                    if want&POLLOUT!=0 {let q=tx.packets.lock();if q.bytes<CAP&&q.queue.len()<1024 {r|=POLLOUT;}}
+                    if tx.rd_closed.load(Ordering::Acquire){r|=POLLERR;}
+                    return r;
+                }
                 if want & POLLIN != 0 && !rx.buf.lock().is_empty() {
                     r |= POLLIN;
                 }

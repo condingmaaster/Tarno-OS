@@ -1,0 +1,47 @@
+#!/busybox sh
+# Download a URL into the user's Downloads folder; never run downloaded code.
+B=/busybox
+fail() { echo "Download failed: $*" >&2; exit 1; }
+url=$1
+name=$2
+case "$url" in http://*|https://*) ;; *) fail "use an HTTP or HTTPS URL" ;; esac
+if [ -z "$name" ]; then
+    name=${url%%\?*}; name=${name%%\#*}; name=${name##*/}
+fi
+case "$name" in ''|.|..|*/*|*'\'*|*'
+'*|*''*) fail "choose a plain file name" ;; esac
+[ ${#name} -le 180 ] || fail "file name too long"
+home=${HOME:-/tmp}
+[ "$home" != / ] || home=/tmp
+dir=$home/Downloads
+$B mkdir -p "$dir" || fail "cannot create Downloads"
+dest=$dir/$name
+[ ! -e "$dest" ] && [ ! -L "$dest" ] || fail "a file with this name already exists"
+[ -x /usr/bin/curl ] || fail "TLS downloader is not installed"
+part=$($B mktemp "$dir/.thos-download.XXXXXX") || fail "cannot create temporary file"
+worker=
+cleanup() {
+    if [ -n "$worker" ]; then $B kill "$worker" 2>/dev/null; wait "$worker" 2>/dev/null; fi
+    $B rm -f "$part"
+}
+trap cleanup EXIT
+trap 'echo "Download cancelled" >&2; exit 130' INT TERM HUP
+echo "Downloading to $dest"
+/usr/bin/curl --location --fail --show-error --progress-bar \
+    --proto '=http,https' --proto-redir '=http,https' \
+    --cacert /etc/ssl/certs/ca-certificates.crt --connect-timeout 20 \
+    --max-time 3600 --output "$part" --url "$url" &
+worker=$!
+wait "$worker"
+rc=$?
+worker=
+[ "$rc" -eq 0 ] || fail "network, certificate or HTTP error ($rc)"
+suffix=$($B printf '%s' "${name##*.}" | $B tr 'A-Z' 'a-z')
+if [ "$suffix" = exe ] && [ "$($B head -c2 "$part")" = MZ ]; then
+    $B chmod u+x "$part" || fail "cannot set executable permission"
+fi
+# link() publishes a complete file atomically and fails if the destination exists.
+$B ln "$part" "$dest" || fail "cannot publish file (name already exists or storage error)"
+$B rm -f "$part"
+echo "Saved: $dest"
+$B sha256sum "$dest"

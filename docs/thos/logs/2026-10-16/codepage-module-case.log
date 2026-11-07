@@ -1,0 +1,258 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1858:17
+     |
+1858 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winmodule-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (2.9% non-contiguous), 104798/524288 blocks
+winmodule-path=C:\winmodule.exe expected=C:\winmodule.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-path=C:\winmodule.exe expected=C:\winmodule.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok kernel-handle
+winmodule-path=C:\Windows\System32\KERNEL32.DLL expected=C:\Windows\System32\KERNEL32.DLL
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok extension-handle
+winmodule-path=C:\Windows\System32\kernel32x.dll expected=C:\Windows\System32\kernel32x.dll
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok invalid-ansi
+winmodule-ok invalid-wide
+winmodule-failures=0
+winmodule-done
+winmodule-path=C:\winmodule.exe expected=C:\winmodule.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-path=C:\winmodule.exe expected=C:\winmodule.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok kernel-handle
+winmodule-path=C:\Windows\System32\KERNEL32.DLL expected=C:\Windows\System32\KERNEL32.DLL
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok extension-handle
+winmodule-path=C:\Windows\System32\kernel32x.dll expected=C:\Windows\System32\kernel32x.dll
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok invalid-ansi
+winmodule-ok invalid-wide
+winmodule-failures=0
+winmodule-done
+winmodule-path=C:\tmp\Größe 😀 Tools\test.exe expected=C:\tmp\Größe 😀 Tools\test.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-path=C:\tmp\Größe 😀 Tools\test.exe expected=C:\tmp\Größe 😀 Tools\test.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok kernel-handle
+winmodule-path=C:\Windows\System32\KERNEL32.DLL expected=C:\Windows\System32\KERNEL32.DLL
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok extension-handle
+winmodule-path=C:\Windows\System32\kernel32x.dll expected=C:\Windows\System32\kernel32x.dll
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok invalid-ansi
+winmodule-ok invalid-wide
+winmodule-failures=0
+winmodule-done
+winmodule-path=C:\tmp\long-directory-segment-1-12345678\long-directory-segment-2-12345678\long-directory-segment-3-12345678\long-directory-segment-4-12345678\long-directory-segment-5-12345678\long-directory-segment-6-12345678\long-directory-segment-7-12345678\long-directory-segment-8-12345678\long-directory-segment-9-12345678\test.exe expected=C:\tmp\long-directory-segment-1-12345678\long-directory-segment-2-12345678\long-directory-segment-3-12345678\long-directory-segment-4-12345678\long-directory-segment-5-12345678\long-directory-segment-6-12345678\long-directory-segment-7-12345678\long-directory-segment-8-12345678\long-directory-segment-9-12345678\test.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-path=C:\tmp\long-directory-segment-1-12345678\long-directory-segment-2-12345678\long-directory-segment-3-12345678\long-directory-segment-4-12345678\long-directory-segment-5-12345678\long-directory-segment-6-12345678\long-directory-segment-7-12345678\long-directory-segment-8-12345678\long-directory-segment-9-12345678\test.exe expected=C:\tmp\long-directory-segment-1-12345678\long-directory-segment-2-12345678\long-directory-segment-3-12345678\long-directory-segment-4-12345678\long-directory-segment-5-12345678\long-directory-segment-6-12345678\long-directory-segment-7-12345678\long-directory-segment-8-12345678\long-directory-segment-9-12345678\test.exe
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok kernel-handle
+winmodule-path=C:\Windows\System32\KERNEL32.DLL expected=C:\Windows\System32\KERNEL32.DLL
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok extension-handle
+winmodule-path=C:\Windows\System32\kernel32x.dll expected=C:\Windows\System32\kernel32x.dll
+winmodule-ok ansi-path
+winmodule-ok wide-path
+winmodule-ok ansi-truncated
+winmodule-ok wide-truncated
+winmodule-ok ansi-one
+winmodule-ok wide-one
+winmodule-ok ansi-zero
+winmodule-ok wide-zero
+winmodule-ok ansi-exact
+winmodule-ok ansi-fit
+winmodule-ok wide-exact
+winmodule-ok wide-fit
+winmodule-ok invalid-ansi
+winmodule-ok invalid-wide
+winmodule-failures=0
+winmodule-done
+winmodule-series-done
+winmodule-run-exit:0

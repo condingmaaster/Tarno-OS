@@ -15,6 +15,7 @@
 use core::sync::atomic::{AtomicU64, Ordering};
 
 use limine::memmap::{Entry, MEMMAP_USABLE};
+#[cfg(not(feature="small-block-heap"))]
 use linked_list_allocator::LockedHeap;
 use spin::Mutex;
 use x86_64::structures::paging::{FrameDeallocator, PhysFrame, Size4KiB};
@@ -22,14 +23,18 @@ use x86_64::{PhysAddr, VirtAddr};
 
 const FRAME_SIZE: u64 = 4096;
 
-/// Bootstrap heap: 32 MiB static arena. Covers the SMP stress milestone's
+/// Bootstrap heap: 96 MiB static arena. Covers the SMP stress milestone's
 /// hundreds of 16 KiB kernel stacks with room to spare; replaced by a
 /// page-backed heap once the page tables are ours (they now are — TODO).
 const HEAP_SIZE: usize = 96 * 1024 * 1024;
 static mut HEAP_ARENA: [u8; HEAP_SIZE] = [0; HEAP_SIZE];
 
 #[global_allocator]
+#[cfg(not(feature="small-block-heap"))]
 static HEAP: LockedHeap = LockedHeap::empty();
+#[global_allocator]
+#[cfg(feature="small-block-heap")]
+static HEAP: crate::small_heap::SmallHeap = crate::small_heap::SmallHeap::empty();
 
 /// Limine HHDM offset: `virt = phys + HHDM_OFFSET` for all physical RAM.
 static HHDM_OFFSET: AtomicU64 = AtomicU64::new(0);
@@ -102,13 +107,12 @@ pub unsafe fn init(hhdm: u64, entries: &[&Entry]) -> MemStats {
         heap_bytes: HEAP_SIZE,
     };
 
-    // Reserve the DMA bounce arena at the start of the largest usable region.
-    let dma_base = entries
-        .iter()
-        .filter(|e| e.type_ == MEMMAP_USABLE && e.length >= (DMA_ARENA_BYTES + NET_DMA_BYTES + USB_DMA_BYTES + AUDIO_DMA_BYTES) * 4)
-        .max_by_key(|e| e.length)
-        .map(|e| align_up(e.base, FRAME_SIZE))
-        .expect("no usable region large enough for the DMA arena");
+    // USB and other 32-bit devices cannot DMA above 4 GiB, even when the
+    // largest RAM range happens to live there (e.g. the 8-GiB Acer).
+    let dma_base = crate::dma_region::choose_low_region(
+        entries.iter().filter(|e|e.type_==MEMMAP_USABLE).map(|e|(e.base,e.length)),
+        (DMA_ARENA_BYTES+NET_DMA_BYTES+USB_DMA_BYTES+AUDIO_DMA_BYTES)*4,
+    ).expect("no low usable region large enough for the DMA arena");
     DMA_ARENA.store(dma_base, Ordering::Relaxed);
 
     let mut alloc = FRAME_ALLOC.lock();
@@ -138,7 +142,10 @@ pub unsafe fn init(hhdm: u64, entries: &[&Entry]) -> MemStats {
     TOTAL_FRAMES.store(stats.usable_frames, Ordering::Relaxed);
 
     // Bring the heap up on the static arena.
+    #[cfg(not(feature="small-block-heap"))]
     HEAP.lock().init(core::ptr::addr_of_mut!(HEAP_ARENA) as *mut u8, HEAP_SIZE);
+    #[cfg(feature="small-block-heap")]
+    HEAP.init(core::ptr::addr_of_mut!(HEAP_ARENA) as *mut u8, HEAP_SIZE);
 
     stats
 }
@@ -189,6 +196,22 @@ impl FrameAllocator {
 
     pub fn dealloc(&mut self, frame: PhysFrame<Size4KiB>) {
         self.push(hhdm_offset(), frame.start_address());
+    }
+    /// Remove a frame in the controller's addressable range without consuming
+    /// high frames. The caller holds FRAME_ALLOC; no allocation or sleeping.
+    pub fn alloc_below(&mut self,limit:u64)->Option<PhysFrame<Size4KiB>> {
+        let hhdm=hhdm_offset();let mut node=self.head;let mut previous:Option<core::ptr::NonNull<FreeNode>>=None;
+        while let Some(current)=node {
+            let pa=current.as_ptr() as u64-hhdm;
+            let next=unsafe{current.as_ref().next};
+            if pa.checked_add(FRAME_SIZE).is_some_and(|end|end<=limit) {
+                if let Some(mut prev)=previous {unsafe{prev.as_mut().next=next;}}else{self.head=next;}
+                self.free_count-=1;
+                return Some(PhysFrame::containing_address(PhysAddr::new(pa)));
+            }
+            previous=Some(current);node=next;
+        }
+        None
     }
 }
 

@@ -1,0 +1,11 @@
+
+running 6 tests
+test tests::adjacent_quotes ... ok
+test tests::bounded ... ok
+test tests::empty_and_literal_shell_chars ... ok
+test tests::program_path ... ok
+test tests::quotes_and_backslashes ... ok
+test tests::roundtrip ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

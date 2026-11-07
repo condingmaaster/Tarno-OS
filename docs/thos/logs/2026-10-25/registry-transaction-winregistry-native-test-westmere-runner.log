@@ -1,0 +1,49 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2021:17
+     |
+2021 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winregistry-native-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1115/32768 files (3.0% non-contiguous), 103835/524288 blocks
+winregistry-native-start
+winregistry-native-ok native-exports
+winregistry-native-ok actual-key-created
+winregistry-native-ok default-value-set
+winregistry-native-ok unicode-value-set
+winregistry-native-ok unicode-no-lossy-ASCII-alias
+winregistry-native-ok unicode-roundtrip
+winregistry-native-ok ULONG-stack-padding-ignored
+winregistry-native-ok bad-name-pointer-refused
+winregistry-native-ok bad-name-keeps-default
+winregistry-native-ok length-exceeds-maximum-refused
+winregistry-native-ok odd-UTF16-byte-count-refused
+winregistry-native-ok handle-upper-bits-refused
+winregistry-native-ok query-result-pointer-validated
+winregistry-native-ok query-output-pointer-validated
+winregistry-native-ok long-counted-names-not-truncated
+winregistry-native-ok enumerated-Unicode-value-byte-count
+winregistry-native-ok relative-key-created
+winregistry-native-ok enumerated-Unicode-key-byte-count
+winregistry-native-ok open-output-refused
+winregistry-native-ok create-disposition-refused-before-mutation
+winregistry-native-ok invalid-output-created-no-key
+winregistry-native-ok object-attributes-size-refused
+winregistry-native-ok root-handle-upper-bits-refused
+winregistry-native-ok unsupported-volatile-not-faked
+winregistry-native-result=PASS
+winregistry-native-done

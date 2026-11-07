@@ -2,12 +2,13 @@
 // THOS desktop: a Wayland wire-protocol server (the real protocol, so unmodified libwayland clients work).
 // Included into thosdesk.c, after the compositor's window list and compose(). Implements
 //   wl_display, wl_registry, wl_callback, wl_compositor, wl_surface (buffers are copied into the window at
-//   commit), wl_region (ignored), wl_shm / wl_shm_pool / wl_buffer, wl_seat (pointer + keyboard with a
+//   commit), wl_region input masks, wl_shm / wl_shm_pool / wl_buffer, wl_seat (pointer + keyboard with a
 //   German xkb keymap), wl_output, xdg_wm_base / xdg_surface / xdg_toplevel,
-//   and accepting stubs for wl_subcompositor / wl_data_device_manager / xdg_positioner / xdg_popup.
-// Not implemented: popups and subsurfaces (they are not shown), selections, touch, damage tracking beyond a union rectangle.
+//   wl_subcompositor / wl_subsurface (compound windows), data devices and xdg popups.
+// Limitations: subsurfaces outside the root buffer bounds, touch; damage is a union rectangle.
 #include <sys/uio.h>
 #include <time.h>
+#include <limits.h>
 
 #ifndef WLS_PATH
 #define WLS_PATH "/run/wayland-0"
@@ -16,12 +17,28 @@
 #define WLS_INCAP 16384
 
 enum { O_FREE = 0, O_DISPLAY, O_REGISTRY, O_COMPOSITOR, O_SHM, O_POOL, O_BUFFER, O_SURFACE, O_CALLBACK, O_SEAT,
-       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP, O_POSITIONER, O_POPUP, O_DSRC, O_DDEV, O_DOFFER };
+       O_POINTER, O_KEYBOARD, O_XDGWM, O_XDGSURF, O_TOPLEVEL, O_OUTPUT, O_STUB, O_REGION, O_DDM, O_SUBCOMP, O_POSITIONER, O_POPUP, O_DSRC, O_DDEV, O_DOFFER, O_SUBSURF };
 
+struct wlpointer { struct wlpointer *next; uint32_t id, ver; };
+struct wlkeyboard { struct wlkeyboard *next; uint32_t id; };
 struct wlpos { int w, h, ax, ay, aw, ah, anchor, gravity, ox, oy; };
 struct wlpool { void *base; size_t size; int fd, refs, destroyed; };
 struct wlbuf { struct wlpool *pool; int off, w, h, stride; uint32_t fmt; };
 struct wlobj { int type; uint32_t ver; void *p; };
+struct wlregionop { int x,y,w,h,add; };
+struct wlregion { struct wlregionop *ops; size_t n; int infinite; };
+static void region_clear(struct wlregion *r) { free(r->ops);memset(r,0,sizeof *r); }
+static int region_copy(struct wlregion *dst,const struct wlregion *src) {
+    struct wlregion next={0};
+    if(!src)next.infinite=1;
+    else {next=*src;next.ops=0;if(src->n){next.ops=malloc(src->n*sizeof *src->ops);if(!next.ops)return 0;memcpy(next.ops,src->ops,src->n*sizeof *src->ops);}}
+    region_clear(dst);*dst=next;return 1;
+}
+static int region_contains(const struct wlregion *r,int64_t x,int64_t y) {
+    int hit=r->infinite;
+    for(size_t i=0;i<r->n;i++){const struct wlregionop *q=&r->ops[i];if(x>=q->x&&y>=q->y&&x<(int64_t)q->x+q->w&&y<(int64_t)q->y+q->h)hit=q->add;}
+    return hit;
+}
 
 struct wlsurf {
     struct wlsurf *next;
@@ -38,6 +55,14 @@ struct wlsurf {
     int is_popup, popup_x, popup_y, popup_grab, popup_id; /* popup placement (parent window coordinates) */
     struct wlsurf *parent;
     uint32_t popup_obj;
+    /* A subsurface is part of its parent's window, not a separate desktop window.
+       Keep the original pixels: recomposition must never blend over an old composite. */
+    uint32_t *pixels, *cached_pixels;
+    int pixel_w, pixel_h, cached_w, cached_h, cached_set;
+    int is_sub, sub_sync, sub_added, sub_x, sub_y, sub_px, sub_py, sub_z, sub_pz;
+    uint32_t sub_id, cb_cached[16]; int ncb_cached;
+    struct wlregion input, pending_input, cached_input;
+    int input_pending, input_cached;
 };
 
 struct wlc {
@@ -47,13 +72,16 @@ struct wlc {
     uint8_t *out; size_t outlen, outcap;
     struct wlobj *objs; uint32_t nobjs;
     struct wlsurf *surfs;
-    uint32_t serial, ptr_id, kbd_id, ptr_ver, ddev_id, soff;
+    uint32_t serial, ddev_id, soff;
+    struct wlpointer *pointers;
+    struct wlkeyboard *keyboards;
 };
 
 static struct wlc wlcl[WLS_MAXCL];
 static int wls_listen_fd = -1;
 static struct wlsurf *wls_pfocus, *wls_kfocus, *wls_grab;
 static uint32_t wls_mods;
+static uint8_t wls_hid_down[256];
 static char *wls_keymap; static size_t wls_keymap_len;
 static unsigned long long wls_last_tick;
 static int last_x = -1, last_y = -1;
@@ -101,6 +129,23 @@ static void wl_ev(struct wlc *c, uint32_t id, uint32_t op, int n, ...) {
     for (int i = 0; i < n; i++) ob_u32(&o, __builtin_va_arg(ap, uint32_t));
     __builtin_va_end(ap);
     wl_emit(c, id, op, &o);
+}
+/* A client may bind the same seat more than once or own several pointer objects.
+   Keep resources separate; high-version frame/axis events must not reach v3. */
+static void wl_pointer_ev(struct wlc *c, uint32_t op, int n, ...) {
+    struct ob o = { .n = 0 };
+    __builtin_va_list ap; __builtin_va_start(ap, n);
+    for (int i = 0; i < n; i++) ob_u32(&o, __builtin_va_arg(ap, uint32_t));
+    __builtin_va_end(ap);
+    for (struct wlpointer *p = c->pointers; p; p = p->next)
+        if (op < 5 || p->ver >= 5) wl_emit(c, p->id, op, &o);
+}
+static void wl_keyboard_ev(struct wlc *c, uint32_t op, int n, ...) {
+    struct ob o = { .n = 0 };
+    __builtin_va_list ap; __builtin_va_start(ap, n);
+    for (int i = 0; i < n; i++) ob_u32(&o, __builtin_va_arg(ap, uint32_t));
+    __builtin_va_end(ap);
+    for (struct wlkeyboard *k = c->keyboards; k; k = k->next) wl_emit(c, k->id, op, &o);
 }
 static void wl_delete_id(struct wlc *c, uint32_t id) { wl_ev(c, 1, 1, 1, id); }
 static void wl_error(struct wlc *c, uint32_t obj, uint32_t code, const char *msg) {
@@ -155,19 +200,27 @@ static int m_str(struct msg *m, char *dst, size_t cap) {
 /* ---------- surfaces and windows ---------- */
 static struct win *win_by_id(int id) { for (int i = 0; i < nwin; i++) if (wins[i].id == id) return &wins[i]; return 0; }
 static int win_index_by_id(int id) { for (int i = 0; i < nwin; i++) if (wins[i].id == id) return i; return -1; }
+static void subs_render(struct wlsurf *s);
 static void surf_unmap(struct wlsurf *s) {
     int i = s->winid ? win_index_by_id(s->winid) : -1;
     s->winid = 0;
     if (i >= 0) { wins[i].wl = 0; remove_win(i); }
 }
 static void surf_free(struct wlsurf *s) {
+    struct wlsurf *parent = s->is_sub ? s->parent : 0;
+    for (struct wlsurf *ch = s->c->surfs; ch; ch = ch->next)
+        if (ch->parent == s) { ch->parent = 0; ch->sub_added = 0; }
+    for (uint32_t i = 0; i < s->c->nobjs; i++)
+        if (s->c->objs[i].type == O_SUBSURF && s->c->objs[i].p == s) s->c->objs[i].p = 0;
     surf_unmap(s);
     if (wls_pfocus == s) wls_pfocus = 0;
     if (wls_kfocus == s) wls_kfocus = 0;
     if (wls_grab == s) wls_grab = 0;
     for (struct wlsurf **pp = &s->c->surfs; *pp; pp = &(*pp)->next)
         if (*pp == s) { *pp = s->next; break; }
-    free(s);
+    free(s->pixels); free(s->cached_pixels);
+    region_clear(&s->input);region_clear(&s->pending_input);region_clear(&s->cached_input);free(s);
+    if (parent) subs_render(parent);
 }
 static void buf_release(struct wlc *c, uint32_t id) { wl_ev(c, id, 0, 0); }
 
@@ -182,10 +235,110 @@ static void wls_send_selection(struct wlc *c);
 static void desk_begin_move(int winid);
 static void desk_begin_resize(int winid, int edges);
 static void desk_set_maximized(int winid, int on);
+/* Subsurface buffers are copied before release, including synchronized cached state. */
+static int subs_synchronized(struct wlsurf *s) {
+    for (; s && s->is_sub; s = s->parent) if (s->sub_sync) return 1;
+    return 0;
+}
+static int subs_apply_cached(struct wlsurf *s) {
+    int changed = s->cached_set;
+    if(s->input_cached){region_clear(&s->input);s->input=s->cached_input;memset(&s->cached_input,0,sizeof s->cached_input);s->input_cached=0;}
+    if (s->cached_set) {
+        free(s->pixels); s->pixels = s->cached_pixels; s->cached_pixels = 0;
+        s->pixel_w = s->cached_w; s->pixel_h = s->cached_h; s->cached_set = 0;
+    }
+    for (int i = 0; i < s->ncb_cached && s->ncb_ready < 16; i++) s->cb_ready[s->ncb_ready++] = s->cb_cached[i];
+    s->ncb_cached = 0;
+    return changed;
+}
+static int subs_apply_children(struct wlsurf *s, int ancestor_sync) {
+    int changed = 0;
+    for (struct wlsurf *ch = s->c->surfs; ch; ch = ch->next) if (ch->is_sub && ch->parent == s) {
+        changed |= !ch->sub_added || ch->sub_x != ch->sub_px || ch->sub_y != ch->sub_py || ch->sub_z != ch->sub_pz;
+        ch->sub_added = 1; ch->sub_x = ch->sub_px; ch->sub_y = ch->sub_py; ch->sub_z = ch->sub_pz;
+        if (ancestor_sync || ch->sub_sync) {
+            changed |= subs_apply_cached(ch); changed |= subs_apply_children(ch, 1);
+        }
+    }
+    return changed;
+}
+static void subs_paint(struct wlsurf *s, struct win *w, int64_t ox, int64_t oy, int depth);
+static void subs_paint_children(struct wlsurf *s, struct win *w, int64_t ox, int64_t oy, int depth, int above) {
+    int last = INT_MIN;
+    for (;;) {
+        struct wlsurf *pick = 0;
+        for (struct wlsurf *ch = s->c->surfs; ch; ch = ch->next)
+            if (ch->is_sub && ch->parent == s && ch->sub_added && ch->pixels &&
+                (ch->sub_z > 0) == above && ch->sub_z > last && (!pick || ch->sub_z < pick->sub_z)) pick = ch;
+        if (!pick) break;
+        last = pick->sub_z;
+        subs_paint(pick, w, ox + pick->sub_x, oy + pick->sub_y, depth + 1);
+    }
+}
+static void subs_paint(struct wlsurf *s, struct win *w, int64_t ox, int64_t oy, int depth) {
+    if (!s->pixels || depth > 32) return;
+    subs_paint_children(s, w, ox, oy, depth, 0);
+    int x0 = ox < -s->pixel_w ? s->pixel_w : ox < 0 ? (int)-ox : 0;
+    int y0 = oy < -s->pixel_h ? s->pixel_h : oy < 0 ? (int)-oy : 0;
+    int x1 = ox >= w->w ? 0 : w->w - ox < s->pixel_w ? (int)(w->w - ox) : s->pixel_w;
+    int y1 = oy >= w->h ? 0 : w->h - oy < s->pixel_h ? (int)(w->h - oy) : s->pixel_h;
+    for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) {
+        uint32_t src = s->pixels[(size_t)y * s->pixel_w + x];
+        uint32_t *dst = &w->px[(size_t)(oy + y) * w->w + ox + x];
+        unsigned a = src >> 24, inv = 255 - a;
+        if (a == 255) *dst = src;
+        else if (a) {
+            unsigned da = a + ((*dst >> 24) * inv + 127) / 255;
+            unsigned r = ((src >> 16) & 255) + (((*dst >> 16) & 255) * inv + 127) / 255;
+            unsigned g = ((src >> 8) & 255) + (((*dst >> 8) & 255) * inv + 127) / 255;
+            unsigned b = (src & 255) + ((*dst & 255) * inv + 127) / 255;
+            *dst = (da << 24) | ((r > 255 ? 255 : r) << 16) | ((g > 255 ? 255 : g) << 8) | (b > 255 ? 255 : b);
+        }
+    }
+    subs_paint_children(s, w, ox, oy, depth, 1);
+}
+static void subs_render(struct wlsurf *s) {
+    while (s && s->is_sub) s = s->parent;
+    if (!s) return;
+    struct win *w = s->winid ? win_by_id(s->winid) : 0;
+    if (!w || !w->px || !s->pixels) return;
+    memset(w->px, 0, (size_t)w->w * w->h * 4);
+    subs_paint(s, w, 0, 0, 0);
+    compose(outer_of(w));
+}
+static void subs_commit(struct wlc *c, struct wlsurf *s) {
+    if(s->input_pending){region_clear(&s->cached_input);s->cached_input=s->pending_input;memset(&s->pending_input,0,sizeof s->pending_input);s->input_pending=0;s->input_cached=1;}
+    if (s->buf_set) {
+        struct wlobj *o = obj_get(c, s->pend_buf);
+        struct wlbuf *b = o && o->type == O_BUFFER ? o->p : 0;
+        if (s->pend_buf && !b) { wl_error(c, s->id, 0, "invalid subsurface buffer"); return; }
+        uint32_t *px = 0;
+        if (b) {
+            if (!b->pool->base || b->off < 0 || b->w <= 0 || b->h <= 0 || b->w > 2000 || b->h > 2000 || b->stride < b->w * 4 ||
+                (size_t)b->off + (size_t)b->stride * b->h > b->pool->size) { wl_error(c, s->pend_buf, 0, "buffer outside the pool"); return; }
+            px = malloc((size_t)b->w * b->h * 4);
+            if (!px) { wl_error(c, s->id, 0, "cannot copy subsurface buffer"); return; }
+            for (int y = 0; y < b->h; y++) for (int x = 0; x < b->w; x++) {
+                uint32_t v; memcpy(&v, (uint8_t *)b->pool->base + b->off + (size_t)y * b->stride + x * 4, 4);
+                px[(size_t)y * b->w + x] = swizzle(v) | (b->fmt == 0 ? v & 0xff000000u : 0xff000000u);
+            }
+        }
+        free(s->cached_pixels); s->cached_pixels = px; s->cached_set = 1;
+        s->cached_w = b ? b->w : 0; s->cached_h = b ? b->h : 0;
+        s->buf_set = 0; s->has_dmg = 0;
+        if (b) buf_release(c, s->pend_buf);
+    }
+    for (int i = 0; i < s->ncb_pending && s->ncb_cached < 16; i++) s->cb_cached[s->ncb_cached++] = s->cb_pending[i];
+    s->ncb_pending = 0;
+    if (!subs_synchronized(s)) { int changed = subs_apply_cached(s); changed |= subs_apply_children(s, 0); if (changed) subs_render(s); }
+}
 static void surf_commit(struct wlc *c, struct wlsurf *s) {
+    if (s->is_sub) { subs_commit(c, s); return; }
+    if(s->input_pending){region_clear(&s->input);s->input=s->pending_input;memset(&s->pending_input,0,sizeof s->pending_input);s->input_pending=0;}
+    int child_changed = subs_apply_children(s, 0);
     for (int i = 0; i < s->ncb_pending && s->ncb_ready < 16; i++) s->cb_ready[s->ncb_ready++] = s->cb_pending[i];
     s->ncb_pending = 0;
-    if (!s->buf_set) return;
+    if (!s->buf_set) { if (child_changed) subs_render(s); return; }
     s->buf_set = 0;
     struct wlobj *bo = obj_get(c, s->pend_buf);
     struct wlbuf *b = bo && bo->type == O_BUFFER ? bo->p : 0;
@@ -231,6 +384,12 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         s->has_dmg = 0;
     }
     if (!w->px) { buf_release(c, s->pend_buf); return; }
+    if (!s->pixels || s->pixel_w != b->w || s->pixel_h != b->h) {
+        uint32_t *base = calloc((size_t)b->w * b->h, 4);
+        if (!base) { buf_release(c, s->pend_buf); return; }
+        free(s->pixels); s->pixels = base; s->pixel_w = b->w; s->pixel_h = b->h;
+        s->has_dmg = 0;
+    }
     int x0 = 0, y0 = 0, x1 = b->w, y1 = b->h;
     if (s->has_dmg) {
         x0 = s->dx0 < 0 ? 0 : s->dx0; y0 = s->dy0 < 0 ? 0 : s->dy0;
@@ -242,14 +401,24 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
     w->alpha = b->fmt == 0;                           /* ARGB8888 (premultiplied); XRGB8888 is opaque */
     for (int y = y0; y < y1; y++) {
         const uint32_t *src = (const uint32_t *)((const uint8_t *)b->pool->base + b->off + (size_t)y * b->stride) + x0;
-        uint32_t *dst = w->px + (size_t)y * w->w + x0;
+        uint32_t *dst = s->pixels + (size_t)y * s->pixel_w + x0;
         if (w->alpha) {
             if (fast) for (int x = x0; x < x1; x++) *dst++ = *src++;
             else for (int x = x0; x < x1; x++, src++) *dst++ = swizzle(*src) | (*src & 0xFF000000u);
-        } else if (fast) for (int x = x0; x < x1; x++) *dst++ = *src++ & 0x00FFFFFFu;
-        else for (int x = x0; x < x1; x++) *dst++ = swizzle(*src++);
+        } else if (fast) for (int x = x0; x < x1; x++) *dst++ = (*src++ & 0x00FFFFFFu) | 0xff000000u;
+        else for (int x = x0; x < x1; x++) *dst++ = swizzle(*src++) | 0xff000000u;
     }
     s->has_dmg = 0;
+    int children = 0;
+    for (struct wlsurf *ch = c->surfs; ch; ch = ch->next)
+        if (ch->is_sub && ch->parent == s && ch->sub_added && ch->pixels) { children = 1; break; }
+    if (children) {
+        memset(w->px, 0, (size_t)w->w * w->h * 4); subs_paint(s, w, 0, 0, 0);
+    } else {
+        // Ordinary Wayland clients keep their partial-damage path. No full repaint for small updates.
+        for (int y = y0; y < y1; y++) memcpy(w->px + (size_t)y * w->w + x0,
+            s->pixels + (size_t)y * s->pixel_w + x0, (size_t)(x1-x0) * 4);
+    }
     buf_release(c, s->pend_buf);
     if (fresh) { win_anim_start(w); w->ready = 1; compose(outer_of(w)); wls_focus_keyboard(s); }   /* titlebar, border and shadow too; the new window takes the keyboard */
     else if (old.x1 > old.x0) compose(uni(old, outer_of(w)));
@@ -308,20 +477,39 @@ static uint32_t xkb_mods(unsigned hidmods) {
     return m;
 }
 
+/* Observe all raw releases, including keys consumed by compositor shortcuts.
+   Snapshot only ordinary delivered keys and shared modifiers, so a consumed
+   shortcut never introduces a stray press/release pair into a Wayland client. */
+static void wls_track_key(unsigned hid,int press,unsigned hidmods,int eligible) {
+    if(hid<256) {if(!press)wls_hid_down[hid]=0;else if(eligible)wls_hid_down[hid]=1;}
+    wls_mods=xkb_mods(hidmods);
+}
+
+/* Every new resource/focus starts with the seat's actual logically held keys.
+   The following modifiers event completes the initial keyboard state. */
+static void wls_keyboard_enter(struct wlc *c, uint32_t id, struct wlsurf *s) {
+    struct ob o = { .n = 0 };uint8_t seen[256]={0};uint32_t keys[256];size_t count=0;
+    for(unsigned hid=0;hid<256;hid++) {
+        unsigned code=hid2evdev[hid];
+        if(wls_hid_down[hid]&&code&&!seen[code]) {seen[code]=1;keys[count++]=code;}
+    }
+    if(12+4*count>sizeof o.b) {wl_error(c,id,0,"keyboard snapshot too large");return;}
+    ob_u32(&o, ++c->serial); ob_u32(&o, s->id); ob_u32(&o, (uint32_t)(count*4));
+    for(size_t i=0;i<count;i++)ob_u32(&o,keys[i]);
+    wl_emit(c, id, 1, &o);
+    wl_ev(c, id, 4, 5, ++c->serial, wls_mods, 0u, 0u, 0u);
+}
 static void wls_focus_keyboard(struct wlsurf *s) {
     if (wls_kfocus == s) return;
-    if (wls_kfocus && wls_kfocus->c->kbd_id) {
+    if (wls_kfocus && wls_kfocus->c->keyboards) {
         struct wlc *c = wls_kfocus->c;
-        wl_ev(c, c->kbd_id, 2, 2, ++c->serial, wls_kfocus->id);
+        wl_keyboard_ev(c, 2, 2, ++c->serial, wls_kfocus->id);
         wl_flush(c);
     }
     wls_kfocus = s;
-    if (s && s->c->kbd_id) {
+    if (s && s->c->keyboards) {
         struct wlc *c = s->c;
-        struct ob o = { .n = 0 };
-        ob_u32(&o, ++c->serial); ob_u32(&o, s->id); ob_u32(&o, 0);              /* enter: serial, surface, empty key array */
-        wl_emit(c, c->kbd_id, 1, &o);
-        wl_ev(c, c->kbd_id, 4, 5, ++c->serial, wls_mods, 0u, 0u, 0u);
+        for (struct wlkeyboard *k = c->keyboards; k; k = k->next) wls_keyboard_enter(c, k->id, s);
         wl_flush(c);
         wls_send_selection(c);
     }
@@ -331,58 +519,94 @@ static void wls_focus_keyboard(struct wlsurf *s) {
 static void wls_key(struct wlsurf *s, unsigned hid, int press, unsigned hidmods) {
     struct wlc *c = s->c;
     wls_focus_keyboard(s);
-    if (!c->kbd_id) return;
+    if (!c->keyboards) return;
     uint32_t m = xkb_mods(hidmods);
-    if (m != wls_mods) { wls_mods = m; wl_ev(c, c->kbd_id, 4, 5, ++c->serial, m, 0u, 0u, 0u); }
     unsigned code = hid < 256 ? hid2evdev[hid] : 0;
-    if (!code) return;
-    wl_ev(c, c->kbd_id, 3, 4, ++c->serial, (uint32_t)now_ms(), code, press ? 1u : 0u);
+    int down=hid<256&&wls_hid_down[hid];
+    /* Repeat is generated by the client from repeat_info; unmatched shortcut
+       releases must not be sent for keys absent from its logical state. */
+    if(code && ((press&&!down)||(!press&&down)))
+        wl_keyboard_ev(c, 3, 4, ++c->serial, (uint32_t)now_ms(), code, press ? 1u : 0u);
+    if (m != wls_mods) { wls_mods = m; wl_keyboard_ev(c, 4, 5, ++c->serial, m, 0u, 0u, 0u); }
     wl_flush(c);
 }
 
-/* the pointer is at (mx,my), button state `btn`: send enter/leave/motion/button for Wayland windows */
+static struct wlsurf *wls_hit_surface(struct wlsurf *s,int64_t x,int64_t y,int depth);
+static struct wlsurf *wls_hit_children(struct wlsurf *s,int64_t x,int64_t y,int depth,int above) {
+    int last=INT_MAX;
+    for(;;){
+        struct wlsurf *pick=0;
+        for(struct wlsurf *ch=s->c->surfs;ch;ch=ch->next)
+            if(ch->is_sub&&ch->parent==s&&ch->sub_added&&ch->pixels&&(ch->sub_z>0)==above&&ch->sub_z<last&&(!pick||ch->sub_z>pick->sub_z))pick=ch;
+        if(!pick)return 0;
+        last=pick->sub_z;
+        struct wlsurf *hit=wls_hit_surface(pick,x-pick->sub_x,y-pick->sub_y,depth+1);
+        if(hit)return hit;
+    }
+}
+static struct wlsurf *wls_hit_surface(struct wlsurf *s,int64_t x,int64_t y,int depth) {
+    if(!s||!s->pixels||depth>32)return 0;
+    struct wlsurf *hit=wls_hit_children(s,x,y,depth,1);if(hit)return hit;
+    if(x>=0&&y>=0&&x<s->pixel_w&&y<s->pixel_h&&region_contains(&s->input,x,y))return s;
+    return wls_hit_children(s,x,y,depth,0);
+}
+static int wls_surface_origin(struct wlsurf *s,int64_t *x,int64_t *y) {
+    int64_t dx=0,dy=0;int depth=0;
+    while(s&&s->is_sub&&depth++<32){dx+=s->sub_x;dy+=s->sub_y;s=s->parent;}
+    struct win *w=s?win_by_id(s->winid):0;if(!w)return 0;
+    *x=w->x+dx;*y=w->y+dy;return 1;
+}
+static int wls_pointer_coord(int64_t value) {
+    if(value<INT_MIN/256)return INT_MIN/256;
+    if(value>INT_MAX/256)return INT_MAX/256;
+    return (int)value;
+}
+
+/* Deliver input to the topmost eligible surface, matching composition order. */
 static void wls_pointer(int mx_, int my_, int btn, int prev_btn) {
     struct wlsurf *over = 0; struct win *ow = 0;
     for (int i = nwin - 1; i >= 0; i--) {
         if (!in(frame_of(&wins[i]), mx_, my_)) continue;
-        if (wins[i].wl && in(content_of(&wins[i]), mx_, my_)) { over = wins[i].wl; ow = &wins[i]; }
+        if (wins[i].wl && in(content_of(&wins[i]), mx_, my_)) { over = wls_hit_surface(wins[i].wl,(int64_t)mx_-wins[i].x,(int64_t)my_-wins[i].y,0); ow = &wins[i]; }
         break;
     }
     struct wlsurf *tgt = wls_grab ? wls_grab : over;
     if (tgt != wls_pfocus) {
-        if (wls_pfocus && wls_pfocus->c->ptr_id) {
+        if (wls_pfocus && wls_pfocus->c->pointers) {
             struct wlc *c = wls_pfocus->c;
-            wl_ev(c, c->ptr_id, 1, 2, ++c->serial, wls_pfocus->id);
-            if (c->ptr_ver >= 5) wl_ev(c, c->ptr_id, 5, 0);
+            wl_pointer_ev(c, 1, 2, ++c->serial, wls_pfocus->id);
+            wl_pointer_ev(c, 5, 0);
             wl_flush(c);
         }
         wls_pfocus = tgt;
-        if (tgt && tgt->c->ptr_id) {
-            struct win *w = win_by_id(tgt->winid);
-            if (w) {
+        if (tgt && tgt->c->pointers) {
+            int64_t ox,oy;
+            if (wls_surface_origin(tgt,&ox,&oy)) {
                 struct wlc *c = tgt->c;
-                wl_ev(c, c->ptr_id, 0, 4, ++c->serial, tgt->id, (uint32_t)((mx_ - w->x) * 256), (uint32_t)((my_ - w->y) * 256));
-                if (c->ptr_ver >= 5) wl_ev(c, c->ptr_id, 5, 0);
+                int sx=wls_pointer_coord((int64_t)mx_-ox),sy=wls_pointer_coord((int64_t)my_-oy);
+                wl_pointer_ev(c, 0, 4, ++c->serial, tgt->id, (uint32_t)(sx*256), (uint32_t)(sy*256));
+                wl_pointer_ev(c, 5, 0);
                 wl_flush(c);
             }
         }
     }
-    if (!tgt || !tgt->c->ptr_id) { if (!btn) wls_grab = 0; return; }
-    struct win *w = win_by_id(tgt->winid);
-    if (!w) return;
+    if (!tgt || !tgt->c->pointers) { if (!btn) wls_grab = 0; return; }
+    int64_t ox,oy;if(!wls_surface_origin(tgt,&ox,&oy)){wls_grab=0;return;}
     struct wlc *c = tgt->c;
-    int sx = mx_ - w->x, sy = my_ - w->y;
+    int sx=wls_pointer_coord((int64_t)mx_-ox),sy=wls_pointer_coord((int64_t)my_-oy);
     if (sx != last_x || sy != last_y) {
-        wl_ev(c, c->ptr_id, 2, 3, (uint32_t)now_ms(), (uint32_t)(sx * 256), (uint32_t)(sy * 256));
+        wl_pointer_ev(c, 2, 3, (uint32_t)now_ms(), (uint32_t)(sx * 256), (uint32_t)(sy * 256));
         last_x = sx; last_y = sy;
     }
     if (btn != prev_btn) {
         if (btn && ow) wls_grab = tgt;
-        wl_ev(c, c->ptr_id, 3, 4, ++c->serial, (uint32_t)now_ms(), 0x110u, btn ? 1u : 0u);   /* BTN_LEFT */
+        wl_pointer_ev(c, 3, 4, ++c->serial, (uint32_t)now_ms(), 0x110u, btn ? 1u : 0u);   /* BTN_LEFT */
+        if(getenv("WLS_INPUT_LOG"))fprintf(stderr,"wl-pointer surface=%u x=%d y=%d button=%d\n",tgt->id,sx,sy,btn);
         if (!btn) wls_grab = 0;
     }
-    if (c->ptr_ver >= 5) wl_ev(c, c->ptr_id, 5, 0);
+    wl_pointer_ev(c, 5, 0);
     wl_flush(c);
+    if(!btn&&prev_btn&&over!=tgt)wls_pointer(mx_,my_,0,0);
 }
 
 /* ask the client to use a new size (and tell it whether it is maximized) */
@@ -416,12 +640,12 @@ static void wls_dismiss_popups(struct wlsurf *except) {
 /* scroll wheel: z clicks (positive = down) for the window under the pointer */
 static void wls_wheel(int z) {
     struct wlsurf *t = wls_pfocus;
-    if (!t || !t->c->ptr_id || t->c->ptr_ver < 5) return;
+    if (!t || !t->c->pointers) return;
     struct wlc *c = t->c;
-    wl_ev(c, c->ptr_id, 6, 1, 0u);                                         /* axis_source: wheel */
-    wl_ev(c, c->ptr_id, 8, 2, 0u, (uint32_t)z);                            /* axis_discrete(vertical, clicks) */
-    wl_ev(c, c->ptr_id, 4, 3, (uint32_t)now_ms(), 0u, (uint32_t)(z * 15 * 256));   /* axis(vertical, 15 px per click) */
-    wl_ev(c, c->ptr_id, 5, 0);
+    wl_pointer_ev(c, 6, 1, 0u);                                         /* axis_source: wheel */
+    wl_pointer_ev(c, 8, 2, 0u, (uint32_t)z);                            /* axis_discrete(vertical, clicks) */
+    wl_pointer_ev(c, 4, 3, (uint32_t)now_ms(), 0u, (uint32_t)(z * 15 * 256));   /* axis(vertical, 15 px per click) */
+    wl_pointer_ev(c, 5, 0);
     wl_flush(c);
 }
 
@@ -519,22 +743,34 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             uint32_t sid = m_u32(m);
             struct wlsurf *s = calloc(1, sizeof *s);
             if (m->bad || !s || !obj_new(c, sid, O_SURFACE, o->ver, s)) { free(s); return; }
-            s->c = c; s->id = sid; s->next = c->surfs; c->surfs = s;
+            s->c = c; s->id = sid;s->input.infinite=1; s->next = c->surfs; c->surfs = s;
         } else if (op == 1) {                             /* create_region */
             uint32_t rid = m_u32(m);
-            if (!m->bad) obj_new(c, rid, O_REGION, 1, 0);
+            struct wlregion *r=calloc(1,sizeof *r);
+            if(m->bad||!r||!obj_new(c,rid,O_REGION,1,r)){free(r);return;}
         }
         break;
-    case O_REGION:
-        if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
-        break;
+    case O_REGION: {
+        struct wlregion *r=o->p;
+        if(op==0){region_clear(r);free(r);wl_delete_id(c,id);obj_free(c,id);}
+        else if(op==1||op==2){
+            int x=(int)m_u32(m),y=(int)m_u32(m),w=(int)m_u32(m),h=(int)m_u32(m);
+            if(m->bad)return;
+            if(w<0||h<0){wl_error(c,1,1,"negative region rectangle");break;}
+            if(!w||!h)break;
+            if(r->n>=4096){wl_error(c,1,2,"region resource limit");break;}
+            struct wlregionop *next=realloc(r->ops,(r->n+1)*sizeof *next);
+            if(!next){wl_error(c,1,2,"cannot allocate region");break;}
+            r->ops=next;r->ops[r->n++]=(struct wlregionop){x,y,w,h,op==1};
+        }
+        break; }
     case O_SHM:
         if (op == 0) {                                    /* create_pool(pool, fd, size) */
             uint32_t pid = m_u32(m); int fd = m_fd(m); uint32_t size = m_u32(m);
             if (m->bad || size == 0 || size > (1u << 30)) { if (fd >= 0) close(fd); wl_error(c, id, 0, "bad pool"); return; }
             struct wlpool *p = calloc(1, sizeof *p);
             if (!p) { close(fd); return; }
-            p->base = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+            p->base = mmap(0, size, PROT_READ, MAP_SHARED, fd, 0);
             if (p->base == MAP_FAILED) p->base = 0;
             p->size = size; p->fd = fd; p->refs = 1;
             if (!p->base) { close(fd); free(p); wl_error(c, id, 0, "cannot map pool"); return; }
@@ -557,7 +793,7 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
         } else if (op == 2) {                             /* resize(size) */
             uint32_t size = m_u32(m);
             if (m->bad || size < p->size || size > (1u << 30)) return;
-            void *nb = mmap(0, size, PROT_READ | PROT_WRITE, MAP_SHARED, p->fd, 0);
+            void *nb = mmap(0, size, PROT_READ, MAP_SHARED, p->fd, 0);
             if (nb == MAP_FAILED) return;
             if (p->base) munmap(p->base, p->size);
             p->base = nb; p->size = size;
@@ -587,17 +823,43 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             if (m->bad || !obj_new(c, cb, O_CALLBACK, 1, 0)) break;
             if (s->ncb_pending < 8) s->cb_pending[s->ncb_pending++] = cb;
             break; }
+        case 5: {
+            uint32_t rid=m_u32(m);struct wlobj *ro=rid?obj_get(c,rid):0;
+            if(m->bad)break;
+            if(rid&&(!ro||ro->type!=O_REGION)){wl_error(c,1,0,"invalid input region");break;}
+            if(!region_copy(&s->pending_input,ro?ro->p:0)){wl_error(c,1,2,"cannot copy input region");break;}
+            s->input_pending=1;break;
+        }
         case 6: surf_commit(c, s); break;
-        default: break;                                   /* opaque/input region, transform, scale, offset: ignored */
+        default: break;                                   /* opaque region, transform, scale, offset: ignored */
         }
         break; }
     case O_SEAT:
         if (op == 0 || op == 1) {                         /* get_pointer / get_keyboard */
-            uint32_t nid = m_u32(m);
-            if (m->bad || !obj_new(c, nid, op == 0 ? O_POINTER : O_KEYBOARD, o->ver, 0)) return;
-            if (op == 0) { c->ptr_id = nid; c->ptr_ver = o->ver; }
-            else {
-                c->kbd_id = nid;
+            uint32_t nid = m_u32(m), version = o->ver;
+            if (m->bad) return;
+            if (op == 0) {
+                struct wlpointer *p = calloc(1, sizeof *p);
+                if (!p) { wl_error(c, 1, 2, "cannot allocate pointer"); return; }
+                if (!obj_new(c, nid, O_POINTER, version, p)) { free(p); return; }
+                p->id = nid; p->ver = version; p->next = c->pointers; c->pointers = p;
+                // A newly created resource needs its own initial focus, even
+                // when the physical pointer has not moved since get_pointer.
+                int64_t ox, oy;
+                if (wls_pfocus && wls_pfocus->c == c && wls_surface_origin(wls_pfocus, &ox, &oy)) {
+                    int x = wls_pointer_coord((int64_t)mx - ox), y = wls_pointer_coord((int64_t)my - oy);
+                    wl_ev(c, nid, 0, 4, ++c->serial, wls_pfocus->id, (uint32_t)(x*256), (uint32_t)(y*256));
+                    if (version >= 5) wl_ev(c, nid, 5, 0);
+                    wl_flush(c);
+                }
+                if (getenv("WLS_INPUT_LOG")) fprintf(stderr, "wl-pointer-created id=%u version=%u\n", nid, version);
+            } else {
+                // obj_new can resize the object array: use the saved version,
+                // never dereference the old object pointer after that call.
+                struct wlkeyboard *k = calloc(1, sizeof *k);
+                if (!k) { wl_error(c, 1, 2, "cannot allocate keyboard"); return; }
+                if (!obj_new(c, nid, O_KEYBOARD, version, k)) { free(k); return; }
+                k->id = nid; k->next = c->keyboards; c->keyboards = k;
                 if (wls_keymap) {
                     /* keymap(format = xkb_v1, fd, size): the fd rides on this one message */
                     int mf = memfd_create("keymap", 0);
@@ -620,7 +882,8 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
                     }
                     if (mf >= 0) close(mf);
                 }                                         /* no keymap file: say nothing (a keymap event needs an fd) */
-                if (o->ver >= 4) wl_ev(c, nid, 5, 2, 25u, 600u);
+                if (version >= 4) wl_ev(c, nid, 5, 2, 25u, 600u);
+                if (wls_kfocus && wls_kfocus->c == c) wls_keyboard_enter(c, nid, wls_kfocus);
             }
         } else if (op == 2) {
             uint32_t nid = m_u32(m);
@@ -628,10 +891,20 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
         }
         break;
     case O_POINTER:
-        if (op == 1) { c->ptr_id = 0; wl_delete_id(c, id); obj_free(c, id); }
+        if (op == 1) {
+            struct wlpointer **link = &c->pointers;
+            while (*link && (*link)->id != id) link = &(*link)->next;
+            if (*link) { struct wlpointer *p = *link; *link = p->next; free(p); }
+            wl_delete_id(c, id); obj_free(c, id);
+        }
         break;
     case O_KEYBOARD:
-        if (op == 0) { c->kbd_id = 0; wl_delete_id(c, id); obj_free(c, id); }
+        if (op == 0) {
+            struct wlkeyboard **link = &c->keyboards;
+            while (*link && (*link)->id != id) link = &(*link)->next;
+            if (*link) { struct wlkeyboard *k = *link; *link = k->next; free(k); }
+            wl_delete_id(c, id); obj_free(c, id);
+        }
         break;
     case O_OUTPUT:
         if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
@@ -678,8 +951,55 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             if (fd >= 0) close(fd);
         } else if (op == 2) obj_free(c, id);
         break;
-    case O_SUBCOMP:                                       /* get_subsurface(id, surface, parent): accepted, not composited */
-        if (op == 1) { uint32_t nid = m_u32(m); if (!m->bad) obj_new(c, nid, O_STUB, 1, 0); }
+    case O_SUBCOMP:
+        if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
+        else if (op == 1) {
+            uint32_t nid = m_u32(m), sid = m_u32(m), pid = m_u32(m);
+            struct wlsurf *s = surf_of(c, sid), *p = surf_of(c, pid);
+            if (m->bad || !s || s->sub_id || s->xdg_id || s->role_top || s->is_popup) { wl_error(c, id, 0, "invalid subsurface role"); break; }
+            int depth = 0, bad = !p;
+            for (struct wlsurf *a = p; a; a = a->is_sub ? a->parent : 0)
+                if (a == s || ++depth > 32) { bad = 1; break; }
+            if (bad) { wl_error(c, id, 1, "invalid subsurface parent"); break; }
+            if (!obj_new(c, nid, O_SUBSURF, 1, s)) break;
+            int z = 0;
+            for (struct wlsurf *a = c->surfs; a; a = a->next)
+                if (a->is_sub && a->parent == p && a->sub_pz > z) z = a->sub_pz;
+            s->is_sub = 1; s->sub_id = nid; s->parent = p; s->sub_sync = 1;
+            s->sub_added = 0; s->sub_x = s->sub_y = s->sub_px = s->sub_py = 0;
+            s->sub_z = s->sub_pz = z + 1;
+        }
+        break;
+    case O_SUBSURF: {
+        struct wlsurf *s = o->p;
+        if (!s) { if (op == 0) { wl_delete_id(c, id); obj_free(c, id); } break; }
+        if (op == 0) {
+            struct wlsurf *p = s->parent;
+            s->parent = 0; s->sub_id = 0; s->sub_added = 0;
+            free(s->pixels); s->pixels = 0; free(s->cached_pixels); s->cached_pixels = 0; s->cached_set = 0;
+            wl_delete_id(c, id); obj_free(c, id); if (p) subs_render(p);
+        } else if (op == 1) { s->sub_px = (int)m_u32(m); s->sub_py = (int)m_u32(m); }
+        else if (op == 2 || op == 3) {
+            struct wlsurf *ref = surf_of(c, m_u32(m));
+            if (!ref || ref == s || !s->parent || (ref != s->parent && (!ref->is_sub || ref->parent != s->parent))) {
+                wl_error(c, id, 0, "invalid subsurface sibling"); break;
+            }
+            int z = ref == s->parent ? 0 : ref->sub_pz;
+            if (op == 2) {
+                for (struct wlsurf *a = c->surfs; a; a = a->next)
+                    if (a != s && a->is_sub && a->parent == s->parent && a->sub_pz > z) a->sub_pz++;
+                s->sub_pz = z + 1;
+            } else {
+                for (struct wlsurf *a = c->surfs; a; a = a->next)
+                    if (a != s && a->is_sub && a->parent == s->parent && a->sub_pz < z) a->sub_pz--;
+                s->sub_pz = z - 1;
+            }
+        } else if (op == 4) s->sub_sync = 1;
+        else if (op == 5) {
+            s->sub_sync = 0;
+            if (!subs_synchronized(s)) { int changed = subs_apply_cached(s); changed |= subs_apply_children(s, 0); if (changed) subs_render(s); }
+        }
+        }
         break;
     case O_XDGWM:
         if (op == 1) {                                    /* create_positioner */
@@ -689,7 +1009,7 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
         } else if (op == 2) {                             /* get_xdg_surface(id, surface) */
             uint32_t nid = m_u32(m), sid = m_u32(m);
             struct wlsurf *s = surf_of(c, sid);
-            if (m->bad || !s) { wl_error(c, id, 1, "bad surface"); return; }
+            if (m->bad || !s || s->is_sub) { wl_error(c, id, 1, "bad surface"); return; }
             if (obj_new(c, nid, O_XDGSURF, o->ver, s)) s->xdg_id = nid;
         } else if (op == 0) { wl_delete_id(c, id); obj_free(c, id); }
         break;
@@ -774,9 +1094,11 @@ static void client_close(struct wlc *c) {
         surf_free(s);
     }
     for (uint32_t i = 0; i < c->nobjs; i++) {
-        if (c->objs[i].type == O_DSRC) src_free(c->objs[i].p);
+        if (c->objs[i].type == O_POINTER || c->objs[i].type == O_KEYBOARD) free(c->objs[i].p);
+        else if (c->objs[i].type == O_DSRC) src_free(c->objs[i].p);
         else if (c->objs[i].type == O_BUFFER) { struct wlbuf *b = c->objs[i].p; pool_unref(b->pool); free(b); }
         else if (c->objs[i].type == O_POOL) { struct wlpool *p = c->objs[i].p; p->destroyed = 1; pool_unref(p); }
+        else if (c->objs[i].type == O_REGION) {struct wlregion *r=c->objs[i].p;region_clear(r);free(r);}
     }
     for (int i = 0; i < c->ninfd; i++) close(c->infd[i]);
     free(c->objs); free(c->out);
@@ -875,7 +1197,7 @@ static int wls_have_callbacks(void) {
         if (wlcl[i].used) for (struct wlsurf *s = wlcl[i].surfs; s; s = s->next) if (s->ncb_ready) return 1;
     return 0;
 }
-/* about 60 times a second: tell clients their last frame is on screen */
+/* About 60 times a second: frame-throttling hints, not presentation feedback. */
 static void wls_tick(void) {
     unsigned long long t = now_ms();
     if (t - wls_last_tick < 16) return;

@@ -1,0 +1,12 @@
+debugfs 1.47.2 (1-Jan-2025)
+
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1030
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1087/32768 files (2.2% non-contiguous), 98817/524288 blocks
+Candidate packaged and completely read back; Live unchanged {'path': 'target/thos-live-unicode-2026-10-16.img', 'bytes': 630194176, 'sha256': 'a2cd7b37b76ddca72118b99078bd14080a258b3cac0d3361fef01d4818180328'}

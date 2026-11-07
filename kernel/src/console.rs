@@ -591,7 +591,7 @@ fn sak_finish() {
     serial::write_bytes(b"THOS: SAK accepted -- spawning a trusted uid-0 process\r\n");
     let Some(fs) = crate::ext2::open().ok() else { return };
     let Some(bytes) = fs.read_path("/elevated-check") else { return };
-    let _ = crate::process::spawn_elevated(0, &bytes, &["/elevated-check"], &[], 0, 0);
+    let _ = crate::process::spawn_elevated(0, &bytes, &["/elevated-check"], &[], 0, 0,"/elevated-check");
 }
 
 #[cfg(not(feature = "interactive"))]

@@ -9,6 +9,7 @@
 #include <stdarg.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <errno.h>
 
 #define EXPORT __attribute__((dllexport))
 
@@ -34,9 +35,9 @@ static i64 sys_ret(i64 r) {
     return r;
 }
 
-/* errno: our own cell (the built-in _errno cannot be called from here without a cycle) */
-static int g_errno;
-static int *errno_ptr(void) { return &g_errno; }
+/* Share the native CRT errno cell with the executable and other system calls. */
+__declspec(dllimport) extern int *_errno(void);
+static int *errno_ptr(void) { return _errno(); }
 
 /* ---- memory and strings ---- */
 EXPORT void *memmove(void *d, const void *s, size_t n) {
@@ -1118,4 +1119,47 @@ EXPORT int mbtowc(wc_t *w, const char *s, size_t n) { if (!s) return 0; if (!n |
 EXPORT int wctomb(char *s, wc_t w) { if (!s) return 0; return put_utf8(s, w); }
 EXPORT size_t mbstowcs_dummy(void) { return 0; }
 
-__attribute__((dllexport)) int __stdcall DllMain(void *h, unsigned reason, void *res) { (void)h; (void)reason; (void)res; return 1; }
+/* Wide CRT startup reads the real PEB command line and initial environment.
+   Current THOS launches still provide an empty PEB environment; this does not
+   manufacture inherited Linux variables. */
+#include "winargv16.h"
+EXPORT wc_t **__winitenv;
+EXPORT wc_t *_wcmdln;
+static int wide_state;
+static int wide_argc;
+static wc_t **wide_argv;
+static wc_t **wide_initial_env;
+static u64 wide_parameters(void){u64 peb;__asm__ volatile("movq %%gs:0x60,%0":"=r"(peb));return peb?*(u64*)(peb+0x20):0;}
+static wc_t *wide_command(void){static wc_t empty[1];u64 p=wide_parameters();wc_t*cmd=p?*(wc_t**)(p+0x78):0;return cmd?cmd:empty;}
+static int wide_fail(int error){*errno_ptr()=error;return error;}
+static int wide_build(void){
+    const wc_t *cmd=wide_command();size_t len=0;while(len<32768&&cmd[len])len++;if(len==32768)return 7;
+    wc_t *storage=malloc((len+1)*2);wc_t **args=malloc((len+2)*sizeof *args);
+    if(!storage||!args){free(storage);free(args);return 12;}
+    int count=thos_wargv16(cmd,len,storage,len+1,args,len+2);if(count<0){free(storage);free(args);return 7;}
+    u64 params=wide_parameters();const wc_t *block=params?*(wc_t**)(params+0x80):0;
+    size_t units=2,entries=0;static const wc_t empty[2]={0,0};if(!block)block=empty;
+    for(units=0;units+1<32768;units++){if(!block[units]&&!block[units+1])break;}
+    if(units+1==32768){free(storage);free(args);return 7;}units+=2;
+    for(size_t i=0;i<units&&block[i];){entries++;while(i<units&&block[i])i++;i++;}
+    wc_t *copy=malloc(units*2);wc_t **env=malloc((entries+1)*sizeof *env);
+    if(!copy||!env){free(copy);free(env);free(storage);free(args);return 12;}
+    memmove(copy,block,units*2);size_t n=0;for(size_t i=0;i<units&&copy[i];){env[n++]=copy+i;while(i<units&&copy[i])i++;i++;}env[n]=0;
+    wide_argc=count;wide_argv=args;wide_initial_env=env;__winitenv=env;_wcmdln=(wc_t*)cmd;return 0;
+}
+static int wide_initialize(void){
+    for(;;){int state=__atomic_load_n(&wide_state,__ATOMIC_ACQUIRE);if(state==2)return 0;
+        int expected=0;if(__atomic_compare_exchange_n(&wide_state,&expected,1,0,__ATOMIC_ACQ_REL,__ATOMIC_ACQUIRE)){
+            int error=wide_build();__atomic_store_n(&wide_state,error?0:2,__ATOMIC_RELEASE);
+            sc6(202,(i64)&wide_state,129,2147483647,0,0,0);return error;
+        }
+        sc6(202,(i64)&wide_state,128,1,0,0,0);
+    }
+}
+EXPORT int __wgetmainargs(int *argc,wc_t ***argv,wc_t ***env,int wildcard,const int *startup){
+    if(!argc||!argv||!env)return wide_fail(22);
+    if(wildcard||(startup&&*startup))return wide_fail(ENOSYS);
+    int error=wide_initialize();if(error)return wide_fail(error);
+    *argc=wide_argc;*argv=wide_argv;*env=wide_initial_env;return 0;
+}
+__attribute__((dllexport)) int __stdcall DllMain(void *h,unsigned reason,void *res){(void)h;(void)res;if(reason==1)_wcmdln=wide_command();return 1;}

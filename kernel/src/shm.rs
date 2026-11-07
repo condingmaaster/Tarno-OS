@@ -25,14 +25,20 @@ pub struct MemFd {
     pages: Mutex<alloc::collections::BTreeMap<usize, x86_64::structures::paging::PhysFrame>>,
     pos: core::sync::atomic::AtomicU64,
     logical: core::sync::atomic::AtomicU64,
+    seals:core::sync::atomic::AtomicU32,
+    write_maps:core::sync::atomic::AtomicUsize,
+    mutation:crate::io_mutex::IoMutex<()>,
 }
 
 impl MemFd {
-    pub fn new() -> Arc<Self> {
+    pub fn new(flags:u64) -> Arc<Self> {
         Arc::new(MemFd {
             pages: Mutex::new(alloc::collections::BTreeMap::new()),
             pos: core::sync::atomic::AtomicU64::new(0),
             logical: core::sync::atomic::AtomicU64::new(0),
+            seals:core::sync::atomic::AtomicU32::new(if flags&2!=0 {0}else{1}),
+            write_maps:core::sync::atomic::AtomicUsize::new(0),
+            mutation:crate::io_mutex::IoMutex::new(()),
         })
     }
     fn size(&self) -> usize {
@@ -68,8 +74,9 @@ impl FileOps for MemFd {
     fn is_tty(&self) -> bool {
         false
     }
-    fn read(&self, buf: &mut [u8]) -> i64 {
-        let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> i64 {
+        if offset >= self.size() as u64 { return 0; }
+        let pos = offset as usize;
         let size = self.size();
         if pos >= size {
             return 0;
@@ -87,11 +94,19 @@ impl FileOps for MemFd {
             }
             done += chunk;
         }
-        self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
         done as i64
     }
-    fn write(&self, buf: &[u8]) -> i64 {
-        let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed) as usize;
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        let pos = self.pos.load(core::sync::atomic::Ordering::Relaxed);
+        let n = self.read_at(pos, buf);
+        if n > 0 { self.pos.store(pos + n as u64, core::sync::atomic::Ordering::Relaxed); }
+        n
+    }
+    fn write_at(&self, offset:u64,buf: &[u8]) -> i64 {
+        let _guard=self.mutation.lock();
+        if self.seals.load(core::sync::atomic::Ordering::Acquire)&(8|16)!=0 {return -1;}
+        if offset>=self.size() as u64 {return -28;}
+        let pos=offset as usize;
         let size = self.size();
         if pos >= size {
             return -28; // ENOSPC: the size is set by ftruncate
@@ -108,8 +123,11 @@ impl FileOps for MemFd {
             };
             done += chunk;
         }
-        self.pos.store((pos + done) as u64, core::sync::atomic::Ordering::Relaxed);
         done as i64
+    }
+    fn write(&self,buf:&[u8])->i64 {
+        let pos=self.pos.load(core::sync::atomic::Ordering::Relaxed);let n=self.write_at(pos,buf);
+        if n>0 {self.pos.store(pos+n as u64,core::sync::atomic::Ordering::Relaxed);}n
     }
     fn seek(&self, o: i64, w: u32) -> i64 {
         let size = self.size() as i64;
@@ -130,6 +148,9 @@ impl FileOps for MemFd {
         (S_IFREG | 0o600, self.size() as u64)
     }
     fn truncate(&self, len: u64) -> i64 {
+        let _guard=self.mutation.lock();
+        let old=self.size() as u64;let seals=self.seals.load(core::sync::atomic::Ordering::Acquire);
+        if (len<old&&seals&2!=0)||(len>old&&seals&4!=0){return -1;}
         if len > (1 << 30) {
             return ENOMEM;
         }
@@ -140,6 +161,25 @@ impl FileOps for MemFd {
     fn is_memfd(&self) -> bool {
         true
     }
+    fn fcntl_seals(&self,op:u64,value:u64)->i64 {
+        use core::sync::atomic::Ordering;
+        if op==1034 {return self.seals.load(Ordering::Acquire) as i64;}
+        if op!=1033||value&!31!=0{return EINVAL;}
+        let _guard=self.mutation.lock();let old=self.seals.load(Ordering::Acquire);
+        if old&1!=0 {return -1;}
+        if value&8!=0&&self.write_maps.load(Ordering::Acquire)!=0 {return -16;}
+        self.seals.store(old|value as u32,Ordering::Release);0
+    }
+    fn register_mapping(&self,writable:bool,may_write:bool)->Result<bool,i64> {
+        use core::sync::atomic::Ordering;
+        let _guard=self.mutation.lock();let allowed=may_write&&self.seals.load(Ordering::Acquire)&(8|16)==0;
+        if writable&&!allowed{return Err(-13);}
+        if allowed {self.write_maps.fetch_add(1,Ordering::AcqRel);}
+        Ok(allowed)
+    }
+    fn unregister_mapping(&self,may_write:bool) {
+        if may_write {self.write_maps.fetch_sub(1,core::sync::atomic::Ordering::AcqRel);}
+    }
     fn lazy_page(&self, idx: usize) -> Option<u64> {
         if idx * 4096 >= self.size() {
             return None;
@@ -149,8 +189,12 @@ impl FileOps for MemFd {
 }
 
 pub fn sys_memfd_create(flags: u64) -> i64 {
+    // Linux declares flags as unsigned int: high register bits are not part
+    // of this syscall argument (optimized callers may leave them nonzero).
+    let flags=flags as u32 as u64;
+    if flags&!3!=0 {return EINVAL;}
     let Some(task) = sched::current().task() else { return -9 };
-    task.fd_alloc_flags(MemFd::new(), flags & 1 != 0) as i64
+    task.fd_alloc_flags(MemFd::new(flags), flags & 1 != 0) as i64
 }
 
 pub fn sys_ftruncate(fd: u64, len: u64) -> i64 {

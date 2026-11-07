@@ -1,0 +1,50 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1968:17
+     |
+1968 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.27s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask pefail-probe`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1116
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1116/32768 files (3.0% non-contiguous), 104545/524288 blocks
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1117
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1117/32768 files (3.0% non-contiguous), 104546/524288 blocks
+THOS: pe load failed: PE: no PE signature
+pefail-FAIL /badpe.exe rc=-1 errno=8 expected=80
+THOS: pe load failed: PE: DLL not found in System32
+pefail-FAIL /missing-import.exe rc=-1 errno=8 expected=80
+THOS: pe load failed: PE: image allocation failed
+pefail-FAIL /oversized.exe rc=-1 errno=8 expected=12
+pefail-ok /plain.txt rc=-1 errno=8 expected=8
+pefail-result=FAIL
+pefail-done
+THOS: pe load failed: PE: no PE signature
+pefail-shell-status:127
+pefail-series-done

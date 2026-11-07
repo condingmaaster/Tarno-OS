@@ -208,6 +208,18 @@ impl WaitQueue {
     }
 
     /// Wake every blocked thread. Returns how many.
+    /// Internal locks change lock ownership, not descriptor readiness. Avoid
+    /// waking every poller on each filesystem unlock; serialize with wait_if
+    /// even when no waiter was visible to the releasing CPU.
+    pub fn wake_all_no_poll(&self) -> usize {
+        interrupts::without_interrupts(|| {
+            let drained: VecDeque<Arc<Thread>> = core::mem::take(&mut *self.waiters.lock());
+            let n = drained.len();
+            for t in drained { sched::unblock(t); }
+            n
+        })
+    }
+
     pub fn wake_all(&self) -> usize {
         let drained: VecDeque<Arc<Thread>> = core::mem::take(&mut *self.waiters.lock());
         let n = drained.len();

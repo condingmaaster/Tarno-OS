@@ -1,0 +1,78 @@
+{
+  "before_free_bytes": 206373822464,
+  "after_free_bytes": 210070933504,
+  "observed_freed_bytes": 3697111040,
+  "removed": [
+    {
+      "path": "target/thos-thread-times-qa-2026-10-25.img",
+      "sha256": "7ed9a3d0bee1da866b893e5f143c8cd5db43bda53c633308cb176e740ce10914",
+      "allocated_bytes": 611336192,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-thread-times-fast-qa-2026-10-25.img",
+      "sha256": "0c1ab93d48312e83c4ec2313a6a5b3bf331d00c5ced0503d110cac80706784fb",
+      "allocated_bytes": 611336192,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-thread-times-peonly-qa-2026-10-25.img",
+      "sha256": "15ec47cda543151138364fec03b3ef67c6103d2883ea156a33d226d7a5a6d8d4",
+      "allocated_bytes": 611336192,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-profile-final-qa-2026-10-25.img",
+      "sha256": "d85465ef35d2b9ac448f3edf2e37929d388b7e20eb8dcf7c76eeedbf8efd1929",
+      "allocated_bytes": 611323904,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-registry-native-qa-2026-10-25.img",
+      "sha256": "01e30a31228c47341e59dc0c7940a3b20dbe1874fb83c7af8ea99d91afd5e863",
+      "allocated_bytes": 611340288,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-live-resource-2026-10-25.img",
+      "sha256": "90f0d0cb8f7b9e08cc8f4e92fc6a5a37f14f275b2c0bbc751bb06d0cec6e5b15",
+      "allocated_bytes": 103153664,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/live-root-resource-2026-10-25.ext2",
+      "sha256": "5b83010f2938c1a18c39ce0773b11a64caa0b5c2e1865ff6959dde60860c7586",
+      "allocated_bytes": 97329152,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    },
+    {
+      "path": "target/thos-live-profile-2026-10-25.img",
+      "sha256": "57b00eeb728bbbbbcfdda6c191c0282ba23e98032d52ba315ef058f0c573088d",
+      "allocated_bytes": 103170048,
+      "reason": "Own superseded checkpoint after verified registry transaction Live; CPU Live fallback, shared root and frozen small source/kernel/log evidence retained"
+    }
+  ],
+  "removed_invalid_perf_scratch": [
+    {
+      "path": "target/test-scratch/run-4162-1792954081697164223/perf.img",
+      "sha256": "d85465ef35d2b9ac448f3edf2e37929d388b7e20eb8dcf7c76eeedbf8efd1929",
+      "allocated_bytes": 168407040
+    },
+    {
+      "path": "target/test-scratch/run-4162-1792954081697164223/priv-perf-test.img",
+      "sha256": "d85465ef35d2b9ac448f3edf2e37929d388b7e20eb8dcf7c76eeedbf8efd1929",
+      "allocated_bytes": 168407040
+    }
+  ],
+  "protected": [
+    "/home/router/Projekte/Tarno-OS/target/kernel32x-profile-final-2026-10-25.dll",
+    "/home/router/Projekte/Tarno-OS/target/live-root-profile-2026-10-25.ext2",
+    "/home/router/Projekte/Tarno-OS/target/thos-kernel-registry-transaction-2026-10-25.elf",
+    "/home/router/Projekte/Tarno-OS/target/thos-kernel-thread-times-peonly-2026-10-25.elf",
+    "/home/router/Projekte/Tarno-OS/target/thos-live-registry-transaction-2026-10-25.img",
+    "/home/router/Projekte/Tarno-OS/target/thos-live-thread-times-2026-10-25.img",
+    "/home/router/Projekte/Tarno-OS/target/thos-live.img",
+    "/home/router/Projekte/Tarno-OS/target/thos-registry-transaction-final-source-2026-10-25.tar.gz",
+    "/home/router/Projekte/Tarno-OS/target/thos-thread-times-peonly-source-2026-10-25.tar.gz"
+  ]
+}

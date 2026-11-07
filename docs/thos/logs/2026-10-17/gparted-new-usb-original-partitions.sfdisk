@@ -1,0 +1,7 @@
+label: dos
+label-id: 0x011ad286
+device: /dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0
+unit: sectors
+sector-size: 512
+
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part1 : start=          64, size=   123699136, type=7, bootable

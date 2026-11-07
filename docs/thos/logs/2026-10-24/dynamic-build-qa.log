@@ -1,0 +1,16 @@
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/sda10      461G  235G  203G  54% /
+debugfs 1.47.2 (1-Jan-2025)
+
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1026
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1111/32768 files (3.0% non-contiguous), 103795/524288 blocks
+2c97efc356020b6ba3504f2a1591508a0fce3a7f09e22cd5eeb31e8ad60876a2  target/thos-kernel-dynamic-2026-10-24.elf
+c460f1d2e5b425f598b09dc5eead21cc9d8318ef25ae4c94aaf6089dcd67de51  target/kernel32x-dynamic-2026-10-24.dll
+ad11d609e2c4d21231b4e24155398fc3e93c361c392e96339b820634f94751fe  target/thos-dynamic-qa-2026-10-24.img

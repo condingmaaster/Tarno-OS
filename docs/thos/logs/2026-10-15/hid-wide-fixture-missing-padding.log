@@ -1,0 +1,25 @@
+
+running 6 tests
+test tests::absolute_and_malformed_are_not_guessed ... ok
+test tests::standard_wheel_and_signed_motion ... ok
+test tests::report_id_is_checked ... ok
+test tests::wide_axes_and_unaligned_signed_fields ... ok
+test tests::wide_descriptor_keeps_report_id_and_axis_boundaries ... FAILED
+test tests::bounded_random_descriptors_never_panic ... ok
+
+failures:
+
+---- tests::wide_descriptor_keeps_report_id_and_axis_boundaries stdout ----
+
+thread 'tests::wide_descriptor_keeps_report_id_and_axis_boundaries' (28) panicked at kernel/src/hid_mouse.rs:96:9:
+assertion `left == right` failed
+  left: Some(Sample { buttons: 3, dx: -32768, dy: 0, wheel: -1 })
+ right: Some(Sample { buttons: 3, dx: 1024, dy: -2048, wheel: -1 })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    tests::wide_descriptor_keeps_report_id_and_axis_boundaries
+
+test result: FAILED. 5 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

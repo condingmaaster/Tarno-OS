@@ -1,0 +1,65 @@
+[
+  {
+    "path": "target/thos-frame-qa-2026-10-23.img",
+    "sha256": "36cf6b0f1aa3fd41c7dbe886fb2018fd1991b832df31fe04640718ffd6b2b27b",
+    "allocated_bytes": 168271872,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-synth-qa-2026-10-23.img",
+    "sha256": "ed64e88b53ac2eeb07d8591326318e812b01374dcf63d68d4f15617dd5de6b23",
+    "allocated_bytes": 168275968,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-winwide-qa-2026-10-23.img",
+    "sha256": "61ab0c8b540a66dd50d93c3f8c384cff42f9b3ef23e8c5420afd4633ef867f70",
+    "allocated_bytes": 168304640,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-exportbounds-qa-2026-10-23.img",
+    "sha256": "da025ad4ee6ce76639af21526259e7107165ca4dc561757ffe6de289a2ca786c",
+    "allocated_bytes": 168419328,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-env-qa-2026-10-23.img",
+    "sha256": "cb0cead5e46927346ef36317a4ceff9c83309349cdbe600b0cc80f5f7ec1675a",
+    "allocated_bytes": 611127296,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-futex-qa-2026-10-23.img",
+    "sha256": "fde689a7b6bd4c1e32f7f4b15bd53001ee2d1a46639cf26f2bad6efe06674710",
+    "allocated_bytes": 168341504,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-pewait-qa-2026-10-23.img",
+    "sha256": "47d00f245c2146196b0d66582eb377b1fd40d0e25204e729ef5a99a953c1fdb9",
+    "allocated_bytes": 168357888,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/thos-night-qa-2026-10-23.img",
+    "sha256": "e8aaf88336af7f8e35f75581e6063f932b9939cf7c2087d398d4a1145f5908f1",
+    "allocated_bytes": 168357888,
+    "reason": "completed intermediate QA image; frozen source/kernel/manifest/logs retained; latest QA and verified Live retained"
+  },
+  {
+    "path": "target/test-scratch/run-10271-1792791721307588619",
+    "allocated_bytes": 455417856,
+    "diagnostic_log": "pewait-first-fixture-serial.log"
+  },
+  {
+    "path": "target/test-scratch/run-10763-1792791771209560014",
+    "allocated_bytes": 455417856,
+    "diagnostic_log": "pewait-signal-failure-serial.log"
+  },
+  {
+    "path": "target/test-scratch/run-11022-1792791842344643229",
+    "allocated_bytes": 455417856,
+    "diagnostic_log": "pewait-pid-abi-reproduction-serial.log"
+  }
+]

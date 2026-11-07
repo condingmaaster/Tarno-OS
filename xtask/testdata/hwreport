@@ -10,6 +10,8 @@ echo "== boot disk (usb = running from a stick, sata = internal disk) =="; $B ca
 echo "== disks =="
 for d in /dev/sda /dev/sdb; do [ -e $d ] && echo "$d $($B stat -c %s $d 2>/dev/null) bytes"; done
 echo "== network =="; $B cat /proc/netinfo
+echo "== Wi-Fi =="; $B cat /proc/wlaninfo
+echo "== graphics =="; $B cat /proc/gpuinfo
 echo "== uptime =="; $B cat /proc/uptime
 echo "== cpu =="; $B cat /proc/cpuinfo
 echo "== memory =="; $B cat /proc/meminfo

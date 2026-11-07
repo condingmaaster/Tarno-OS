@@ -1,0 +1,2 @@
+registry-host actual persisted hive reload PASS
+registry-host reported IO rollback/create/delete/notify, old readers during IO, 8 writers/256 updates, one creator, uid policy, nonregular hive and actual reload PASS

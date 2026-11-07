@@ -26,16 +26,19 @@ const CHUNK: usize = 64; // 32 KiB: the AHCI bounce buffer size
 enum Dev {
     Sata,
     Usb,
+    Ram, // the system disk image the boot loader put into memory (read-only here): /dev/ram0
 }
 
 fn dev_sectors(d: Dev) -> u64 {
     match d {
         Dev::Sata => crate::ahci::capacity_sectors(),
         Dev::Usb => crate::EHCI.lock().as_ref().map_or(0, |e| e.msc_sectors()),
+        Dev::Ram => crate::blk::ram_image().map_or(0, |(_, l)| l / 512),
     }
 }
 fn dev_read(d: Dev, lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
     match d {
+        Dev::Ram => crate::blk::read(lba, buf),
         Dev::Sata => crate::ahci::read(lba, buf),
         Dev::Usb => match crate::EHCI.lock().as_mut() {
             Some(e) => e.msc_read(lba, buf),
@@ -45,6 +48,7 @@ fn dev_read(d: Dev, lba: u64, buf: &mut [u8]) -> Result<(), &'static str> {
 }
 fn dev_write(d: Dev, lba: u64, buf: &[u8]) -> Result<(), &'static str> {
     match d {
+        Dev::Ram => Err("the memory image is read-only"),
         Dev::Sata => crate::ahci::write(lba, buf),
         Dev::Usb => match crate::EHCI.lock().as_mut() {
             Some(e) => e.msc_write(lba, buf),
@@ -54,7 +58,7 @@ fn dev_write(d: Dev, lba: u64, buf: &[u8]) -> Result<(), &'static str> {
 }
 /// Is this the disk the running system lives on?
 fn is_boot_disk(d: Dev) -> bool {
-    !crate::blk::is_ram() && (d == Dev::Usb) == crate::blk::is_usb()
+    d == Dev::Ram || (!crate::blk::is_ram() && (d == Dev::Usb) == crate::blk::is_usb())
 }
 
 pub struct RawDisk {
@@ -70,6 +74,10 @@ fn is_root() -> bool {
 
 /// `/dev/sda`, `/dev/sdb`, `/dev/sda1` ... for an absolute device path; `None` if there is no such device.
 pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
+    if path == "/dev/ram0" {
+        let total = dev_sectors(Dev::Ram);
+        return (total > 0).then(|| Arc::new(RawDisk { dev: Dev::Ram, base: 0, sectors: total, pos: Mutex::new(0) }) as Arc<dyn FileOps>);
+    }
     let name = path.strip_prefix("/dev/sd")?;
     let mut ch = name.chars();
     let dev = match ch.next()? {
@@ -148,6 +156,22 @@ impl RawDisk {
 }
 
 impl FileOps for RawDisk {
+    fn read_at(&self, off: u64, buf: &mut [u8]) -> i64 {
+        if !is_root() {
+            return EACCES;
+        }
+        self.xfer(off, buf, false)
+    }
+    fn write_at(&self, off: u64, buf: &[u8]) -> i64 {
+        if !is_root() {
+            return EACCES;
+        }
+        if is_boot_disk(self.dev) {
+            return EROFS;
+        }
+        let mut tmp = buf.to_vec();
+        self.xfer(off, &mut tmp, true)
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         if !is_root() {
             return EACCES;
@@ -194,6 +218,7 @@ impl FileOps for RawDisk {
     }
     fn sync(&self) -> i64 {
         let r = match self.dev {
+            Dev::Ram => Ok(()),
             Dev::Sata => crate::ahci::flush(),
             Dev::Usb => match crate::EHCI.lock().as_mut() {
                 Some(e) => e.msc_flush(),

@@ -1,0 +1,51 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1979:17
+     |
+1979 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winenv-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (3.0% non-contiguous), 103816/524288 blocks
+winenv-ok set-preserves-error
+winenv-ok ascii-case-insensitive
+winenv-ok wide-size-query
+winenv-ok wide-short-buffer-size-and-canary
+winenv-ok unicode-roundtrip
+winenv-ok large-value-set
+winenv-ok large-value-size-query
+winenv-ok large-value-exact-roundtrip
+winenv-ok wide-snapshot-complete
+winenv-ok mutation-after-snapshot
+winenv-ok snapshots-have-independent-lifetimes
+winenv-ok snapshot-large-not-truncated
+winenv-ok free-first-snapshot
+winenv-ok free-second-snapshot
+winenv-ok empty-value-has-terminator
+winenv-ok delete-existing
+winenv-ok missing-error
+winenv-ok delete-missing-idempotent
+winenv-ok empty-name-rejected
+winenv-ok equals-name-rejected
+winenv-ok ansi-set-acp
+winenv-ok acp-to-unicode
+winenv-ok unicode-to-acp
+winenv-ok legacy-ansi-export-present
+winenv-ok oem-snapshot-source
+winenv-ok ansi-snapshot-allocated
+winenv-ok ansi-snapshot-is-oem437
+winenv-ok free-ansi-snapshot
+winenv-ok eight-threads-independent-mutations
+winenv-result=PASS
+winenv-done

@@ -1,0 +1,14 @@
+{
+  "source": "https://ski.ihoc.net/ski32.zip",
+  "author_page": "https://ski.ihoc.net/",
+  "files": {
+    "ski32.zip": {
+      "bytes": 39409,
+      "sha256": "74b39af5a3d7d1e96db70d4946326d0d88a51b34cb9eb86f316efcc0d44133d3"
+    },
+    "ski32.exe": {
+      "bytes": 118784,
+      "sha256": "3572d3757638bc1ae388c3d007ba59ba1f370911901e2a35d2f1297e8cf0ff35"
+    }
+  }
+}

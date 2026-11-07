@@ -1,0 +1,10 @@
+
+running 5 tests
+test tests::empty_edits_preserve_boundaries_and_end_lookup ... ok
+test tests::partial_protection_preserves_both_sides ... ok
+test tests::fixed_reservation_replaces_only_overlap ... ok
+test tests::holes_remain_unmapped_after_protection_changes ... ok
+test tests::mixed_operations_match_independent_address_grid ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.17s
+

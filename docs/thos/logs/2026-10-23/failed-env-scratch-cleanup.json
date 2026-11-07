@@ -1,0 +1,12 @@
+[
+  {
+    "path": "target/test-scratch/run-7956-1792791174632802440",
+    "allocated_bytes": 453234688,
+    "diagnostic_log": "winenv-initial-missing-export-serial.log"
+  },
+  {
+    "path": "target/test-scratch/run-8719-1792791359488272602",
+    "allocated_bytes": 453234688,
+    "diagnostic_log": "winenv-futex-failure-serial.log"
+  }
+]

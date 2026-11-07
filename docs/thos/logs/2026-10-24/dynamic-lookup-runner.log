@@ -1,0 +1,35 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1955:17
+     |
+1955 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winlookup-test`
+winlookup-static-find=1
+winlookup-core=1 ansi=1 wide=1 ansi-error=0 extension=1
+winlookup-ok dynamic-ansi-wide
+winlookup-ok synthetic-ordinal
+winlookup-ok invalid-ordinal
+winlookup-ok case-sensitive-name
+winlookup-ok invalid-module
+winlookup-ok extension-override
+winlookup-ok crt-override
+winlookup-ok synthetic-modules-visible
+winlookup-ok fixture-markers
+winlookup-ok forwarded-name
+winlookup-ok forwarded-ordinal
+winlookup-ok forward-loop-bounded
+winlookup-ok static-forward-call
+winlookup-ok dynamic-call
+winlookup-ok ldr-entry
+winlookup-ok ldr-counted-name
+winlookup-ok ldr-ordinal
+winlookup-ok ldr-invalid-length
+winlookup-ok ldr-invalid-output
+winlookup-failures=0
+winlookup-done
+Runtime export lookup recorded; winlookup-test requires all checks, probe alone does not imply compatibility

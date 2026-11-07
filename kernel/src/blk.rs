@@ -23,6 +23,11 @@ pub fn is_ram() -> bool {
     RAM.load(Ordering::Acquire)
 }
 
+/// The memory image (address, length) for /dev/ram0, if the system runs from one.
+pub fn ram_image() -> Option<(u64, u64)> {
+    if is_ram() { Some((RAM_ADDR.load(Ordering::Acquire), RAM_LEN.load(Ordering::Acquire))) } else { None }
+}
+
 fn ram_span(lba: u64, len: usize) -> Result<*mut u8, &'static str> {
     let (a, l) = (RAM_ADDR.load(Ordering::Acquire), RAM_LEN.load(Ordering::Acquire));
     let off = lba.checked_mul(SECTOR as u64).ok_or("ram: lba overflow")?;

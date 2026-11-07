@@ -1,0 +1,17 @@
+{
+  "time": "2026-10-24T02:31:43.146503+00:00",
+  "primary_used_percent": 95,
+  "primary_remaining_percent": 5,
+  "primary_window_minutes": 300,
+  "secondary_used_percent": 30,
+  "actual_resets_at": 1792820839,
+  "next_once_local": "2026-10-24T07:48:00+02:00",
+  "automation_id": "thos-um-00-10-fortsetzen",
+  "automation_status": "ACTIVE",
+  "automation_rrule": "FREQ=DAILY;BYHOUR=7;BYMINUTE=48;BYSECOND=0;COUNT=1",
+  "live_sha256": "9c4ed07d1350586d7e013c011c96c718ec6259c7b976a6b9135e44866c82adcf",
+  "physical_disk_updated": false,
+  "physical_keyboard_changed": false,
+  "qemu_stopped": true,
+  "test_scratch_empty": true
+}

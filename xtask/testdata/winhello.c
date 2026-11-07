@@ -3,6 +3,7 @@
 // coloured rectangles, a click handler that recolours it. Runs on THOS's NT personality; under the
 // desktop it is one more window next to the Linux clients.
 #include <windows.h>
+#include "winframe-test.h"
 
 static int clicks;
 
@@ -34,7 +35,7 @@ void __attribute__((noreturn)) start(void) {
     wc.lpfnWndProc = proc;
     wc.lpszClassName = "winhello";
     RegisterClassA(&wc);
-    HWND h = CreateWindowExA(0, "winhello", "winhello", 0, 0, 0, 300, 200, 0, 0, 0, 0);
+    HWND h = thos_test_client_window(0, "winhello", "winhello", 0, 0, 0, 300, 200, 0, 0, 0, 0);
     ShowWindow(h, 1);
     UpdateWindow(h);
     MSG msg;

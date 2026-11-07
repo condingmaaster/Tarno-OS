@@ -1,0 +1,68 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1858:17
+     |
+1858 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.76s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask gdi-blit-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (2.9% non-contiguous), 103803/524288 blocks
+gdi-blit-ok memory-dcs
+gdi-blit-ok invalid-source-dc
+gdi-blit-ok negative-size
+gdi-blit-ok oversize-rejected
+gdi-blit-ok unsupported-monochrome-explicit-failure
+gdi-blit-ok owned-color-bitmaps
+gdi-blit-ok stock-bitmap-returned
+gdi-blit-ok bitmap-single-selection
+gdi-blit-ok selected-bitmap-not-deleted
+gdi-blit-ok bitmap-not-window-brush
+gdi-blit-ok wrong-type-delete-dc
+gdi-blit-ok negative-pixel-rejected
+gdi-blit-ok mem-mem-copy
+gdi-blit-ok all-1517-pixels-page-crossing
+gdi-blit-ok overlap-down-right
+gdi-blit-ok overlap-snapshot-pixels
+gdi-blit-ok mem-window-copy
+gdi-blit-ok window-page-pixels
+gdi-blit-ok window-window-overlap
+gdi-blit-ok window-overlap-pixels
+gdi-blit-ok window-memory-readback
+gdi-blit-ok window-readback-pixels
+gdi-blit-ok negative-destination-clip
+gdi-blit-ok clipped-pixels-and-untouched-border
+gdi-blit-ok unsupported-rop-fails
+gdi-blit-ok failed-rop-no-mutation
+gdi-blit-ok unknown-source-fails
+gdi-blit-ok unknown-dest-fails
+gdi-blit-ok negative-size-fails
+gdi-blit-ok restore-original-bitmap
+gdi-blit-ok detach-delete
+gdi-blit-ok stale-bitmap-refused
+gdi-blit-ok delete-memory-dc
+gdi-blit-ok stale-dc-refused
+gdi-blit-ok dc-delete-retains-bitmap
+gdi-blit-ok deleteobject-memory-dc
+gdi-blit-ok zero-area-noop
+gdi-blit-ok extreme-coordinates-noop
+gdi-blit-ok final-window-blit
+gdi-blit-ok final-corner-pixels
+gdi-blit-result=PASS
+gdi-blit-ready-close
+gdi-blit-close
+gdi-blit-exit:0
+gdi-blit-done

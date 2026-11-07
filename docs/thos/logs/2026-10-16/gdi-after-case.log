@@ -1,0 +1,56 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1858:17
+     |
+1858 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask gdi-brush-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (2.9% non-contiguous), 103798/524288 blocks
+gdi-brush-ok default-first
+gdi-brush-ok default-second
+gdi-brush-ok valid-first-rectangle
+gdi-brush-ok valid-second-rectangle
+gdi-brush-ok isolated-first
+gdi-brush-ok isolated-second
+gdi-brush-ok null-brush-refused
+gdi-brush-ok null-brush-keeps-color
+gdi-brush-ok unknown-dc-select
+gdi-brush-ok stale-dc-select
+gdi-brush-ok invalid-window-getdc
+gdi-brush-ok invalid-dc-read
+gdi-brush-ok invalid-dc-write
+gdi-brush-ok desktop-pixel-preserved
+gdi-brush-ok invalid-dc-rectangle
+gdi-brush-ok desktop-rectangle-preserved
+gdi-brush-ok invalid-dc-read
+gdi-brush-ok invalid-dc-write
+gdi-brush-ok desktop-pixel-preserved
+gdi-brush-ok invalid-dc-rectangle
+gdi-brush-ok desktop-rectangle-preserved
+gdi-brush-ok invalid-dc-read
+gdi-brush-ok invalid-dc-write
+gdi-brush-ok desktop-pixel-preserved
+gdi-brush-ok invalid-dc-rectangle
+gdi-brush-ok desktop-rectangle-preserved
+gdi-brush-ok high-alias-read
+gdi-brush-ok high-alias-write
+gdi-brush-ok valid-window-preserved
+gdi-brush-result=PASS
+gdi-brush-ready-close
+gdi-brush-close
+gdi-brush-exit:0
+gdi-brush-done

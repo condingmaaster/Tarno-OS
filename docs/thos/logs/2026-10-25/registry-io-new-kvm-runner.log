@@ -1,0 +1,46 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2018:17
+     |
+2018 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winregistry-io-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1115/32768 files (3.0% non-contiguous), 103834/524288 blocks
+winregistry-io-start
+winregistry-io-ok seed-real-registry-value
+winregistry-io-ok initial-hive-on-disk
+winregistry-io-ok actual-change-watch
+winregistry-io-ok private-filler-created
+winregistry-io-fill-progress
+winregistry-io-fill-progress
+winregistry-io-fill-progress
+winregistry-io-fill-progress
+winregistry-io-fill-progress
+winregistry-io-fill-progress
+winregistry-io-ok actual-disk-space-exhausted
+winregistry-io-ok small-block-remainder-exhausted
+winregistry-io-ok real-ext2-free-space-exhausted
+winregistry-io-ok filesystem-failure-is-not-success
+winregistry-io-ok failed-write-keeps-live-value
+winregistry-io-ok failed-write-keeps-hive-bytes
+winregistry-io-ok failed-write-does-not-notify
+winregistry-io-ok failed-hive-allocation-returns-blocks
+winregistry-io-ok filler-space-reclaimed
+winregistry-io-ok retry-really-commits
+winregistry-io-ok committed-change-notifies
+winregistry-io-result=PASS
+winregistry-io-done

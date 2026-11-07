@@ -1,0 +1,15 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2009:17
+     |
+2009 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.62s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winprofile-test`
+/usr/bin/x86_64-w64-mingw32-ld: /tmp/ccGFn6K1.o:winprofile-chi:(.text+0x7): undefined reference to `___chkstk_ms'
+collect2: error: ld returned 1 exit status
+command failed (exit status: 1): "x86_64-w64-mingw32-gcc" "-O1" "-nostdlib" "-ffreestanding" "-Wl,-e,start" "-o" "/home/router/Projekte/Tarno-OS/target/test-scratch/run-991-1792914285556701193/winprofile-build/winprofile-child.exe" "/home/router/Projekte/Tarno-OS/xtask/testdata/winprofile-child.c" "-lkernel32"

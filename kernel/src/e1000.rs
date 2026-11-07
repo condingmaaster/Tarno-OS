@@ -64,6 +64,7 @@ pub struct E1000 {
 unsafe impl Send for E1000 {}
 
 impl E1000 {
+    pub fn link_up(&self) -> bool { self.r(STATUS) & 2 != 0 }
     fn r(&self, off: usize) -> u32 {
         unsafe { (self.mmio.add(off) as *const u32).read_volatile() }
     }

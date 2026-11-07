@@ -44,7 +44,8 @@ static const char *classify(int fd, uint64_t off, uint8_t ptype, char *label, si
     if (ptype == 0x05 || ptype == 0x0F || ptype == 0x85) return "extended partition";
     if (pread(fd, b, sizeof b, (off_t)off) != (ssize_t)sizeof b) return "unreadable";
     if (!memcmp(b + 3, "NTFS    ", 8)) return "Windows (NTFS)";
-    if (!memcmp(b + 82, "FAT32   ", 8) || !memcmp(b + 54, "FAT16   ", 8) || !memcmp(b + 54, "FAT12   ", 8) || !memcmp(b + 3, "EXFAT   ", 8)) return "FAT/exFAT";
+    if (!memcmp(b + 82, "FAT32   ", 8)) { snprintf(label, cap, "%.11s", (char *)b + 71); for (int i = (int)strlen(label) - 1; i >= 0 && label[i] == ' '; i--) label[i] = 0; return "FAT/exFAT"; }
+    if (!memcmp(b + 54, "FAT16   ", 8) || !memcmp(b + 54, "FAT12   ", 8) || !memcmp(b + 3, "EXFAT   ", 8)) return "FAT/exFAT";
     uint8_t sb[1024];
     if (pread(fd, sb, sizeof sb, (off_t)(off + 1024)) == (ssize_t)sizeof sb && le16(sb + 56) == 0xEF53) {
         snprintf(label, cap, "%.16s", (char *)sb + 120);
@@ -57,21 +58,27 @@ static const char *classify(int fd, uint64_t off, uint8_t ptype, char *label, si
     return "unknown";
 }
 static int list_disks(void) {
-    const char *devs[] = { "/dev/sda", "/dev/sdb" };
+    const char *devs[] = { "/dev/sda", "/dev/sdb", "/dev/ram0" };
     char bootd[16] = "";
     FILE *bf = fopen("/proc/bootdisk", "r");
     if (bf) { if (fgets(bootd, sizeof bootd, bf)) {} fclose(bf); }
-    for (int d = 0; d < 2; d++) {
+    for (int d = 0; d < 3; d++) {
         int fd = open(devs[d], O_RDONLY);
         if (fd < 0) continue;
         off_t size = lseek(fd, 0, SEEK_END);
         uint8_t mbr[512], gpt[512];
         const char *table = "none";
         int ok = pread(fd, mbr, 512, 0) == 512;
-        if (!ok) table = "unreadable";
+        if (!ok) { table = "unreadable"; fprintf(stderr, "cannot read the first sector of %s: %s\n", devs[d], strerror(errno)); }
         else if (mbr[510] == 0x55 && mbr[511] == 0xAA) table = "mbr";
         if (ok && pread(fd, gpt, 512, 512) == 512 && !memcmp(gpt, "EFI PART", 8)) table = "gpt";
-        int isboot = (d == 1 && !strncmp(bootd, "usb", 3)) || (d == 0 && !strncmp(bootd, "sata", 4));
+        int thosboot = 0;                                          /* the stick THOS started from: it carries the FAT partition THOSBOOT (the memory-image start never sees it as the boot disk otherwise) */
+        if (!strcmp(table, "mbr")) for (int i = 0; i < 4; i++) {
+            const uint8_t *e = mbr + 0x1BE + 16 * i;
+            char lb[20];
+            if (e[4] && le32(e + 12) && !strcmp(classify(fd, (uint64_t)le32(e + 8) * SEC, e[4], lb, sizeof lb), "FAT/exFAT") && !strcmp(lb, "THOSBOOT")) thosboot = 1;
+        }
+        int isboot = thosboot || (d == 1 && !strncmp(bootd, "usb", 3)) || (d == 0 && !strncmp(bootd, "sata", 4)) || (d == 2 && !strncmp(bootd, "ram", 3));
         printf("disk %s %llu %s %s\n", devs[d], (unsigned long long)size >> 20, table, isboot ? "yes" : "no");
         uint64_t used_end = 2048, best = 0, total = (uint64_t)size / SEC;
         if (!strcmp(table, "mbr")) {
@@ -106,7 +113,8 @@ int main(int argc, char **argv) {
     if (argc != 3 || strcmp(argv[1], "--erase") || strcmp(argv[2], "/dev/sda")) { fputs("usage: thosinstall --erase /dev/sda\n", stderr); return 2; }
     dup2(1, 2);                                              /* the elevated process may have no stderr: report everything on stdout */
     buf = malloc(BUFSZ);
-    src = open("/dev/sdb", O_RDONLY);
+    { char bd[16] = ""; FILE *bf = fopen("/proc/bootdisk", "r"); if (bf) { if (fgets(bd, sizeof bd, bf)) {} fclose(bf); }
+      src = open(!strncmp(bd, "ram", 3) ? "/dev/ram0" : "/dev/sdb", O_RDONLY); }          /* from memory when the system runs from a loaded image */
     dst = open("/dev/sda", O_RDWR);
     if (!buf || src < 0 || dst < 0) { fprintf(stderr, "cannot open the disks (stick /dev/sdb: %d, internal /dev/sda: %d): %s\n", src, dst, strerror(errno)); return 1; }
     uint8_t mbr[512];

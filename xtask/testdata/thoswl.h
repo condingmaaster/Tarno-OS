@@ -5,8 +5,14 @@
 #include <stdint.h>
 #define WL_SOCK_NAME "\0thos-wl"          /* abstract address */
 #define WL_SOCK_LEN  8
-enum { WL_CREATE = 1, WL_CREATED = 2, WL_COMMIT = 3, WL_CLOSE = 4, WL_POINTER = 5, WL_KEY = 6, WL_TITLE = 7, WL_POS = 8, WL_HELLO = 9, WL_WINBEGIN = 10, WL_WIN = 11, WL_RAISE = 12, WL_TOAST = 13, WL_CURSOR = 14, WL_THEME = 15, WL_QUIT = 99 };
+enum { WL_CREATE = 1, WL_CREATED = 2, WL_COMMIT = 3, WL_CLOSE = 4, WL_POINTER = 5, WL_KEY = 6, WL_TITLE = 7, WL_POS = 8, WL_HELLO = 9, WL_WINBEGIN = 10, WL_WIN = 11, WL_RAISE = 12, WL_TOAST = 13, WL_CURSOR = 14, WL_THEME = 15, WL_START = 16, WL_CONFIGURE = 17, WL_BUFFER = 18, WL_BUFFERED = 19, WL_LIMITS = 20, WL_QUIT = 99 };
+#define WL_RESIZABLE 16
+#define WL_BUFFER_COMMIT 21
 struct wl_msg { uint32_t op, a, b, c, d; };
+/* CREATE d bit 4: resizable native client. CONFIGURE s->c: a,b dimensions,
+   c serial, d maximized. BUFFER c->s: a,b dimensions, c shmid, d serial.
+   BUFFERED s->c: a shmid, b serial, c accepted. The new buffer becomes visible
+   only on its first COMMIT. LIMITS c->s: a,b minimum content width/height. */
 /* HELLO   c->s (optional, before CREATE): the server answers WL_CREATED with a=0, b=screen width, c=screen height
    (CREATE d bit 1 = start menu surface, closed on an outside click; bit 2 = task list: the server then sends
     WINBEGIN a=count and WIN a=id|focused<<31 b,c,d=12 title chars for every open window; RAISE c->s a=id focuses one)

@@ -1,0 +1,19 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1811:17
+     |
+1811 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask firefox-downloads-test`
+firefox-phase window-ms=48853
+firefox-phase page-ms=56820
+firefox-phase script-ms=57261
+firefox-phase load-ms=57262
+firefox-phase windows-click-ms=72265
+firefox-phase windows-complete-ms=89289
+firefox-phase linux-pointerdown-ms=91389
+firefox-downloads-test PASSED: actual Firefox downloads PE/ELF over isolated loopback HTTP, complete bytes match, no automatic execution; Files explicitly opens both in terminal/Controlbar (sandbox-disabled diagnostic only)

@@ -1,0 +1,12 @@
+   Compiling thos-small-heap-probe v0.0.0 (/home/router/Projekte/Tarno-OS/xtask/heap-probe)
+    Finished `release` profile [optimized] target(s) in 1.51s
+     Running unittests src/main.rs (xtask/heap-probe/target/x86_64-unknown-linux-gnu/release/build/thos-small-heap-probe/2c5c0e291168dc94/out/thos_small_heap_probe-2c5c0e291168dc94)
+
+running 4 tests
+test small_heap::tests::alignment_contents_zeroing_and_reclaim ... ok
+test small_heap::tests::realloc_keeps_data_across_size_classes ... ok
+test small_heap::tests::cached_blocks_do_not_cause_spurious_oom ... ok
+test small_heap::tests::concurrent_classes_keep_live_payloads_and_unique_ownership ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+

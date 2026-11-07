@@ -91,7 +91,7 @@ int main(void) {
     spring_init(&hov_a, 0, SP_HOVER);
     struct wl_msg m = { WL_CREATE, CW, CH, (uint32_t)key, 3 | 8 };                 /* undecorated, closes on an outside click, alpha */
     (void)!write(sock, &m, sizeof m);
-    if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("cal FAIL: no CREATED"); return 1; }
+    if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("cal FAIL: no CREATED"); return 1; }
     shmctl(id, IPC_RMID, 0);
     struct wl_msg pos = { WL_POS, m.b - CW - 12, m.c - 64 - CH - 6, 0, 0 };
     (void)!write(sock, &pos, sizeof pos);
@@ -107,7 +107,7 @@ int main(void) {
         clk = nowt;
         if (busy) { spring_step(&hov_a, dt); render(); }
         if (pr <= 0) continue;
-        if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
+        if (ui_read(sock, &m) != (ssize_t)sizeof m || m.op == WL_CLOSE) break;
         if (m.op == WL_THEME) { ui_theme_load(); render(); continue; }
         if (m.op != WL_POINTER) continue;
         int x = (int)m.a, y = (int)m.b;

@@ -1,0 +1,34 @@
+
+target/thos-kernel-registry-bounded-2026-10-25.elf:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+ffffffff800dee60 <_RNvNtCsjHZPvmLijDq_11thos_kernel8registry8copy_key>:
+ffffffff800dee60:	55                   	push   %rbp
+ffffffff800dee61:	41 57                	push   %r15
+ffffffff800dee63:	41 56                	push   %r14
+ffffffff800dee65:	41 55                	push   %r13
+ffffffff800dee67:	41 54                	push   %r12
+ffffffff800dee69:	53                   	push   %rbx
+ffffffff800dee6a:	48 81 ec 88 01 00 00 	sub    $0x188,%rsp
+ffffffff800dee71:	48 89 7c 24 18       	mov    %rdi,0x18(%rsp)
+ffffffff800dee76:	8b 46 30             	mov    0x30(%rsi),%eax
+ffffffff800dee79:	48 c7 44 24 50 00 00 	movq   $0x0,0x50(%rsp)
+ffffffff800dee80:	00 00 
+ffffffff800dee82:	48 c7 44 24 78 00 00 	movq   $0x0,0x78(%rsp)
+ffffffff800dee89:	00 00 
+ffffffff800dee8b:	48 c7 44 24 60 00 00 	movq   $0x0,0x60(%rsp)
+ffffffff800dee92:	00 00 
+ffffffff800dee94:	48 c7 44 24 68 00 00 	movq   $0x0,0x68(%rsp)
+ffffffff800dee9b:	00 00 
+ffffffff800dee9d:	89 84 24 80 00 00 00 	mov    %eax,0x80(%rsp)
+ffffffff800deea4:	48 8b 46 18          	mov    0x18(%rsi),%rax
+ffffffff800deea8:	48 89 74 24 20       	mov    %rsi,0x20(%rsp)
+ffffffff800deead:	4c 8b 7e 28          	mov    0x28(%rsi),%r15
+ffffffff800deeb1:	48 85 c0             	test   %rax,%rax
+ffffffff800deeb4:	0f 95 c1             	setne  %cl
+ffffffff800deeb7:	4d 85 ff             	test   %r15,%r15
+ffffffff800deeba:	0f 95 c2             	setne  %dl
+ffffffff800deebd:	20 ca                	and    %cl,%dl
+ffffffff800deebf:	80                   	.byte 0x80

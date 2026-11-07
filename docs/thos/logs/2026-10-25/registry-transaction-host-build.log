@@ -1,0 +1,52 @@
+warning: function `canon` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:158:8
+    |
+158 | pub fn canon(path: &str) -> String {
+    |        ^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `create` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:201:8
+    |
+201 | pub fn create(path: &str) -> bool {
+    |        ^^^^^^
+
+warning: function `create_write_ok` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:241:8
+    |
+241 | pub fn create_write_ok(path: &str, uid: u32) -> bool {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `write_key_ok` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:253:8
+    |
+253 | pub fn write_key_ok(path: &str, uid: u32) -> bool {
+    |        ^^^^^^^^^^^^
+
+warning: function `enumerate_key` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:266:8
+    |
+266 | pub fn enumerate_key(path: &str, index: usize) -> Option<String> {
+    |        ^^^^^^^^^^^^^
+
+warning: function `enumerate_value` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:273:8
+    |
+273 | pub fn enumerate_value(path: &str, index: usize) -> Option<(String, u32, usize)> {
+    |        ^^^^^^^^^^^^^^^
+
+warning: function `set_value` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:285:8
+    |
+285 | pub fn set_value(path:&str,name:&str,ty:u32,data:&[u8])->bool {
+    |        ^^^^^^^^^
+
+warning: function `delete_key` is never used
+   --> xtask/testdata/../../kernel/src/registry.rs:309:8
+    |
+309 | pub fn delete_key(path:&str)->bool {delete_key_for_user(path,0).is_ok()}
+    |        ^^^^^^^^^^
+
+warning: 8 warnings emitted
+

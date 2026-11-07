@@ -29,6 +29,7 @@ enum Driver {
 }
 
 impl Driver {
+    fn link_up(&self) -> bool { match self { Self::Virtio(d) => d.link_up(), Self::E1000(d) => d.link_up(), Self::Tg3(d) => d.link_up() } }
     fn poll_rx(&mut self) {
         match self {
             Driver::Virtio(d) => d.poll_rx(),
@@ -76,9 +77,6 @@ impl Driver {
 /// Our own IPv4 address as a big-endian number (0 until configured): frames to it loop back.
 static OWN_IP: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// QEMU user-mode networking (`-nic user`): guest 10.0.2.15/24, gateway 10.0.2.2.
-const STATIC_IP: [u8; 4] = [10, 0, 2, 15];
-const GATEWAY: [u8; 4] = [10, 0, 2, 2];
 
 /// The stack's `Device` — the driver plus the smoltcp token plumbing.
 struct Nic {
@@ -164,11 +162,14 @@ pub struct Stack {
     nic: Nic,
     pub iface: Interface,
     pub sockets: SocketSet<'static>,
-    dhcp: SocketHandle,
+    dhcp: Option<SocketHandle>,
     /// DNS servers from the lease (or the static fallback).
     pub dns: Vec<[u8; 4]>,
     /// A lease (or the static fallback) has been applied.
     pub configured: bool,
+    enabled: bool,
+    automatic: bool,
+    router: Option<Ipv4Address>,
 }
 
 pub static NET: Mutex<Option<Stack>> = Mutex::new(None);
@@ -177,10 +178,50 @@ fn now() -> Instant {
     Instant::from_micros((crate::timer::monotonic_ns() / 1000) as i64)
 }
 
+pub fn info() -> alloc::string::String {
+    let g = NET.lock();
+    let st = g.as_ref();
+    let state = crate::net_config::state(st.is_some(), st.is_some_and(|s| s.enabled), st.is_some_and(|s| s.nic.drv.link_up()), st.is_some_and(|s| s.configured));
+    let up = state == "connected";
+    let ip = if up { st.and_then(|s| s.iface.ipv4_addr()).map_or([0;4], |a| a.octets()) } else { [0;4] };
+    let mut dns = alloc::string::String::new();
+    if up { for d in &st.unwrap().dns { dns.push_str(&alloc::format!("{}.{}.{}.{} ",d[0],d[1],d[2],d[3])); } }
+    alloc::format!("link {}\nip {}.{}.{}.{}\ndns {}\nstate {}\ninterface {}\ndriver {}\naddress_mode {}\nwlan_present {}\n", if up {"up"} else {"down"},ip[0],ip[1],ip[2],ip[3],dns.trim(),state,if st.is_some() {"ethernet"} else {"none"},st.map_or("none",|s|s.nic.drv.name()),st.map_or("none",|s|if s.automatic {"dhcp"} else {"manual"}),crate::wlan::present() as u8)
+}
+
+/// The authenticated administrator may configure networking from Settings.
+/// Reject invalid requests before modifying the running stack.
+pub fn control(bytes: &[u8]) -> i64 {
+    let uid = crate::process::current_uid();
+    #[cfg(feature="interactive")]
+    let admin = uid == crate::cred::ADMIN_UID;
+    #[cfg(not(feature="interactive"))]
+    let admin = false;
+    if uid != 0 && !admin { return -13; }
+    if bytes == b"wifi-recheck" { crate::wlan::init(); return bytes.len() as i64; }
+    let cmd = match crate::net_config::parse(bytes) { Ok(c) => c, Err(e) => return e };
+    let mut g = NET.lock(); let Some(st) = g.as_mut() else { return -19; };
+    if let Some(h) = st.dhcp.take() { st.sockets.remove(h); }
+    st.clear_address(); st.automatic = false;
+    match cmd {
+        crate::net_config::Command::Dhcp => { st.enabled = true; st.automatic = true; st.dhcp = Some(st.sockets.add(dhcpv4::Socket::new())); }
+        crate::net_config::Command::Disconnect => { st.enabled = false; }
+        crate::net_config::Command::Static { ip, prefix, gateway, dns } => {
+            st.enabled = true;
+            st.set_address(Ipv4Cidr::new(Ipv4Address::from(ip),prefix), if gateway == [0;4] {None} else {Some(Ipv4Address::from(gateway))},if dns == [0;4] {Vec::new()} else {vec![dns]});
+        }
+    }
+    bytes.len() as i64
+}
+
 impl Stack {
     pub fn poll(&mut self) {
         self.iface.poll(now(), &mut self.nic, &mut self.sockets);
-        self.service_dhcp();
+        if self.automatic { self.service_dhcp(); }
+        if !self.nic.drv.link_up() && self.configured && self.automatic {
+            self.clear_address();
+            if let Some(h) = self.dhcp { self.sockets.get_mut::<dhcpv4::Socket>(h).reset(); }
+        }
     }
 
     fn set_address(&mut self, addr: Ipv4Cidr, router: Option<Ipv4Address>, dns: Vec<[u8; 4]>) {
@@ -197,13 +238,15 @@ impl Stack {
             None => self.iface.routes_mut().remove_default_ipv4_route().map(|_| ()).unwrap_or(()),
         }
         self.dns = dns;
+        self.router = router;
         self.configured = true;
     }
 
     /// Apply DHCP lease changes as they arrive.
     fn service_dhcp(&mut self) {
+        let Some(dhcp) = self.dhcp else { return; };
         // Copy the lease out of the socket before touching `self` again.
-        let lease = match self.sockets.get_mut::<dhcpv4::Socket>(self.dhcp).poll() {
+        let lease = match self.sockets.get_mut::<dhcpv4::Socket>(dhcp).poll() {
             Some(dhcpv4::Event::Configured(cfg)) => {
                 Some(Some((cfg.address, cfg.router, cfg.dns_servers.iter().map(|d| d.octets()).collect::<Vec<_>>())))
             }
@@ -221,26 +264,19 @@ impl Stack {
                 self.set_address(addr, router, dns);
             }
             Some(None) => {
-                self.iface.update_ip_addrs(|a| {
-                    a.clear();
-                    let _ = a.push(IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(127, 0, 0, 1), 8)));
-                });
-                self.configured = false;
+                self.clear_address();
             }
             None => {}
         }
     }
 
-    /// No lease arrived: use the QEMU user-network defaults so the stack is still usable.
-    pub fn fallback_static(&mut self) {
-        if !self.configured {
-            kprintln!("THOS: net dhcp         no lease — static fallback 10.0.2.15/24");
-            self.set_address(
-                Ipv4Cidr::new(Ipv4Address::new(STATIC_IP[0], STATIC_IP[1], STATIC_IP[2], STATIC_IP[3]), 24),
-                Some(Ipv4Address::new(GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3])),
-                vec![[10, 0, 2, 3]],
-            );
-        }
+    fn clear_address(&mut self) {
+        self.iface.update_ip_addrs(|a| { a.clear(); let _ = a.push(IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(127,0,0,1),8))); });
+        self.iface.routes_mut().remove_default_ipv4_route();
+        self.configured = false;
+        self.router = None;
+        self.dns.clear();
+        OWN_IP.store(0, core::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -249,6 +285,7 @@ impl Stack {
 pub fn resolv_conf() -> Option<alloc::string::String> {
     let g = NET.lock();
     let st = g.as_ref()?;
+    if !st.configured || !st.enabled || !st.nic.drv.link_up() { return Some(alloc::string::String::new()); }
     if st.dns.is_empty() {
         return None;
     }
@@ -268,6 +305,7 @@ pub fn local_ip_of(st: &Stack) -> [u8; 4] {
 pub fn local_ip() -> [u8; 4] {
     NET.lock()
         .as_ref()
+        .filter(|st| st.configured && st.enabled && st.nic.drv.link_up())
         .and_then(|st| st.iface.ipv4_addr())
         .map(|a| a.octets())
         .unwrap_or([0; 4])
@@ -297,7 +335,7 @@ pub fn init() -> Result<(), &'static str> {
     iface.update_ip_addrs(|a| {
         let _ = a.push(IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(127, 0, 0, 1), 8)));
     });
-    *NET.lock() = Some(Stack { nic: dev, iface, sockets, dhcp, dns: Vec::new(), configured: false });
+    *NET.lock() = Some(Stack { nic: dev, iface, sockets, dhcp: Some(dhcp), dns: Vec::new(), configured: false, enabled: true, automatic: true, router: None });
     Ok(())
 }
 
@@ -355,7 +393,7 @@ fn ping(dst: [u8; 4], tries: u32) -> Option<u64> {
 
 /// The network thread: boot-time gateway ping, then keep the stack serviced.
 pub extern "C" fn net_thread(_: usize) -> ! {
-    // Give DHCP a few seconds, then fall back to the static QEMU defaults.
+    // Wait briefly for a real lease; keep waiting without a fabricated fallback.
     for _ in 0..300 {
         {
             let mut g = NET.lock();
@@ -367,16 +405,14 @@ pub extern "C" fn net_thread(_: usize) -> ! {
         }
         crate::timer::sleep_ns(10_000_000);
     }
-    if let Some(st) = NET.lock().as_mut() {
-        st.fallback_static();
-    }
-    match ping(GATEWAY, 3) {
+    let gateway = NET.lock().as_ref().and_then(|st| st.router).map(|r| r.octets());
+    if let Some(gateway) = gateway { match ping(gateway, 3) {
         Some(ms) => kprintln!(
             "THOS: net ok           ping {}.{}.{}.{} answered in {} ms (ARP + ICMP over virtio-net + smoltcp)",
-            GATEWAY[0], GATEWAY[1], GATEWAY[2], GATEWAY[3], ms
+            gateway[0], gateway[1], gateway[2], gateway[3], ms
         ),
         None => kprintln!("THOS: net FAIL         gateway did not answer ping"),
-    }
+    } } else { kprintln!("THOS: net dhcp         no lease/router yet; waiting without a fabricated address"); }
     loop {
         if let Some(st) = NET.lock().as_mut() {
             st.poll();

@@ -198,6 +198,50 @@ pub fn mouse_state() -> (i32, i32, u8) {
     (MOUSE_X.load(Ordering::Relaxed), MOUSE_Y.load(Ordering::Relaxed), MOUSE_BTN.load(Ordering::Relaxed))
 }
 
+static USB_MOUSE_PRESENT: AtomicBool = AtomicBool::new(false);
+static USB_MOUSE_BUTTONS: AtomicU8 = AtomicU8::new(0);
+static PS2_MOUSE_BUTTONS: AtomicU8 = AtomicU8::new(0);
+
+static USB_MOUSE_SOURCES: Mutex<alloc::vec::Vec<(bool,u8)>> = Mutex::new(alloc::vec::Vec::new());
+pub fn usb_mouse_attach()->usize {
+    let mut sources=USB_MOUSE_SOURCES.lock();
+    let slot=sources.iter().position(|s|!s.0).unwrap_or(sources.len());
+    if slot==sources.len(){sources.push((true,0));}else{sources[slot]=(true,0);}
+    USB_MOUSE_PRESENT.store(true,Ordering::Release);slot
+}
+pub fn usb_mouse_detach(source:usize) {
+    let mut sources=USB_MOUSE_SOURCES.lock();
+    if let Some(s)=sources.get_mut(source){*s=(false,0);}
+    let buttons=sources.iter().filter(|s|s.0).fold(0,|b,s|b|s.1);
+    USB_MOUSE_PRESENT.store(sources.iter().any(|s|s.0),Ordering::Release);
+    USB_MOUSE_BUTTONS.store(buttons,Ordering::Relaxed);drop(sources);
+    mouse_packet([8|buttons|PS2_MOUSE_BUTTONS.load(Ordering::Relaxed),0,0]);
+}
+/// Convert USB boot coordinates (positive Y downward) into the existing /dev/input/mice stream.
+pub fn usb_mouse_event(source:usize,buttons:u8,dx:i32,dy:i32,wheel:i32) {
+    let mut sources=USB_MOUSE_SOURCES.lock();
+    let Some(s)=sources.get_mut(source).filter(|s|s.0)else{return};s.1=buttons&7;
+    let buttons=sources.iter().filter(|s|s.0).fold(0,|b,s|b|s.1);
+    USB_MOUSE_BUTTONS.store(buttons,Ordering::Relaxed);drop(sources);
+    let buttons=buttons|PS2_MOUSE_BUTTONS.load(Ordering::Relaxed);
+    let (w,h)=crate::gdi::screen_size();
+    // The legacy stream carries 9-bit deltas. Bound huge reports to screen travel,
+    // and split valid wide-axis movement rather than wrapping signed bytes.
+    let mut dx=dx.clamp(-(w.max(1) as i32),w.max(1) as i32);
+    let mut dy=-dy.clamp(-(h.max(1) as i32),h.max(1) as i32);
+    let mut scroll=-wheel.clamp(-65535,65535); // HID positive wheel is up; the existing stream is positive down.
+    if scroll!=0 {
+        let mut q=WHEEL_Q.lock();
+        while scroll!=0 {let step=scroll.clamp(-127,127);if q.len()>=64{q.pop_front();}q.push_back(step as i8);scroll-=step;}
+    }
+    if dx==0&&dy==0&&wheel==0&&MOUSE_BTN.load(Ordering::Relaxed)==buttons{return;}
+    loop {
+        let x=dx.clamp(-255,255);let y=dy.clamp(-255,255);
+        mouse_packet([8|buttons|if x<0{0x10}else{0}|if y<0{0x20}else{0},x as u8,y as u8]);
+        dx-=x;dy-=y;if dx==0&&dy==0{break;}
+    }
+}
+
 fn mouse_byte(b: u8) {
     if !MOUSE_PRESENT.load(Ordering::Acquire) {
         return;
@@ -230,6 +274,11 @@ fn mouse_byte(b: u8) {
     if pkt[0] & 0xC0 != 0 {
         return; // x/y overflow: discard
     }
+    PS2_MOUSE_BUTTONS.store(pkt[0]&7,Ordering::Relaxed);
+    let mut pkt=pkt;pkt[0]=(pkt[0]&!7)|(pkt[0]&7)|USB_MOUSE_BUTTONS.load(Ordering::Relaxed);
+    mouse_packet(pkt);
+}
+fn mouse_packet(pkt: [u8;3]) {
     let dx = pkt[1] as i32 - if pkt[0] & 0x10 != 0 { 256 } else { 0 };
     let dy = pkt[2] as i32 - if pkt[0] & 0x20 != 0 { 256 } else { 0 };
     let (w, h) = crate::gdi::screen_size();
@@ -260,7 +309,7 @@ pub fn mouse_read(buf: &mut [u8]) -> i64 {
             buf[..n].copy_from_slice(&p[..n]);
             return n as i64;
         }
-        if !MOUSE_PRESENT.load(Ordering::Acquire) {
+        if !MOUSE_PRESENT.load(Ordering::Acquire) && !USB_MOUSE_PRESENT.load(Ordering::Acquire) {
             return -19; // ENODEV
         }
         if crate::signal::interrupted() {
@@ -386,9 +435,11 @@ impl Decoder {
             (false, 0x1D) => 1 << 0,
             (false, 0x2A) => 1 << 1,
             (false, 0x38) => 1 << 2,
+            (true, 0x5B) => 1 << 3, // left Windows / Super
             (true, 0x1D) => 1 << 4,
             (false, 0x36) => 1 << 5,
             (true, 0x38) => 1 << 6,
+            (true, 0x5C) => 1 << 7, // right Windows / Super
             _ => 0,
         };
         if modbit != 0 {

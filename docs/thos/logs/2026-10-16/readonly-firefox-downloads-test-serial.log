@@ -1,0 +1,351 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800c99c5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       3993 MiB in 1021847 frames
+THOS: largest region   2968 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   1021847 -> 1021846 -> 1021847 (phys 0x13ffff000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62524 counts/ms
+THOS: clock            TSC 2492 MHz; RTC 1792168776 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 5 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 3
+THOS: AP 2 online     lapic 2
+THOS: AP 3 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          virtio-net 52:54:00:12:34:56
+THOS: net dhcp         lease 10.0.2.15/24 via - dns []
+THOS: net dhcp         no lease/router yet; waiting without a fabricated address
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /firefox-downloads.sh
+desk: ready 1280x800
+desk: window 1 created 1280x64 at 0,0
+panel ready
+desk: window 2 created 744x504 at 208,104
+term ready
+THOS: unhandled syscall 435 (further calls suppressed in release)
+THOS: unhandled syscall 187 (further calls suppressed in release)
+panel tasks: Terminal*=613-725
+Mozilla Firefox 153.4.0esr
+wl-pointer-created id=7 version=5
+THOS: unhandled syscall 140 (further calls suppressed in release)
+wl-pointer-created id=24 version=5
+[Parent 19, Main Thread] WARNING: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+: 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+
+** (firefox-esr:19): [1;33mWARNING[0m **: [34m16:40:31.687[0m: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+
+console.error: Region.sys.mjs: "Error fetching region" (new Error("TIMEOUT", "resource://gre/modules/Region.sys.mjs", 750))
+console.error: Region.sys.mjs: "Failed to fetch region" (new Error("TIMEOUT", "resource://gre/modules/Region.sys.mjs", 394))
+wl-pointer-created id=7 version=5
+console.log: Downloads: Closing the downloads panel.
+console.log: Downloads: Downloads panel is not showing - nothing to do.
+desk: wayland window 3 mapped 1256x824
+panel tasks: Terminal*=613-725
+wl-pointer-created id=7 version=5
+127.0.0.1:49164: url:/index.html
+127.0.0.1:49164: response:200
+wl-pointer-created id=7 version=5
+wl-pointer-created id=7 version=5
+console.error: services.settings: 
+  Remote Settings startup changesets bundle could not be extracted (TypeError: NetworkError: Network request failed)
+console.error: (new TypeError("can't access property \"find\", this._searchProviderInfo is null", "moz-src:///browser/components/search/SearchSERPTelemetry.sys.mjs", 1209))
+panel tasks: Terminal*=613-725
+127.0.0.1:49176: url:/favicon.ico
+127.0.0.1:49176: response:404
+console.warn: BackupService: "There was an error while trying to get the Document's directory" [Exception... "Component returned failure code: 0x80004005 (NS_ERROR_FAILURE) [nsIProperties.get]"  nsresult: "0x80004005 (NS_ERROR_FAILURE)"  location: "JS frame :: resource:///modules/backup/BackupService.sys.mjs :: get docsDirFolderPath :: line 1299"  data: no]
+JavaScript error: resource:///modules/backup/BackupService.sys.mjs, line 4408: NotAllowedError: PathUtils.join: PathUtils does not support empty paths
+THOS: unhandled syscall 252 (further calls suppressed in release)
+wl-pointer surface=29 x=221 y=341 button=1
+wl-pointer surface=29 x=221 y=341 button=0
+console.error: (new Error("Error(s) encountered during statement execution: locking protocol", "resource://gre/modules/Sqlite.sys.mjs", 1193))
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: (new TypeError("can't access property \"executeTransaction\", conn is null", "resource://nimbus/lib/Enrollments.sys.mjs", 223))
+127.0.0.1:49199: url:/windows.exe
+127.0.0.1:49199: response:200
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: Region.sys.mjs: "Error fetching region" (new Error("TIMEOUT", "resource://gre/modules/Region.sys.mjs", 750))
+console.error: Region.sys.mjs: "Failed to fetch region" (new Error("TIMEOUT", "resource://gre/modules/Region.sys.mjs", 394))
+console.error: (new Error("Polling for changes failed: NetworkError: Network request failed.", "resource://services-settings/remote-settings.sys.mjs", 490))
+console.log: Downloads: Attempting to notify that a new download has started or finished.
+console.log: Downloads: Opening the downloads panel.
+console.log: Downloads: Attempting to initialize DownloadsPanel for a window.
+console.log: Downloads: Attaching DownloadsView...
+console.log: Downloads: DownloadsView attached - the panel for this window should now see download items come in.
+console.log: Downloads: DownloadsPanel initialized.
+console.log: Downloads: Waiting for the downloads panel to appear.
+console.log: Downloads: Attempting to notify that a new download has started or finished.
+console.log: Downloads: Opening the downloads panel.
+console.log: Downloads: Panel is already showing - focusing instead.
+console.log: Downloads: onDownloadBatchStarting called for DownloadsView.
+console.log: Downloads: A new download data item was added
+console.log: Downloads: Adding a new DownloadsViewItem to the downloads list. aNewest = true
+console.log: Downloads: _updateStateInner, target exists?  /tmp/Downloads/Firefox Tool.exe true
+console.log: Downloads: onDownloadBatchEnded called for DownloadsView.
+console.log: Downloads: The downloads item count has changed - we are tracking 1 downloads in total.
+console.log: Downloads: Setting the panel's hasdownloads attribute to true.
+console.log: Downloads: Opening downloads panel popup.
+console.log: Downloads: onDownloadBatchStarting called for DownloadsView.
+console.log: Downloads: onDownloadBatchEnded called for DownloadsView.
+console.log: Downloads: The downloads item count has changed - we are tracking 1 downloads in total.
+console.log: Downloads: Setting the panel's hasdownloads attribute to true.
+[Parent 19, Main Thread] WARNING: Could not find the icon 'unknown'. The 'hicolor' theme
+was not found either, perhaps you need to install it.
+You can get a copy from:
+	http://icon-theme.freedesktop.org/releases: 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+
+(firefox-esr:19): Gtk-[1;33mWARNING[0m **: [34m16:41:39.383[0m: Could not find the icon 'unknown'. The 'hicolor' theme
+was not found either, perhaps you need to install it.
+You can get a copy from:
+	http://icon-theme.freedesktop.org/releases
+console.log: Downloads: Downloads panel has shown.
+desk: wayland window 4 mapped 553x128
+panel tasks: Terminal*=613-725
+firefox-download-pe-bytes-ok
+wl-pointer surface=29 x=221 y=427 button=1
+panel tasks: Terminal*=613-725
+console.log: Downloads: Downloads panel has hidden.
+panel tasks: Terminal*=613-725
+console.error: "Failed to fetch and parse page data: [Exception... \"Only handling https\"  nsresult: \"0x804b0012 (NS_ERROR_UNKNOWN_PROTOCOL)\"  location: \"JS frame :: resource:///actors/LinkPreviewChild.sys.mjs :: fetchHTML :: line 47\"  data: no]"
+wl-pointer surface=29 x=221 y=427 button=0
+desk: wayland window 5 mapped 362x102
+panel tasks: Terminal*=613-725
+127.0.0.1:49234: url:/native
+127.0.0.1:49234: response:200
+console.log: Downloads: A new download data item was added
+console.log: Downloads: Adding a new DownloadsViewItem to the downloads list. aNewest = true
+console.log: Downloads: The downloads item count has changed - we are tracking 2 downloads in total.
+console.log: Downloads: Setting the panel's hasdownloads attribute to true.
+console.log: Downloads: Attempting to notify that a new download has started or finished.
+console.log: Downloads: Opening the downloads panel.
+console.log: Downloads: Attempting to initialize DownloadsPanel for a window.
+console.log: Downloads: DownloadsPanel is already initialized.
+console.log: Downloads: Waiting for the downloads panel to appear.
+console.log: Downloads: Opening downloads panel popup.
+console.log: Downloads: Downloads panel has shown.
+console.log: Downloads: Attempting to notify that a new download has started or finished.
+console.log: Downloads: Showing new download notification.
+console.log: Downloads: _updateStateInner, target exists?  /tmp/Downloads/busybox Linux true
+console.log: Downloads: Cant get mimeType from file extension:  
+firefox-download-elf-bytes-ok
+firefox-download-no-auto-exec
+desk: window 6 created 780x500 at 250,136
+files ready
+panel tasks: Terminal=568-680 Files*=680-770
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+desk: window 7 created 744x504 at 298,149
+term ready
+panel tasks: Terminal=512-624 Files=624-714 Terminal*=714-826
+term-line: BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) multi-call binary.
+term-line: BusyBox is copyrighted by many authors between 1998-2015.
+term-line: Licensed under GPLv2. See source distribution for detailed
+term-line: copyright notices.
+term-line: 
+term-line: Usage: busybox [function [arguments]...]
+term-line:    or: busybox --list[-full]
+term-line:    or: busybox --install [-s] [DIR]
+term-line:    or: function [arguments]...
+term-line: 
+term-line:         BusyBox is a multi-call binary that combines many common Unix
+term-line:         utilities into a single executable.  The shell in this build
+term-line:         is configured to run built-in utilities without $PATH search.
+term-line:         You don't need to install a link to busybox for each utility.
+term-line:         To run external program, use full path (/sbin/ip instead of ip).
+term-line: 
+term-line: Currently defined functions:
+term-line:         [, [[, acpid, adjtimex, ar, arch, arp, arping, ascii, ash, awk, base64,
+term-line:         basename, bc, blkdiscard, blockdev, brctl, bunzip2, busybox, bzcat,
+term-line:         bzip2, cal, cat, chgrp, chmod, chown, chroot, chvt, clear, cmp, cp,
+term-line:         cpio, crc32, crond, crontab, cttyhack, cut, date, dc, dd, deallocvt,
+term-line:         depmod, devmem, df, diff, dirname, dmesg, dnsdomainname, dos2unix,
+term-line:         dpkg, dpkg-deb, du, dumpkmap, dumpleases, echo, ed, egrep, env, expand,
+term-line:         expr, factor, fallocate, false, fatattr, fdisk, fgrep, find, findfs,
+term-line:         fold, free, freeramdisk, fsfreeze, fstrim, ftpget, ftpput, getfattr,
+term-line:         getopt, getty, grep, groups, gunzip, gzip, halt, head, hexdump, hostid,
+term-line:         hostname, httpd, hwclock, i2cdetect, i2cdump, i2cget, i2cset,
+term-line:         i2ctransfer, id, ifconfig, ifdown, ifup, init, insmod, install, ionice,
+term-line:         ip, ipcalc, kill, killall, klogd, last, less, link, linux32, linux64,
+term-line:         linuxrc, ln, loadfont, loadkmap, logger, login, logname, logread,
+term-line:         losetup, ls, lsmod, lsscsi, lzcat, lzma, lzop, md5sum, mdev, microcom,
+term-line:         mim, mkdir, mkdosfs, mke2fs, mkfifo, mknod, mkpasswd, mkswap, mktemp,
+term-line:         modinfo, modprobe, more, mount, mt, mv, nameif, nbd-client, nc,
+term-line:         netstat, nl, nologin, nproc, nsenter, nslookup, nuke, od, openvt,
+term-line:         partprobe, passwd, paste, patch, pidof, ping, ping6, pivot_root,
+term-line:         poweroff, printf, ps, pwd, rdate, readlink, realpath, reboot, renice,
+term-line:         reset, resume, rev, rm, rmdir, rmmod, route, rpm, rpm2cpio, run-init,
+term-line:         run-parts, sed, seq, setkeycodes, setpriv, setsid, sh, sha1sum,
+term-line:         sha256sum, sha3sum, sha512sum, shred, shuf, sleep, sort, ssl_client,
+term-line:         start-stop-daemon, stat, strings, stty, su, sulogin, svc, svok,
+term-line:         swapoff, swapon, switch_root, sync, sysctl, syslogd, tac, tail, tar,
+term-line:         taskset, tc, tee, telnet, telnetd, test, tftp, time, timeout, top,
+term-line:         touch, tr, traceroute, traceroute6, true, truncate, ts, tty, tunctl,
+term-line:         ubirename, udhcpc, udhcpc6, udhcpd, uevent, umount, uname, uncompress,
+term-line:         unexpand, uniq, unix2dos, unlink, unlzma, unshare, unxz, unzip, uptime,
+term-line:         usleep, uudecode, uuencode, vconfig, vi, w, watch, watchdog, wc, wget,
+term-line:         which, who, whoami, xargs, xxd, xz, xzcat, yes, zcat
+term-line: 
+term-line: [finished - press Enter to close]
+THOS: pid 604 killed by signal 1
+term done
+panel tasks: Terminal=568-680 Files*=680-770
+1792168920523	addons.xpi	ERROR	System addon update list error Error: Failed downloading XML, status: 0, channelStatus: 2152398878, errorCode: 2, reason: error
+desk: window 8 created 744x504 at 328,164
+term ready
+term-line: hello from win32 1 -
+term-line: 
+term-line: [finished - press Enter to close]
+panel tasks: Terminal=512-624 Files=624-714 Terminal*=714-826
+firefox-download-ui-opened
+console.log: "RemoteSettingsWorker error: UnknownError: IndexedDB:   The operation failed for reasons unrelated to the database itself and not covered by any other error code."
+console.error: services.settings: 
+  Message: RemoteSettingsWorkerError: UnknownError: IndexedDB:   The operation failed for reasons unrelated to the database itself and not covered by any other error code.
+  Stack:
+    RemoteSettingsWorkerError@resource://services-settings/RemoteSettingsWorker.sys.mjs:34:5
+_onWorkerMessage@resource://services-settings/RemoteSettingsWorker.sys.mjs:102:14
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+console.error: services.settings: 
+  Message: TypeError: NetworkError: Network request failed
+  Stack:
+    fetch/</request.onerror@resource://services-settings/Utils.sys.mjs:257:26
+
+THOS: pid 10 killed by signal 15
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 6 window(s) at exit
+THOS: pid 15 killed by signal 1
+files done
+THOS trap: #PF page fault [user] rip=0x70031c20a960 cr2=0x0 err=0x6
+THOS trap: #PF page fault [user] rip=0x70031c20a960 cr2=0x0 err=0x6
+THOS: pid 220 killed by signal 11
+THOS: pid 300 killed by signal 11
+THOS trap: #PF page fault [user] rip=0x70031c20a960 cr2=0x0 err=0x6
+THOS trap: #PF page fault [user] rip=0x70031c20a960 cr2=0x0 err=0x6
+THOS: pid 332 killed by signal 11
+term done
+THOS: pid 258 killed by signal 11
+THOS: pid 615 killed by signal 1
+term done
+[Child 624, Main Thread] WARNING: cannot open display: : 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+
+(/usr/lib/firefox-esr/firefox-esr:624): Gtk-[1;33mWARNING[0m **: [34m16:42:12.254[0m: cannot open display: 
+[Parent 19, IPC I/O Parent] WARNING: process 220 exited on signal 11: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:161
+[Parent 19, IPC I/O Parent] WARNING: process 300 exited on signal 11: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:161
+[Parent 19, IPC I/O Parent] WARNING: process 332 exited on signal 11: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:161
+Crash Annotation GraphicsCriticalError: |[0][GFX1-]: Wayland compositor unavailable (), proxy: WP:E WP:CA WP:CR WP:CPCA WP:CPCF  - scheduling graceful shutdown (t=131.864) [GFX1-]: Wayland compositor unavailable (), proxy: WP:E WP:CA WP:CR WP:CPCA WP:CPCF  - scheduling graceful shutdown
+[Parent 19, IPC I/O Parent] WARNING: process 258 exited on signal 11: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:161
+firefox-downloads-done
+thos$ console.error: AboutHomeStartupCache: "requestCache called with no _procManager!"
+console.error: "Error in processing browser-idle-startup for QuickSuggest.init"
+console.error: (void 0)
+console.error: (void 0)
+console.error: NimbusMigrations: 
+  applyMigrations: error running migration 2 (import-enrollments-to-sql): undefined

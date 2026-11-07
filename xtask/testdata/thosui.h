@@ -9,6 +9,7 @@
 #include "thosmotion.h"
 #include <stdint.h>
 #include <stdio.h>
+#include "thoswl.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -184,20 +185,41 @@ static inline unsigned ui_cov(int px, int py, int x, int y, int w, int h, int r)
 }
 /* a rounded rectangle, filled with a vertical gradient c0 -> c1 whose opacity also runs from a0 (top) to a1 (bottom), 0..255 */
 static void ui_rrect_ga(uint32_t *buf, int bw, int bh, int x, int y, int w, int h, int r, uint32_t c0, uint32_t c1, unsigned a0, unsigned a1) {
+    if (w <= 0 || h <= 0) return;
     if (r * 2 > w) r = w / 2;
     if (r * 2 > h) r = h / 2;
+    int left = x > 0 ? x : 0, right = x + w < bw ? x + w : bw;
+    if (left < ui_clip[0]) left = ui_clip[0];
+    if (right > ui_clip[2]) right = ui_clip[2];
+    if (left >= right) return;
     for (int j = 0; j < h; j++) {
         int py = y + j;
         if (py < 0 || py >= bh || py < ui_clip[1] || py >= ui_clip[3]) continue;
         unsigned t = h > 1 ? (unsigned)(j * 255 / (h - 1)) : 0;
         uint32_t col = ui_mix(c0, c1, t);
         unsigned alpha = (unsigned)((int)a0 + ((int)a1 - (int)a0) * (int)t / 255);
-        for (int i = 0; i < w; i++) {
-            int px = x + i;
-            if (px < 0 || px >= bw || px < ui_clip[0] || px >= ui_clip[2]) continue;
-            unsigned a = (r > 0 && ((i < r || i >= w - r) && (j < r || j >= h - r))) ? ui_cov(px, py, x, y, w, h, r) : 255;
+        if (!alpha) continue;
+        uint32_t *row = buf + (size_t)py * bw;
+        /* Only corner pixels need coverage. Keep the original blend arithmetic
+           there; the opaque centre is a plain fill with exactly the same pixels. */
+        int corner = r > 0 && (j < r || j >= h - r);
+        int mid0 = corner && left < x + r ? x + r : left;
+        int mid1 = corner && right > x + w - r ? x + w - r : right;
+        if (mid0 > right) mid0 = right;
+        if (mid1 < mid0) mid1 = mid0;
+        for (int px = left; px < mid0; px++) {
+            unsigned a = ui_cov(px, py, x, y, w, h, r) * alpha / 255;
+            if (a) row[px] = ui_mix(row[px], col, a);
+        }
+        if (alpha == 255) {
+            for (int px = mid0; px < mid1; px++) row[px] = col & 0x00ffffffu;
+        } else {
+            for (int px = mid0; px < mid1; px++) row[px] = ui_mix(row[px], col, alpha);
+        }
+        for (int px = mid1; px < right; px++) {
+            unsigned a = ui_cov(px, py, x, y, w, h, r);
             a = a * alpha / 255;
-            if (a) buf[(size_t)py * bw + px] = ui_mix(buf[(size_t)py * bw + px], col, a);
+            if (a) row[px] = ui_mix(row[px], col, a);
         }
     }
 }
@@ -217,7 +239,7 @@ static void ui_disc(uint32_t *buf, int bw, int bh, int cx, int cy, int rad, uint
 
 /* the glyph and tile colour a program gets on the desktop, in the Start menu and the software centre */
 static uint32_t ui_app_glyph(const char *label) {
-    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Settings", IC_COG }, { "Install", IC_DOWNLOAD }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
+    static const struct { const char *k; uint32_t g; } m[] = { { "Terminal", IC_TERMINAL }, { "Files", IC_FOLDER }, { "Software", IC_DOWNLOAD }, { "Downloads", IC_DOWNLOAD }, { "Settings", IC_COG }, { "Install", IC_DOWNLOAD }, { "Text", IC_EDIT }, { "Foot", IC_TERMINAL },
         { "Win32", IC_WIN }, { "System", IC_INFO }, { "Web", 0xf0ac }, { "Image", IC_IMAGE }, { "GTK", IC_PUZZLE }, { "Pkg", IC_BOX } };
     for (unsigned i = 0; i < sizeof m / sizeof m[0]; i++) if (!strncasecmp(label, m[i].k, strlen(m[i].k))) return m[i].g;
     return IC_PUZZLE;
@@ -327,7 +349,25 @@ static void ui_cursor(int sock, int kind) {
     uint32_t m[5] = { 14, (uint32_t)kind, 0, 0, 0 };
     (void)!write(sock, m, sizeof m);
 }
+/* Read one desktop message. Pointer motion is coalesced: when more messages are already queued and the next one is motion too, only the
+   newest position is returned (a client that redraws on every motion message falls behind on a slow machine otherwise). A message that is
+   not motion is kept for the next call. Drop-in for read(sock, &m, sizeof m). */
+static struct wl_msg ui_held; static int ui_have_held;
+static ssize_t ui_read(int sock, struct wl_msg *m) {
+    if (ui_have_held) { *m = ui_held; ui_have_held = 0; return (ssize_t)sizeof *m; }
+    ssize_t n = read(sock, m, sizeof *m);
+    if (n != (ssize_t)sizeof *m || m->op != 5 || m->c != 0) return n;           /* WL_POINTER, c = 0: motion */
+    for (int i = 0; i < 200; i++) {
+        struct pollfd p = { sock, POLLIN, 0 };
+        if (poll(&p, 1, 0) <= 0 || !(p.revents & POLLIN)) break;
+        struct wl_msg nx;
+        if (read(sock, &nx, sizeof nx) != (ssize_t)sizeof nx) break;
+        if (nx.op == 5 && nx.c == 0) *m = nx; else { ui_held = nx; ui_have_held = 1; break; }
+    }
+    return n;
+}
 static int ui_wait(int sock, int animating) {
+    if (ui_have_held) return 1;
     struct pollfd p = { sock, POLLIN, 0 };
     return poll(&p, 1, animating ? MO_FRAME_MS : -1);
 }

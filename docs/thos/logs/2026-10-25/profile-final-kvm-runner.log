@@ -1,0 +1,53 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2009:17
+     |
+2009 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.13s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winprofile-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (3.0% non-contiguous), 103844/524288 blocks
+winprofile-start
+winprofile-ok initial-real-file
+winprofile-ok actual-write
+winprofile-ok reopened-real-bytes-and-preservation
+winprofile-ok case-insensitive-update
+winprofile-ok actual-key-delete
+winprofile-ok actual-section-delete
+winprofile-ok actual-new-section
+winprofile-ok documented-flush-false-without-cache
+winprofile-ok ansi-unmappable-fails-before-replace
+winprofile-ok newline-input-refused-without-replace
+winprofile-ok seed-actual-unicode-file
+winprofile-ok actual-unicode-preserved
+winprofile-ok unicode-bom-and-code-units-on-disk
+winprofile-ok seed-malformed-unicode
+winprofile-ok malformed-unicode-not-rewritten
+winprofile-ok missing-parent-real-error
+winprofile-ok unsupported-parent-traversal
+winprofile-ok actual-symlink-created
+winprofile-ok observed-final-symlink-refused
+winprofile-ok eight-concurrent-real-writers
+winprofile-ok parallel-file-reopen
+winprofile-ok all-eight-updates-survive
+winprofile-ok two-real-child-process-writers
+winprofile-ok cross-process-file-reopen
+winprofile-ok both-child-updates-survive
+winprofile-ok set-real-readonly-mode
+winprofile-ok readonly-file-real-error
+winprofile-ok restore-own-file-mode
+winprofile-result=PASS
+winprofile-done

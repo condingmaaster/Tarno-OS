@@ -1,0 +1,109 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800c94f5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       3993 MiB in 1021839 frames
+THOS: largest region   2968 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   1021839 -> 1021838 -> 1021839 (phys 0x13ffff000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62772 counts/ms
+THOS: clock            TSC 2461 MHz; RTC 1792093258 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    7 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 512 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 2 online     lapic 3
+THOS: AP 1 online     lapic 2
+THOS: AP 3 online     lapic 1
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          virtio-net 52:54:00:12:34:56
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: THOS: net dhcp         lease 10.0.2.15/24 via - dns []
+THOS: net dhcp         no lease/router yet; waiting without a fabricated address
+thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /firefox-downloads.sh
+desk: ready 1280x800
+desk: window 1 created 1280x64 at 0,0
+panel ready
+desk: window 2 created 744x504 at 208,104
+term ready
+THOS: unhandled syscall 435 (further calls suppressed in release)
+THOS: unhandled syscall 187 (further calls suppressed in release)
+panel tasks: Terminal*=613-725
+Mozilla Firefox 153.4.0esr
+THOS: unhandled syscall 140 (further calls suppressed in release)
+[Parent 19, Main Thread] WARNING: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+: 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+
+** (firefox-esr:19): [1;33mWARNING[0m **: [34m19:42:32.244[0m: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+
+desk: wayland window 3 mapped 1256x824
+panel tasks: Terminal*=613-725
+panel tasks: Terminal*=613-725
+THOS: unhandled syscall 73 (further calls suppressed in release)
+
+thread 'main' (491) panicked at toolkit/crashreporter/client/app/src/send_ping.rs:59:6:
+failed to acquire Glean store: Os { code: 38, kind: Unsupported, message: "Function not implemented" }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+THOS: pid 491 killed by signal 6
+THOS: unhandled syscall 252 (further calls suppressed in release)
+THOS trap: #PF page fault [user] rip=0x700513c37ec3 cr2=0x700539a4b620 err=0x6
+THOS: pid 547 killed by signal 11
+THOS trap: #PF page fault [user] rip=0x70052a943afa cr2=0x0 err=0x6
+THOS: pid 150 killed by signal 11
+[Parent 19, IPC I/O Parent] WARNING: Failed to launch tab subprocess @FSC::SFNS::Recv (Error:0): file ipc/glue/GeckoChildProcessHost.cpp:823
+[Parent 19, IPC I/O Parent] WARNING: waiting for process 547 failed with error 104: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Parent 19, IPC I/O Parent] WARNING: waiting for process 150 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174

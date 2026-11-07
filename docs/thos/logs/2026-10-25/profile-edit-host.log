@@ -1,0 +1,1 @@
+INI editor HOST foundation: create/update/delete section/key, comments/unrelated bytes, CRLF/LF/no-final-newline, UTF16, exact buffers, duplicate-first policy and100000 generated inputs UBSan PASS; no file persistence/API export

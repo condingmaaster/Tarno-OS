@@ -1,0 +1,11 @@
+
+running 6 tests
+test tests::absolute_and_malformed_are_not_guessed ... ok
+test tests::report_id_is_checked ... ok
+test tests::standard_wheel_and_signed_motion ... ok
+test tests::wide_axes_and_unaligned_signed_fields ... ok
+test tests::wide_descriptor_keeps_report_id_and_axis_boundaries ... ok
+test tests::bounded_random_descriptors_never_panic ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+

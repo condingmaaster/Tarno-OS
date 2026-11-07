@@ -16,26 +16,29 @@
 #include <sys/wait.h>
 #include <unistd.h>
 #include "thoswl.h"
+#include "thosresize.h"
 #include "thosgfx.h"
 #include "thosui.h"
 #include "thosmotion.h"
 
-#define COLS 80
-#define ROWS 24
+static int COLS=80;
+static int ROWS=24;
 #define FSIZE 15                                  /* the monospace font's pixel size */
 #define CW 9                                      /* cell size in pixels (Hack at 15 px: advance 9) */
 #define CH 20
 #define PAD 12
-#define PW (COLS * CW + 2 * PAD)
-#define PH (ROWS * CH + 2 * PAD)
+static int PW=744;
+static int PH=504;
 
 #define TERM_BG 0x11141cu
 #define TERM_FG 0xd5d9e6u
 static const uint32_t pal[16] = { 0x11141c, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xd5d9e6,
                                   0x414868, 0xff9ab0, 0xb9f27c, 0xffc777, 0x9db8ff, 0xd0b4ff, 0xa4e4ff, 0xf3f6ff };
 struct cell { unsigned char ch, fg, bg, inv; };
-static struct cell grid[ROWS][COLS];
-static int cx, cy, cur_fg = 7, cur_bg = 0, cur_inv, dirty0 = ROWS, dirty1 = -1, logging;
+static struct cell *grid;
+#define CELL(r,c) grid[(r)*COLS+(c)]
+static struct thos_resize resize;
+static int cx, cy, cur_fg = 7, cur_bg = 0, cur_inv, dirty0 = 24, dirty1 = -1, logging;
 static uint32_t *px;
 static int sock, master;
 static pid_t child;
@@ -64,7 +67,7 @@ static int put_utf8(char *o, unsigned cp) {
 static void log_row(int r) {
     if (!logging) return;
     char b[COLS * 3 + 1]; int n = 0;
-    for (int i = 0; i < COLS; i++) n += put_utf8(b + n, latin15_to_cp(grid[r][i].ch));
+    for (int i = 0; i < COLS; i++) n += put_utf8(b + n, latin15_to_cp(CELL(r,i).ch));
     while (n > 0 && b[n - 1] == ' ') n--;
     b[n] = 0;
     printf("term-line: %s\n", b);
@@ -73,19 +76,19 @@ static void log_row(int r) {
 
 static void scroll_up(void) {
     log_row(0);
-    memmove(grid[0], grid[1], sizeof grid[0] * (ROWS - 1));
-    for (int i = 0; i < COLS; i++) grid[ROWS - 1][i] = blank();
+    memmove(grid,grid+COLS,sizeof *grid*COLS*(ROWS-1));
+    for (int i = 0; i < COLS; i++) CELL(ROWS - 1,i) = blank();
     mark(0); mark(ROWS - 1);
 }
 static void newline(void) {
     log_row(cy);
     if (cy == ROWS - 1) { int l = logging; logging = 0; scroll_up(); logging = l; } else cy++;
 }
-static void clear_range(int r, int c0, int c1) { for (int c = c0; c < c1; c++) grid[r][c] = blank(); mark(r); }
+static void clear_range(int r, int c0, int c1) { for (int c = c0; c < c1; c++) CELL(r,c) = blank(); mark(r); }
 
 static void put(unsigned char c) {
     if (cx >= COLS) { cx = 0; newline(); }
-    grid[cy][cx++] = (struct cell){ c, (unsigned char)cur_fg, (unsigned char)cur_bg, (unsigned char)cur_inv };
+    CELL(cy,cx++) = (struct cell){ c, (unsigned char)cur_fg, (unsigned char)cur_bg, (unsigned char)cur_inv };
     mark(cy);
 }
 
@@ -110,11 +113,11 @@ static void csi(unsigned char f) {
         if (a == 0) clear_range(cy, cx, COLS); else if (a == 1) clear_range(cy, 0, cx + 1); else clear_range(cy, 0, COLS);
         break;
     case 'P': { int n = a ? a : 1; if (n > COLS - cx) n = COLS - cx;
-        memmove(&grid[cy][cx], &grid[cy][cx + n], sizeof(struct cell) * (COLS - cx - n)); clear_range(cy, COLS - n, COLS); break; }
+        memmove(&CELL(cy,cx), &CELL(cy,cx + n), sizeof(struct cell) * (COLS - cx - n)); clear_range(cy, COLS - n, COLS); break; }
     case '@': { int n = a ? a : 1; if (n > COLS - cx) n = COLS - cx;
-        memmove(&grid[cy][cx + n], &grid[cy][cx], sizeof(struct cell) * (COLS - cx - n)); clear_range(cy, cx, cx + n); break; }
-    case 'L': { int n = a ? a : 1; for (; n > 0; n--) { memmove(grid[cy + 1], grid[cy], sizeof grid[0] * (ROWS - cy - 1)); clear_range(cy, 0, COLS); } for (int r = cy; r < ROWS; r++) mark(r); break; }
-    case 'M': { int n = a ? a : 1; for (; n > 0; n--) { memmove(grid[cy], grid[cy + 1], sizeof grid[0] * (ROWS - cy - 1)); clear_range(ROWS - 1, 0, COLS); } for (int r = cy; r < ROWS; r++) mark(r); break; }
+        memmove(&CELL(cy,cx + n), &CELL(cy,cx), sizeof(struct cell) * (COLS - cx - n)); clear_range(cy, cx, cx + n); break; }
+    case 'L': { int n = a ? a : 1; for (; n > 0; n--) { memmove(grid+(cy+1)*COLS,grid+cy*COLS,sizeof *grid*COLS*(ROWS-cy-1)); clear_range(cy, 0, COLS); } for (int r = cy; r < ROWS; r++) mark(r); break; }
+    case 'M': { int n = a ? a : 1; for (; n > 0; n--) { memmove(grid+cy*COLS,grid+(cy+1)*COLS,sizeof *grid*COLS*(ROWS-cy-1)); clear_range(ROWS - 1, 0, COLS); } for (int r = cy; r < ROWS; r++) mark(r); break; }
     case 'm':
         if (npar == 0) { cur_fg = 7; cur_bg = 0; cur_inv = 0; }
         for (int i = 0; i < npar; i++) {
@@ -172,7 +175,7 @@ static void render(void) {
     if (dirty1 < 0) return;
     for (int r = dirty0; r <= dirty1; r++)
         for (int c = 0; c < COLS; c++) {
-            struct cell *k = &grid[r][c];
+            struct cell *k = &CELL(r,c);
             int fg = k->fg, bg = k->bg, inv = k->inv;
             uint32_t fc = pal[fg], bc = bg == 0 ? TERM_BG : pal[bg];
             if (fg == 7) fc = TERM_FG;
@@ -192,6 +195,23 @@ static void render(void) {
     struct wl_msg m = { WL_COMMIT, 0, (uint32_t)(PAD + dirty0 * CH), PW, (uint32_t)((dirty1 - dirty0 + 1) * CH) };
     (void)!write(sock, &m, sizeof m);
     dirty0 = ROWS; dirty1 = -1;
+}
+
+static int resize_cells(void) {
+    int cols=(PW-2*PAD)/CW,rows=(PH-2*PAD)/CH;
+    if(cols<1||rows<1||cols>1024||rows>512) return 0;
+    struct cell *next=malloc((size_t)rows*cols*sizeof *next);
+    if(!next) return 0;
+    for(int i=0;i<rows*cols;i++) next[i]=blank();
+    int shift=cy>=rows?cy-rows+1:0;
+    int keep=COLS<cols?COLS:cols;
+    for(int r=0;r<rows&&r+shift<ROWS;r++) memcpy(next+r*cols,grid+(r+shift)*COLS,(size_t)keep*sizeof *grid);
+    free(grid);grid=next;COLS=cols;ROWS=rows;
+    cy-=shift;if(cy<0)cy=0;if(cx>=COLS)cx=COLS-1;
+    last_cy=cy;first_paint=1;dirty0=0;dirty1=ROWS-1;
+    unsigned short ws[4]={ROWS,COLS,PW,PH};ioctl(master,0x5414,ws);
+    printf("term resized: %dx%d cells\n",COLS,ROWS);fflush(stdout);
+    return 1;
 }
 
 static void key(struct wl_msg *m) {
@@ -220,18 +240,21 @@ int main(int argc, char **argv) {
     const char *run = 0;                              /* `-c command`: run it (then wait for Enter) instead of a shell */
     for (int i = 1; i + 1 < argc; i++) if (!strcmp(argv[i], "-c")) run = argv[i + 1];
     if (gfx_load_font() != 0 || ui_init() != 0) { puts("term FAIL: font"); return 1; }
+    grid=malloc((size_t)ROWS*COLS*sizeof *grid);
+    if(!grid) return 1;
     int ky = 0x5000 + getpid();
     int id = shmget(ky, PW * PH * 4, IPC_CREAT | 0600);
     px = id >= 0 ? shmat(id, 0, 0) : (void *)-1;
     if (px == (void *)-1) { puts("term FAIL: shm"); return 1; }
-    for (int r = 0; r < ROWS; r++) for (int c = 0; c < COLS; c++) grid[r][c] = blank();
+    for (int r = 0; r < ROWS; r++) for (int c = 0; c < COLS; c++) CELL(r,c) = blank();
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
     struct sockaddr_un a = { .sun_family = AF_UNIX };
     memcpy(a.sun_path, WL_SOCK_NAME, WL_SOCK_LEN);
     if (connect(sock, (void *)&a, 2 + WL_SOCK_LEN) != 0) { puts("term FAIL: connect"); return 1; }
-    struct wl_msg m = { WL_CREATE, PW, PH, (uint32_t)ky, 0 };
+    struct wl_msg m = { WL_CREATE, PW, PH, (uint32_t)ky, WL_RESIZABLE };
     (void)!write(sock, &m, sizeof m);
     if (read(sock, &m, sizeof m) != (ssize_t)sizeof m || m.op != WL_CREATED) { puts("term FAIL: no CREATED"); return 1; }
+    thos_resize_limits(sock,294,184);
     ui_cursor(sock, 1);
     shmctl(id, IPC_RMID, 0);      /* the compositor has attached: the segment lives until both sides unmap it */
     struct wl_msg t = { WL_TITLE, 0, 0, 0, 0 };
@@ -254,8 +277,10 @@ int main(int argc, char **argv) {
         if (s > 2) close(s);
         close(master); close(sock);
         setenv("TERM", "linux", 1);
+        setenv("PS1", "\n\033[1;94mthos$\033[0m ", 1);
         if (run) {
-            char line[1024];
+            char line[8192];
+            if(strlen(run)>sizeof line-100) {fputs("Command is too long.\n",stderr);_exit(2);}
             snprintf(line, sizeof line, "%s; echo; echo '[finished - press Enter to close]'; read x", run);
             execl("/busybox", "sh", "-c", line, (char *)0);
         }
@@ -289,6 +314,11 @@ int main(int argc, char **argv) {
         if (pr > 0 && (p[0].revents & (POLLIN | POLLHUP))) {
             if (read(sock, &m, sizeof m) != (ssize_t)sizeof m) break;
             if (m.op == WL_CLOSE) break;
+            int resized=thos_resize_event(sock,&m,&resize,&px,&PW,&PH);
+            if(resized) {
+                if(resized==2) {if(!resize_cells()) break;render();thos_resize_continue(sock,&resize);}
+                continue;
+            }
             if (m.op == WL_KEY) { key(&m); typed = 1; }
         }
         if (typed) { cur_on = 1; phase_t = now; tween_start(&cur_tw, cur_alpha, 1, 60); }       /* activity: the cursor is solid */
@@ -298,6 +328,7 @@ int main(int argc, char **argv) {
     }
     kill(child, SIGHUP);
     waitpid(child, 0, 0);
+    thos_resize_dispose(&resize);free(grid);
     printf("term done\n");
     return 0;
 }

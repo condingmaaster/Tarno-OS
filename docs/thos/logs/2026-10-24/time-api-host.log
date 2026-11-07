@@ -1,0 +1,1 @@
+time API host UBSan: actual bridge, all low flags, 1024-unit boundary, NULL-provider mocked explicitly, capacities PASS; no real clock claim

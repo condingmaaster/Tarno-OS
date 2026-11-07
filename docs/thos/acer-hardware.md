@@ -9,10 +9,10 @@ Die Maschine lief mit Linux (KDE Plasma); Angaben aus `lspci -nnk`, `lsusb`, `ls
 | Chipsatz | Intel HM55 (5 Series / 3400) | 8086:3b09 | — | — |
 | Firmware | **BIOS**, kein UEFI | — | — | BIOS/MBR-Image vorhanden |
 | Platte | SSD/HDD 223,6 GiB an AHCI | 8086:3b29 | ahci | AHCI-Treiber (NCQ) |
-| **Ethernet** | **Broadcom NetLink BCM57780** | **14e4:1692** | tg3 | **kein Treiber** (nicht Atheros!) |
-| WLAN | Broadcom BCM43225 (b/g/n) | 14e4:4357 | bcma/brcmsmac | kein Treiber (braucht Firmware) |
-| Grafik | AMD Mobility Radeon HD 5470 "Park" (Evergreen/Cedar) | 1002:68e0 | radeon | nur VBE-Framebuffer |
-| USB | 2× Intel EHCI (USB 2.0), **kein xHCI** | 8086:3b3c, 8086:3b34 | ehci-pci | nur xHCI-Treiber → **EHCI fehlt** |
+| **Ethernet** | **Broadcom NetLink BCM57780** | **14e4:1692** | tg3 | Treiber vorhanden, Acer-Test offen |
+| WLAN | Broadcom BCM43225 (b/g/n) | 14e4:4357 | bcma/brcmsmac | PCI-/BCMA-Diagnose; Verbindung fehlt |
+| Grafik | AMD Mobility Radeon HD 5470 "Park" (Evergreen/Cedar) | 1002:68e0 | radeon | Boot-Framebuffer und GPU-Diagnose; Beschleunigung fehlt |
+| USB | 2× Intel EHCI (USB 2.0), **kein xHCI** | 8086:3b3c, 8086:3b34 | ehci-pci | EHCI vorhanden; interner Hub am Acer ungetestet |
 | Eingabe | PS/2-Tastatur, Synaptics-Touchpad (PS/2) | — | atkbd, psmouse | läuft (Tastatur, Maus als Standard-PS/2) |
 | Sonstiges | Webcam (ALi 0402:9665, USB), HD-Audio (Intel 8086:3b56 + HDMI), SMBus, MEI | — | — | — |
 
@@ -20,7 +20,7 @@ Folgen für die Planung:
 - Der Netzwerktreiber muss ein **Broadcom tg3 (BCM57780)** werden, nicht Atheros. Das ist ein Gigabit-Chip mit eigener Ring-/Statusblock-Logik (Familie BCM5717/57780); größer als der e1000-Treiber.
 - USB-Tastatur/-Maus/-Stick am Acer laufen über **EHCI** (zwei Controller mit je einem Root-Hub und internem Rate-Matching-Hub). Ohne EHCI keine externe USB-Hardware.
 - Grafik: Evergreen-Chip (Radeon HD 5000er), Beschleunigung wäre ein eigenes Projekt; bis dahin Software-Rendering auf dem Framebuffer.
-- WLAN (Broadcom, Firmware nötig) ist die letzte Stufe; Ethernet zuerst.
+- Seit dem Nutzerauftrag vom 11. Oktober hat WLAN Priorität; Grafik wird direkt mitbearbeitet. Ethernet bleibt unabhängiger Testpfad.
 
 ## EHCI-Treiber (kernel/src/ehci.rs, 2026-10-04)
 BIOS-Übergabe, Reset, Port-Reset, Steuerübertragungen über den asynchronen Zeitplan, Enumeration, HID-Boot-Tastatur per GET_REPORT-Abfrage.

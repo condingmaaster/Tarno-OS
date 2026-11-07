@@ -1,0 +1,12 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1858:17
+     |
+1858 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask desk-tasklist-test`
+desk-tasklist-test PASSED: the panel lists the open windows, marks the focused one, and a click on a button raises that window

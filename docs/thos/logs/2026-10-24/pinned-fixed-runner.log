@@ -1,0 +1,71 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1969:17
+     |
+1969 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask windyn-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1116
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1117
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1118
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1119
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1120
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1120/32768 files (2.9% non-contiguous), 103867/524288 blocks
+windyn-start
+windyn-ok not-statically-imported
+windyn-ok load-new-file
+windyn-ok real-code-and-relocated-data
+windyn-ok discoverable
+windyn-ok full-module-handle
+windyn-ok wrong-path-same-basename-rejected
+windyn-ok executable-name-handle
+windyn-ok full-path
+windyn-ok repeat-reference
+windyn-ok release-one-reference
+windyn-ok parallel-load-call-release
+windyn-ok full-path-distinguishes-same-basename
+windyn-ok unload-other
+windyn-ok unload-last-reference
+windyn-ok stale-export-handle-rejected
+windyn-ok double-free-rejected
+windyn-ok reload-fresh-image
+windyn-ok release-reload
+windyn-ok unicode-file-load-and-handle
+windyn-ok unicode-unload
+windyn-ok ansi-1252-file-load-and-handle
+windyn-ok ansi-unload
+windyn-ok two-hundred-fresh-load-unload-cycles
+windyn-ok unsupported-flags-not-ignored
+windyn-ok file-handle-not-ignored
+windyn-ok missing-file
+windyn-ok dllmain-explicitly-unsupported
+windyn-ok already-pinned-import-called
+windyn-ok unload-pinned-import-leaf
+windyn-ok new-dependency-explicitly-unavailable
+windyn-ok bad-export-rejected
+windyn-ok pinned-system-module
+windyn-result=PASS
+windyn-done
