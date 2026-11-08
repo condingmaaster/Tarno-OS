@@ -421,6 +421,26 @@ fn poll_once() -> String {
     out
 }
 
+/// Closing the lid turns the backlight off, opening it brings the old level back (the machine keeps running: no suspend yet).
+fn lid_follow(text: &str) {
+    static CLOSED: AtomicBool = AtomicBool::new(false);
+    static SAVED: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(100);
+    let closed = text.lines().any(|l| l.trim() == "lid: closed");
+    if closed == CLOSED.swap(closed, Ordering::AcqRel) {
+        return;
+    }
+    if closed {
+        if let Some(p) = backlight_get() {
+            SAVED.store(p, Ordering::Relaxed);
+        }
+        backlight_set(0);
+        crate::kprintln!("THOS: lid              closed: screen off");
+    } else {
+        backlight_set(SAVED.load(Ordering::Relaxed));
+        crate::kprintln!("THOS: lid              open: screen on");
+    }
+}
+
 /// PM1a event block (status register; the enable register follows) from the FADT, 0 if unknown.
 fn pm1a_event_block() -> u16 {
     let rsdp = RSDP.load(Ordering::Acquire) as *const u8;
@@ -450,6 +470,7 @@ pub fn run(rsdp: *const u8, revision: u8) -> ! {
                         crate::kprintln!("THOS: sensors          {l}");
                     }
                 }
+                lid_follow(&text);
                 *SNAPSHOT.lock() = text;
             }
             tick = tick.wrapping_add(1);
@@ -468,6 +489,7 @@ pub fn run(rsdp: *const u8, revision: u8) -> ! {
             if ev >= 0 {
                 crate::kprintln!("THOS: embedded ctl     event _Q{:02X} handled", ev);
                 let text = poll_once();
+                lid_follow(&text);
                 *SNAPSHOT.lock() = text;
             }
             crate::timer::sleep_until(crate::timer::deadline_after_ns(100_000_000));
