@@ -25,6 +25,7 @@ extern "C" {
     fn thos_acpi_eval_int_arg(path: *const c_char, has_arg: c_int, arg: u64, out: *mut u64) -> c_int;
     fn thos_acpi_eval_pkg(path: *const c_char, out: *mut u64, max: c_int, s: *mut c_char, slen: c_int, sidx: c_int) -> c_int;
     fn thos_acpi_find(pnp: *const c_char, ty: c_int, nth: c_int, out: *mut c_char, outlen: c_int) -> c_int;
+    fn thos_acpi_find_owner(name: *const c_char, nth: c_int, out: *mut c_char, outlen: c_int) -> c_int;
     fn thos_acpi_dump(line: extern "C" fn(*const c_char)) -> c_int;
 }
 
@@ -117,8 +118,18 @@ extern "C" fn laihost_scan(sig: *const c_char, index: usize) -> *mut c_void {
         crate::acpi::find_table_nth(rsdp, &sig4, index).map_or(core::ptr::null_mut(), |(p, _)| p as *mut c_void)
     }
 }
+/// 2 MiB windows already mapped for AML (SystemMemory operation regions reach chipset registers, MMCONFIG, ...); the HHDM covers only RAM.
+static MAPPED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 #[no_mangle]
-extern "C" fn laihost_map(phys: usize, _len: usize) -> *mut c_void {
+extern "C" fn laihost_map(phys: usize, len: usize) -> *mut c_void {
+    let (a, b) = (phys as u64 >> 21, (phys as u64 + len.max(1) as u64 - 1) >> 21);
+    let mut seen = MAPPED.lock();
+    for w in a..=b {
+        if !seen.contains(&w) {
+            crate::vmm::map_mmio(w << 21, 1 << 21);
+            seen.push(w);
+        }
+    }
     (phys as u64 + hhdm_offset()) as *mut c_void
 }
 #[no_mangle]
@@ -264,6 +275,18 @@ pub fn find_node(ty: i32, nth: usize) -> Option<String> {
     (rc == 0).then(|| unsafe { CStr::from_ptr(out.as_ptr()) }.to_str().unwrap_or("").into())
 }
 
+/// Path of the object that owns the `nth` method called `name` (4 characters, e.g. `_BCM`).
+pub fn find_owner(name: &str, nth: usize) -> Option<String> {
+    if !ready() {
+        return None;
+    }
+    let p = cstr(name);
+    let _g = LOCK.lock();
+    let mut out = [0 as c_char; 96];
+    let rc = unsafe { thos_acpi_find_owner(p.as_ptr() as *const c_char, nth as c_int, out.as_mut_ptr(), 96) };
+    (rc == 0).then(|| unsafe { CStr::from_ptr(out.as_ptr()) }.to_str().unwrap_or("").into())
+}
+
 extern "C" fn dump_line(s: *const c_char) {
     let s = unsafe { CStr::from_ptr(s) }.to_str().unwrap_or("?");
     crate::kprintln!("THOS: acpi             {}", s);
@@ -341,6 +364,28 @@ fn battery_lines(out: &mut String, idx: usize, path: &str) {
     }
 }
 
+/// Core temperature from the digital thermal sensor (IA32_THERM_STATUS, TjMax from MSR_TEMPERATURE_TARGET): only on Intel family 6 from
+/// Nehalem on that reports the sensor in CPUID.06H, so no unsupported MSR is ever touched. `None` where it does not apply (QEMU).
+fn cpu_temp() -> Option<i32> {
+    use core::arch::x86_64::__cpuid;
+    let v = __cpuid(0);
+    if (v.ebx, v.edx, v.ecx) != (0x756e_6547, 0x4965_6e69, 0x6c65_746e) || v.eax < 6 {
+        return None;
+    }
+    let f = __cpuid(1).eax;
+    let (fam, model) = ((f >> 8) & 0xF, ((f >> 4) & 0xF) | ((f >> 12) & 0xF0));
+    if fam != 6 || model < 0x1A || __cpuid(6).eax & 1 == 0 {
+        return None;
+    }
+    use x86_64::registers::model_specific::Msr;
+    let (target, status) = unsafe { (Msr::new(0x1A2).read(), Msr::new(0x19C).read()) };
+    if status & (1 << 31) == 0 {
+        return None;
+    }
+    let tj = ((target >> 16) & 0xFF) as i32;
+    Some(if tj == 0 { 100 } else { tj } - ((status >> 16) & 0x7F) as i32)
+}
+
 /// Read every sensor the firmware describes once.
 fn poll_once() -> String {
     use core::fmt::Write;
@@ -363,6 +408,9 @@ fn poll_once() -> String {
                 let _ = writeln!(out, "thermal{i}: {}.{} C", c10 / 10, (c10 % 10).abs());
             }
         }
+    }
+    if let Some(t) = cpu_temp() {
+        let _ = writeln!(out, "cputemp: {t} C");
     }
     if let Some(p) = find_device("PNP0C0D", 0) {
         if let Some(v) = eval_int(&alloc::format!("{p}._LID")) {
@@ -390,4 +438,47 @@ pub fn run(rsdp: *const u8, revision: u8) -> ! {
         }
     }
     crate::sched::exit()
+}
+
+// --- backlight (ACPI video extension: _BCL lists the levels, _BCM sets one, _BQC reads it) ----------------------------------------------
+
+static BACKLIGHT: Mutex<Option<(String, Vec<u64>)>> = Mutex::new(None);
+
+fn backlight_find() -> Option<(String, Vec<u64>)> {
+    if let Some(b) = BACKLIGHT.lock().clone() {
+        return Some(b);
+    }
+    for i in 0..4 {
+        let owner = find_owner("_BCM", i)?;
+        if let Some((mut levels, _)) = eval_pkg(&alloc::format!("{owner}._BCL"), 64, None) {
+            if levels.len() > 3 {
+                levels.drain(..2); // the two defaults (on AC, on battery) come first
+                levels.sort_unstable();
+                levels.dedup();
+                let b = (owner, levels);
+                *BACKLIGHT.lock() = Some(b.clone());
+                return Some(b);
+            }
+        }
+    }
+    None
+}
+
+/// Current brightness in percent, `None` without an ACPI-controllable backlight.
+pub fn backlight_get() -> Option<u32> {
+    let (owner, levels) = backlight_find()?;
+    let cur = eval_int(&alloc::format!("{owner}._BQC"))?;
+    let max = *levels.last()?;
+    let min = levels[0];
+    Some((cur.saturating_sub(min) * 100 / (max - min).max(1)).min(100) as u32)
+}
+
+/// Set the brightness from 0 to 100 percent; picks the nearest level the firmware lists.
+pub fn backlight_set(pct: u32) -> bool {
+    let Some((owner, levels)) = backlight_find() else { return false };
+    let (min, max) = (levels[0], *levels.last().unwrap());
+    let want = min + (max - min) * pct.min(100) as u64 / 100;
+    let lvl = *levels.iter().min_by_key(|l| l.abs_diff(want)).unwrap();
+    let _ = eval_int_arg(&alloc::format!("{owner}._BCM"), Some(lvl)); // returns nothing: only the side effect counts
+    true
 }

@@ -1323,8 +1323,8 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let aml = workspace_root().join("xtask/testdata/fake-power.aml");
             let tbl = format!("file={}", aml.display());
-            let out = boot_and_run_args(&img, "acpi", "sleep 2; cat /proc/power; echo acpi-ok-$((5))", "acpi-ok-5", 200, &["-acpitable", &tbl]);
-            let want = ["ac0: online", "bat0: present", "bat0.state: discharging", "bat0.percent: 75", "bat0.model: FAKEBAT", "thermal0: 55.0 C", "lid: open"];
+            let out = boot_and_run_args(&img, "acpi", "sleep 2; cat /proc/power; /thosbl; /thosbl 20; /thosbl; echo acpi-ok-$((5))", "acpi-ok-5", 200, &["-acpitable", &tbl]);
+            let want = ["ac0: online", "bat0: present", "bat0.state: discharging", "bat0.percent: 75", "bat0.model: FAKEBAT", "thermal0: 55.0 C", "lid: open", "brightness 70", "brightness 20"];
             let missing: Vec<_> = want.iter().filter(|w| !out.lines().any(|l| l.trim() == **w)).collect();
             if out.contains("acpi aml         interpreter up") && missing.is_empty() && out.lines().any(|l| l.trim() == "acpi-ok-5") {
                 println!("acpi-test PASSED: the AML interpreter is up, battery/AC/lid/thermal from the firmware's AML appear in /proc/power");
@@ -4510,7 +4510,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {

@@ -216,3 +216,23 @@ int thos_acpi_dump(void (*line)(const char *)) {
     }
     return count;
 }
+
+// Path of the object that owns the nth method called `name` ("_BCM"): the display output that has a backlight.
+int thos_acpi_find_owner(const char *name, int nth, char *out, int outlen) {
+    if (!started) return -1;
+    struct lai_ns_iterator it = LAI_NS_ITERATOR_INITIALIZER;
+    lai_nsnode_t *n;
+    int idx = 0;
+    while ((n = lai_ns_iterate(&it))) {
+        if (n->type != LAI_NAMESPACE_METHOD || !n->parent) continue;
+        if (n->name[0] != name[0] || n->name[1] != name[1] || n->name[2] != name[2] || n->name[3] != name[3]) continue;
+        if (idx++ != nth) continue;
+        char *p = lai_stringify_node_path(n->parent);
+        int k = 0;
+        while (p[k] && k < outlen - 1) { out[k] = p[k]; k++; }
+        out[k] = 0;
+        laihost_free(p, lai_strlen(p) + 1);
+        return 0;
+    }
+    return -1;
+}

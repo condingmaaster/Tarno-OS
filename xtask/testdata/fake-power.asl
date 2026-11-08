@@ -20,6 +20,18 @@ DefinitionBlock ("", "SSDT", 2, "THOS", "FAKEPWR", 1)
                 Return (Package () { 1, 8000, 30000, 11000 })
             }
         }
+        Device (GFX0)
+        {
+            Name (_ADR, 0x00020000)
+            Device (LCD0)
+            {
+                Name (_ADR, 0x0400)
+                Name (LVL, 70)
+                Method (_BCL, 0) { Return (Package () { 80, 40, 0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100 }) }
+                Method (_BCM, 1) { Store (Arg0, LVL) }
+                Method (_BQC, 0) { Return (LVL) }
+            }
+        }
         Device (LID0)
         {
             Name (_HID, EisaId ("PNP0C0D"))

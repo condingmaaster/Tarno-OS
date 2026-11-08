@@ -114,6 +114,8 @@ const THOS_BASE: u64 = 0x5448_0000; // 'T' 'H'
 const SYS_THOS_ELEVATE: u64 = THOS_BASE;
 /// `readpass(buf, cap)`: one line from the keyboard with the typed characters masked (a password prompt for programs that must not echo it).
 const SYS_THOS_READPASS: u64 = THOS_BASE + 1;
+/// `backlight(op, percent)`: op 0 = read the brightness (percent, or -ENODEV), op 1 = set it.
+const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -2317,6 +2319,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         // against outside the `interactive` build, so it's ENOSYS there.
         #[cfg(feature = "interactive")]
         SYS_THOS_ELEVATE => sys_elevate(a1, a2, a3),
+        SYS_THOS_BACKLIGHT => {
+            if a1 == 0 {
+                crate::acpi_aml::backlight_get().map_or(-19, |p| p as i64)
+            } else if crate::acpi_aml::backlight_set(a2 as u32) {
+                0
+            } else {
+                -19
+            }
+        }
         #[cfg(not(feature = "interactive"))]
         SYS_THOS_ELEVATE => ENOSYS,
         #[cfg(feature = "interactive")]
