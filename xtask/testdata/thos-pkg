@@ -17,7 +17,9 @@ die() { echo "thos-pkg: $*" >&2; exit 1; }
 quote() { $B printf "'"; $B printf '%s' "$1" | $B sed "s/'/'\\\\''/g"; $B printf "'"; }
 entry() {
     label=$($B printf '%s' "$1" | $B tr '\n|' '__')
-    catalog_line="$label|LD_LIBRARY_PATH=$(quote "$libs") $(quote "$2")${3:-}"
+    # what GTK/Wayland programs from the archive need to find their data (the panel adds XDG_RUNTIME_DIR, GDK_BACKEND, HOME)
+    guienv="XDG_DATA_DIRS=$dir/usr/share:/usr/share GDK_PIXBUF_MODULE_FILE=$dir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache XKB_CONFIG_ROOT=$dir/usr/share/X11/xkb WAYLAND_DISPLAY=wayland-0 GSETTINGS_BACKEND=memory GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 MOZ_ENABLE_WAYLAND=1 MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1"
+    catalog_line="$label|LD_LIBRARY_PATH=$(quote "$libs") $guienv $(quote "$2")${3:-}"
     if [ -f "$APPS" ] && $B grep -qxF "$catalog_line" "$APPS"; then return; fi
     $B printf '%s\n' "$catalog_line" >> "$APPS"
 }
@@ -246,6 +248,19 @@ install_one() {
     $B rm -f /tmp/pkg-$$.deb
 }
 
+# what Debian's maintainer scripts would do: the MIME database (image format detection!), GSettings schemas, gdk-pixbuf loader cache, machine-id
+post_install() {
+    export LD_LIBRARY_PATH="$ROOT/usr/lib/x86_64-linux-gnu:$ROOT/lib/x86_64-linux-gnu:$ROOT/usr/lib"
+    [ -x $ROOT/usr/bin/update-mime-database ] && [ -d $ROOT/usr/share/mime/packages ] && $ROOT/usr/bin/update-mime-database $ROOT/usr/share/mime >/dev/null 2>&1
+    [ -x $ROOT/usr/bin/glib-compile-schemas ] && [ -d $ROOT/usr/share/glib-2.0/schemas ] && $ROOT/usr/bin/glib-compile-schemas $ROOT/usr/share/glib-2.0/schemas >/dev/null 2>&1
+    pb=$ROOT/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0
+    if [ -x $pb/gdk-pixbuf-query-loaders ] && [ -d $pb/2.10.0/loaders ]; then
+        GDK_PIXBUF_MODULEDIR=$pb/2.10.0/loaders $pb/gdk-pixbuf-query-loaders > $pb/2.10.0/loaders.cache.new 2>/dev/null && $B mv $pb/2.10.0/loaders.cache.new $pb/2.10.0/loaders.cache
+    fi
+    [ -s /etc/machine-id ] || $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n' > /etc/machine-id 2>/dev/null
+    unset LD_LIBRARY_PATH
+}
+
 cmd_install_repo() {
     [ -f $IDX ] || die "no index yet: run  thos-pkg update"
     todo=$1; seen=" "
@@ -260,10 +275,12 @@ cmd_install_repo() {
         if [ -f $DB/$cur.list ]; then todo="$todo $deps"; continue; fi        # already there, but what it needs may be missing (an earlier run can have stopped half way)
         install_one "$cur" || return 1
         todo="$todo $deps"
+        case "$cur" in libgtk-3-0t64) todo="$todo shared-mime-info libglib2.0-bin libgdk-pixbuf2.0-bin xkb-data fonts-dejavu-core" ;; esac
     done
     # A repository installation must be discoverable through the same UI as
     # a downloaded archive. Only register files owned by the requested package,
     # rather than unrelated programs from its shared /opt/root dependencies.
+    post_install
     [ ! -f "$DB/$FIRST.list" ] || register "$ROOT" "$FIRST" "$DB/$FIRST.list"
     echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
 }
