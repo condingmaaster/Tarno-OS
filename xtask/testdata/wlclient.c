@@ -97,7 +97,10 @@ static void top_configure(void *d, struct xdg_toplevel *t, int32_t w, int32_t h,
     (void)d; (void)t;
     maxstate = 0;
     uint32_t *e;
-    wl_array_for_each(e, st) if (*e == XDG_TOPLEVEL_STATE_MAXIMIZED) maxstate = 1;
+    wl_array_for_each(e, st) {
+        if (*e == XDG_TOPLEVEL_STATE_MAXIMIZED) maxstate = 1;
+        if (*e == XDG_TOPLEVEL_STATE_FULLSCREEN) { printf("wlclient: fullscreen %dx%d\n", w, h); fflush(stdout); }
+    }
     if (w > 0 && h > 0) { want_w = w; want_h = h; }
 }
 static void top_close(void *d, struct xdg_toplevel *t) { (void)d; (void)t; closing = 1; printf("wlclient: close requested\n"); fflush(stdout); }
@@ -126,7 +129,7 @@ static void k_keymap(void *d, struct wl_keyboard *k, uint32_t fmt, int fd, uint3
 }
 static void k_enter(void *d, struct wl_keyboard *k, uint32_t s, struct wl_surface *sf, struct wl_array *keys) { (void)d; (void)k; (void)s; (void)sf; (void)keys; printf("wlclient: keyboard enter\n"); fflush(stdout); }
 static void k_leave(void *d, struct wl_keyboard *k, uint32_t s, struct wl_surface *sf) { (void)d; (void)k; (void)s; (void)sf; printf("wlclient: keyboard leave\n"); fflush(stdout); }
-static void k_key(void *d, struct wl_keyboard *k, uint32_t s, uint32_t t, uint32_t key, uint32_t st) { (void)d; (void)k; (void)s; (void)t; printf("wlclient: key %u %s\n", key, st ? "down" : "up"); fflush(stdout); }
+static void k_key(void *d, struct wl_keyboard *k, uint32_t s, uint32_t t, uint32_t key, uint32_t st) { (void)d; (void)k; (void)s; (void)t; printf("wlclient: key %u %s\n", key, st ? "down" : "up"); fflush(stdout); if (key == 33 && st && top) xdg_toplevel_set_fullscreen(top, NULL); }   /* F: ask for the whole screen */
 static void k_mods(void *d, struct wl_keyboard *k, uint32_t s, uint32_t dep, uint32_t lat, uint32_t lock, uint32_t grp) { (void)d; (void)k; (void)s; (void)lat; (void)lock; (void)grp; printf("wlclient: mods %u\n", dep); fflush(stdout); }
 static void k_repeat(void *d, struct wl_keyboard *k, int32_t rate, int32_t delay) { (void)d; (void)k; (void)rate; (void)delay; }
 static const struct wl_keyboard_listener kbd_l = { k_keymap, k_enter, k_leave, k_key, k_mods, k_repeat };

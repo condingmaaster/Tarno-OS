@@ -1377,12 +1377,12 @@ static void toggle_maximize(struct win *w) {
     compose(uni(old, outer_of(w)));
 }
 static void toggle_fullscreen(struct win *w) {
-    if(!w->resizable) return;
+    if(!w->resizable && !w->wl) return;
     struct rect old=outer_of(w);
     if(!w->fullscreen) {
         w->fs_x=w->x;w->fs_y=w->y;w->fs_w=w->cfg_w?w->cfg_w:w->w;w->fs_h=w->cfg_h?w->cfg_h:w->h;
         w->fs_deco=w->deco;w->fs_maxed=w->maxed;
-        w->fullscreen=1;w->deco=0;w->maxed=1;w->x=w->y=0;
+        w->fullscreen=1;w->deco=0;w->maxed=1;w->x=w->csd?-w->gx:0;w->y=w->csd?-w->gy:0;
         configure_window(w,W,H,2);
     } else {
         w->fullscreen=0;w->deco=w->fs_deco;w->maxed=w->fs_maxed;w->x=w->fs_x;w->y=w->fs_y;
@@ -1407,6 +1407,10 @@ static void desk_begin_resize(int winid, int edges) {
 static void desk_set_maximized(int winid, int on) {
     struct win *w = win_by_id(winid);
     if (w && w->wl && (!w->maxed) == (on != 0)) toggle_maximize(w);
+}
+static void desk_set_fullscreen(int winid, int on) {
+    struct win *w = win_by_id(winid);
+    if (w && w->wl && (!w->fullscreen) == (on != 0)) toggle_fullscreen(w);
 }
 /* the close button under the pointer lights up */
 static void update_hover(void) {

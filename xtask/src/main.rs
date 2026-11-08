@@ -1369,6 +1369,26 @@ fn main() {
                 exit(1);
             }
         }
+        "screenshot-test" => {
+            // /proc/screen reports the framebuffer geometry; thosshot writes the screen as a valid PNG of exactly that size
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "screenshot", "cat /proc/screen; thosshot /tmp/s.png; /busybox od -An -tx1 -N24 /tmp/s.png; echo shot-end-$((1))", "shot-end-1", 200, &[]);
+            let res = out.lines().find(|l| l.contains(" pitch ") && l.contains(" bpp 32")).map(|l| l.trim().to_string());
+            let dims = res.as_ref().and_then(|l| l.split(' ').next()).and_then(|r| r.split_once('x')).and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)));
+            let png_ok = out.contains("89 50 4e 47 0d 0a 1a 0a");
+            let size_ok = dims.map_or(false, |(w, h)| {
+                // IHDR: the 8 bytes after "00 00 00 0d 49 48 44 52" are width and height, big endian
+                let hex = format!("{:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x} {:02x}", w >> 24, (w >> 16) & 255, (w >> 8) & 255, w & 255, h >> 24, (h >> 16) & 255, (h >> 8) & 255, h & 255);
+                out.replace('\n', " ").split_whitespace().collect::<Vec<_>>().join(" ").contains(&hex)
+            });
+            if res.is_some() && png_ok && size_ok {
+                println!("screenshot-test PASSED: /proc/screen says {} and thosshot wrote a PNG of exactly that size", res.unwrap());
+            } else {
+                for l in out.lines().rev().take(14) { eprintln!("  {l}"); }
+                eprintln!("screenshot-test FAILED (proc/screen: {res:?}, png header: {png_ok}, size matches: {size_ok})");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");
@@ -3525,6 +3545,9 @@ fn main() {
                 // Alt+Up maximizes
                 mon(&tsock, "sendkey alt-up");
                 wait_for(&tlog, "maximized", 20);
+                // the client asks for the whole screen (xdg_toplevel.set_fullscreen): the configure carries the fullscreen state and the screen size
+                mon(&tsock, "sendkey f");
+                wait_for(&tlog, "wlclient: fullscreen", 20);
                 // the compositor's own shortcut asks the client to close
                 mon(&tsock, "sendkey alt-f4");
                 wait_for(&tlog, "wlclient: bye", 30);
@@ -3533,6 +3556,11 @@ fn main() {
             });
             let out = boot_and_run(&img, "wayland", "/busybox sh /wl.sh", "desk ok:", 300);
             let has = |needle: &str| out.contains(needle);
+            if !has("wlclient: fullscreen 1280x800") && !has("wlclient: fullscreen 1366x768") {
+                for l in out.lines().filter(|l| l.contains("wlclient")).take(30) { eprintln!("  {l}"); }
+                eprintln!("wayland-test FAILED: set_fullscreen did not give the client the whole screen");
+                exit(1);
+            }
             let px = |x: usize, y: usize| -> Option<(u8, u8, u8)> {
                 let (w, h, d) = read_ppm(&shot)?;
                 if x >= w || y >= h {
@@ -4688,7 +4716,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "thosshot", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {

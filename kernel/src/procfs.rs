@@ -170,7 +170,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
         [] => {
-            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "wlaninfo", "gpuinfo", "bootdisk", "power", "self"]
+            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "wlaninfo", "gpuinfo", "bootdisk", "screen", "power", "self"]
                 .iter()
                 .map(|n| (n.to_string(), if *n == "self" { DT_DIR } else { DT_REG }))
                 .collect();
@@ -199,6 +199,10 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
                 core::hint::spin_loop();
             }
         }
+        ["screen"] => match crate::gdi::fb_geometry() {
+            Some((w, h, pitch, ..)) => file(path, format!("{w}x{h} pitch {pitch} bpp 32\n")),
+            None => file(path, String::from("none\n")),
+        },
         ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_ram() { "ram" } else if crate::blk::is_usb() { "usb" } else { "sata" })),
         ["netinfo"] => {
             file(path, crate::net::info())

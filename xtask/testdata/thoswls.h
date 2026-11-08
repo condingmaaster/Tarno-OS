@@ -235,6 +235,7 @@ static void wls_send_selection(struct wlc *c);
 static void desk_begin_move(int winid);
 static void desk_begin_resize(int winid, int edges);
 static void desk_set_maximized(int winid, int on);
+static void desk_set_fullscreen(int winid, int on);
 /* Subsurface buffers are copied before release, including synchronized cached state. */
 static int subs_synchronized(struct wlsurf *s) {
     for (; s && s->is_sub; s = s->parent) if (s->sub_sync) return 1;
@@ -397,6 +398,14 @@ static void surf_commit(struct wlc *c, struct wlsurf *s) {
         if (x1 <= x0 || y1 <= y0) { x0 = 0; y0 = 0; x1 = b->w; y1 = b->h; }
     }
     if (w->csd && s->has_geo) { w->gx = s->gx; w->gy = s->gy; w->gw = s->gw; w->gh = s->gh; }
+    if (!fresh && (w->maxed || w->fullscreen) && !w->popup) {         /* the client's frame (shadow margins) changes with the state: keep its visible part on the screen origin */
+        int nx = w->csd ? -w->gx : (w->fullscreen ? 0 : w->x), ny = w->csd ? -w->gy : (w->fullscreen ? 0 : w->y);
+        if (nx != w->x || ny != w->y) {
+            struct rect before = outer_of(w);
+            w->x = nx; w->y = ny;
+            old = old.x1 > old.x0 ? uni(old, before) : before;
+        }
+    }
     int fast = rs == 16 && gs == 8 && bs == 0;
     w->alpha = b->fmt == 0;                           /* ARGB8888 (premultiplied); XRGB8888 is opaque */
     for (int y = y0; y < y1; y++) {
@@ -615,9 +624,10 @@ static void wls_configure(struct wlsurf *s, int w, int h, int maximized) {
     if (!s->top_id || !s->xdg_id) return;
     struct ob e = { .n = 0 };
     ob_u32(&e, (uint32_t)w); ob_u32(&e, (uint32_t)h);
-    ob_u32(&e, maximized ? 8 : 4);                    /* states array: activated [, maximized] */
+    ob_u32(&e, maximized ? 8 : 4);   /* states array: activated [, maximized | fullscreen] */
     ob_u32(&e, 4);
-    if (maximized) ob_u32(&e, 1);
+    if (maximized == 2) ob_u32(&e, 2);                /* XDG_TOPLEVEL_STATE_FULLSCREEN */
+    else if (maximized) ob_u32(&e, 1);
     wl_emit(c, s->top_id, 0, &e);
     wl_ev(c, s->xdg_id, 0, 1, ++c->serial);
     wl_flush(c);
@@ -1080,6 +1090,8 @@ static void dispatch(struct wlc *c, uint32_t id, struct wlobj *o, uint32_t op, s
             if (s->winid) desk_begin_resize(s->winid, (int)edges);
         } else if (op == 9 || op == 10) {                 /* set_maximized / unset_maximized */
             if (s->winid) desk_set_maximized(s->winid, op == 9);
+        } else if (op == 11 || op == 12) {                /* set_fullscreen(output) / unset_fullscreen: the whole screen, as wl_output reports it */
+            if (s->winid) desk_set_fullscreen(s->winid, op == 11);
         } else if (op == 0) {
             surf_unmap(s); s->top_id = 0; s->role_top = 0; wl_delete_id(c, id); obj_free(c, id);
         }
