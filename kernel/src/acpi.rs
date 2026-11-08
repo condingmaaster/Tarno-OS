@@ -112,6 +112,30 @@ pub unsafe fn find_table_ptr(rsdp_virt: *const u8, sig: &[u8; 4]) -> Option<(*co
     find_sdt(rsdp_virt, sig).map(|h| (h as *const u8, (*h).length as usize))
 }
 
+/// The `n`th table with signature `sig` (SSDTs come several times).
+///
+/// # Safety
+/// Same as [`find_table_ptr`].
+pub unsafe fn find_table_nth(rsdp_virt: *const u8, sig: &[u8; 4], n: usize) -> Option<(*const u8, usize)> {
+    let rsdp = &*(rsdp_virt as *const Rsdp);
+    let (sdt_phys, ptr_size) = if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 { (rsdp.xsdt_addr, 8) } else { (rsdp.rsdt_addr as u64, 4) };
+    let head = &*phys::<SdtHeader>(sdt_phys);
+    let entries = (head.length as usize - core::mem::size_of::<SdtHeader>()) / ptr_size;
+    let array = phys::<u8>(sdt_phys).add(core::mem::size_of::<SdtHeader>());
+    let mut seen = 0;
+    for i in 0..entries {
+        let pa = if ptr_size == 8 { core::ptr::read_unaligned(array.add(i * 8) as *const u64) } else { core::ptr::read_unaligned(array.add(i * 4) as *const u32) as u64 };
+        let hdr = phys::<SdtHeader>(pa);
+        if (*hdr).signature == *sig {
+            if seen == n {
+                return Some((hdr as *const u8, (*hdr).length as usize));
+            }
+            seen += 1;
+        }
+    }
+    None
+}
+
 unsafe fn find_sdt(rsdp_virt: *const u8, sig: &[u8; 4]) -> Option<*const SdtHeader> {
     let rsdp = &*(rsdp_virt as *const Rsdp);
     if rsdp.revision >= 2 && rsdp.xsdt_addr != 0 {

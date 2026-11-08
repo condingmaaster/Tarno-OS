@@ -1317,6 +1317,23 @@ fn main() {
                 exit(1);
             }
         }
+        "acpi-test" => {
+            // the AML interpreter (lai) builds the namespace from QEMU's DSDT plus a synthetic SSDT (battery, AC adapter, lid, thermal zone:
+            // xtask/testdata/fake-power.asl) and the sensors show up in /proc/power
+            let img = prod_interactive_image(cmd);
+            let aml = workspace_root().join("xtask/testdata/fake-power.aml");
+            let tbl = format!("file={}", aml.display());
+            let out = boot_and_run_args(&img, "acpi", "sleep 2; cat /proc/power; echo acpi-ok-$((5))", "acpi-ok-5", 200, &["-acpitable", &tbl]);
+            let want = ["ac0: online", "bat0: present", "bat0.state: discharging", "bat0.percent: 75", "bat0.model: FAKEBAT", "thermal0: 55.0 C", "lid: open"];
+            let missing: Vec<_> = want.iter().filter(|w| !out.lines().any(|l| l.trim() == **w)).collect();
+            if out.contains("acpi aml         interpreter up") && missing.is_empty() && out.lines().any(|l| l.trim() == "acpi-ok-5") {
+                println!("acpi-test PASSED: the AML interpreter is up, battery/AC/lid/thermal from the firmware's AML appear in /proc/power");
+            } else {
+                for l in out.lines().filter(|l| l.contains("acpi") || l.contains("lai") || l.contains("sensors") || l.contains(": ")).take(30) { eprintln!("  {l}"); }
+                eprintln!("acpi-test FAILED (missing: {missing:?})");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");

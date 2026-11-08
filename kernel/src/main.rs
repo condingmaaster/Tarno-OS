@@ -29,6 +29,7 @@
 extern crate alloc;
 
 mod acpi;
+mod acpi_aml;
 mod ahci;
 mod blk;
 mod lockup;
@@ -267,6 +268,17 @@ extern "C" fn kmain() -> ! {
         // Milestone 2: first-run setup / login, then launch the shell off ext2
         // and hand it the keyboard. When the shell ends (`exit`, Ctrl+D) the
         // session is over: back to the login prompt, never a dead console.
+        // The AML interpreter in its own thread: a firmware method that hangs must not hold up the boot.
+        extern "C" fn aml_thread(_: usize) -> ! {
+            let rsdp = RSDP_REQUEST.response().map_or(core::ptr::null(), |r| r.address as *const u8);
+            if !rsdp.is_null() {
+                acpi_aml::run(rsdp, 2);
+            }
+            sched::exit()
+        }
+        if !CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "noacpi")) {
+            sched::spawn("acpi-aml", aml_thread, 0);
+        }
         // Services that run without anyone logged in: the SSH server (and with it the update channel) when the image has one (/etc/thos/ssh/enabled).
         if let Ok(fs) = ext2::open() {
             if fs.path_lookup("/etc/thos/ssh/enabled").is_some() {

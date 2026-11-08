@@ -170,7 +170,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
         [] => {
-            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "wlaninfo", "gpuinfo", "bootdisk", "self"]
+            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "wlaninfo", "gpuinfo", "bootdisk", "power", "self"]
                 .iter()
                 .map(|n| (n.to_string(), if *n == "self" { DT_DIR } else { DT_REG }))
                 .collect();
@@ -203,6 +203,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         ["netinfo"] => {
             file(path, crate::net::info())
         }
+        ["power"] => file(path, crate::acpi_aml::power_text()),
         ["wlaninfo"] => file(path, crate::wlan::info()),
         ["gpuinfo"] => file(path, crate::radeon::info()),
         ["pci"] => file(path, pci_list()),
