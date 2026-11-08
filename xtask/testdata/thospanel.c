@@ -135,8 +135,29 @@ struct dk { int kind, key, focused, minimized, present, x0, x1; char label[16]; 
 static struct dk items[MAXI];
 static int nitems;
 static struct spring start_hov, start_dip;                /* dip: the press feedback, 1 at the moment of the click and springing back to 0 */
-#define RW 152                                          /* the right pill: network state + clock */
+static int bat_pct = -1, bat_chg;                        /* the battery the firmware reports in /proc/power (-1: none) */
+#define BW (bat_pct >= 0 ? 58 : 0)
+#define RW (152 + BW)                                   /* the right pill: network state + battery + clock */
 static int net_up, net_wifi, net_x0, net_x1;
+static int read_bat(void) {                             /* returns a value that changes when what is shown changes */
+    FILE *f = fopen("/proc/power", "r");
+    char l[128];
+    int pct = -1, chg = 0, ac = 0;
+    if (f) {
+        while (fgets(l, sizeof l, f)) {
+            int v;
+            if (sscanf(l, "bat0.percent: %d", &v) == 1) pct = v;
+            if (!strncmp(l, "bat0.state: charging", 20)) chg = 1;
+            if (!strncmp(l, "ac0: online", 11)) ac = 1;
+        }
+        fclose(f);
+    }
+    bat_chg = chg;
+    (void)ac;
+    int old = bat_pct;
+    bat_pct = pct;
+    return pct != old;
+}
 static int read_net(void) {                             /* the link state the kernel reports in /proc/netinfo */
     FILE *f = fopen("/proc/netinfo", "r");
     char l[128];
@@ -241,12 +262,21 @@ static void draw_bar(void) {
     ui_icon(col, PW, PH, DOCK_X + 24, sy + 18 - (int)(lift + 0.5f), 0xf00a, 16, 0xffffffu);
     ui_text(col, PW, PH, DOCK_X + 52, DOCK_Y + 29, "Start", UI_BOLD, 15, UI_TEXT);
     /* right: clock */
-    int rw = RW, rx = PW - DOCK_X - rw, tw = rw - 44, tx = rx + 44;
+    int rw = RW, rx = PW - DOCK_X - rw, tw = rw - 44 - BW, tx = rx + 44 + BW;
     pill(rx, rw);
     net_x0 = rx; net_x1 = rx + 44;
     ui_icon(col, PW, PH, rx + 24, DOCK_Y + DOCK_H / 2, !net_up && net_wifi ? 0xf1eb : 0xf1e6, 15, net_up ? UI_GOOD : 0x6c748c); /* Detection alone never indicates a connection. */
     if (!net_up) ui_rrect(col, PW, PH, rx + 14, DOCK_Y + DOCK_H / 2 + 11, 20, 2, 1, 0x6c748c);
     for (int y = DOCK_Y + 14; y < DOCK_Y + DOCK_H - 14; y++) col[y * PW + rx + 42] = 0x2d3448;
+    if (bat_pct >= 0) {                                 /* battery: glyph by charge level, bolt while charging, red when nearly empty */
+        unsigned gc = bat_pct <= 15 && !bat_chg ? 0xe5534bu : bat_chg ? UI_GOOD : UI_TEXT;
+        int glyph = bat_pct >= 88 ? 0xf240 : bat_pct >= 63 ? 0xf241 : bat_pct >= 38 ? 0xf242 : bat_pct >= 13 ? 0xf243 : 0xf244;
+        char b[8];
+        snprintf(b, sizeof b, "%d%%", bat_pct);
+        ui_icon(col, PW, PH, rx + 44 + 16, DOCK_Y + DOCK_H / 2, glyph, 15, gc);
+        ui_text(col, PW, PH, rx + 44 + 30, DOCK_Y + DOCK_H / 2 + 5, b, UI_BOLD, 12, bat_chg ? UI_GOOD : UI_TEXT);
+        for (int y = DOCK_Y + 14; y < DOCK_Y + DOCK_H - 14; y++) col[y * PW + rx + 44 + BW - 2] = 0x2d3448;
+    }
     ui_text(col, PW, PH, tx + (tw - ui_text_width(UI_BOLD, 17, clock_hm)) / 2, DOCK_Y + 22, clock_hm, UI_BOLD, 17, UI_TEXT);
     ui_text(col, PW, PH, tx + (tw - ui_text_width(UI_REG, 11, clock_day)) / 2, DOCK_Y + 38, clock_day, UI_REG, 11, UI_MUTED);
     /* centre: the items on springs */
@@ -489,12 +519,14 @@ int main(void) {
     int shown = -1, redraw = 0, log_pending = 0;
     long long last_ms = mo_now_ms();
     spring_init(&start_hov, 0, SP_HOVER); spring_init(&start_dip, 0, SP_SNAPPY);
+    read_bat();
     dock_sync();
     for (;;) {
         time_t now = time(0);
         int minute = (int)(now / 60);
         if (minute != shown) { shown = minute; update_clock(); redraw = 1; }
         { static long long net_t; long long tn = mo_now_ms(); if (tn - net_t > 1500 || net_t == 0) { net_t = tn; int nu = read_net(); if (nu != (net_up | (net_wifi << 1))) { net_up = nu & 1; net_wifi = (nu >> 1) & 1; redraw = 1; } } }        /* the clock changes once a minute */
+        { static long long bat_t; long long tb = mo_now_ms(); if (tb - bat_t > 5000) { bat_t = tb; if (read_bat()) { dock_sync(); redraw = 1; } } }
         long long nowm = mo_now_ms();
         float dt = (float)(nowm - last_ms) / 1000.0f;
         last_ms = nowm;

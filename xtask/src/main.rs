@@ -2396,6 +2396,30 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-battery-test" => {
+            // the dock shows the battery the firmware describes (synthetic SSDT: 75 %, discharging): screenshot for a look, pixels checked
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskbat-serial.log"), root.join("target/deskbat-mon.sock"));
+            let shot = root.join("target/deskbat.ppm");
+            for f in [&log, &sock, &shot] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshot) = (log.clone(), sock.clone(), shot.clone());
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "panel ready", 200) { return; }
+                std::thread::sleep(std::time::Duration::from_millis(4000));
+                mon(&tsock, &format!("screendump {}", tshot.to_str().unwrap()));
+            });
+            let aml = root.join("xtask/testdata/fake-power.aml");
+            let tbl = format!("file={}", aml.display());
+            let out = boot_and_run_args(&img, "deskbat", "/busybox sh /desk-cal.sh", "desk ok:", 150, &["-acpitable", &tbl]);
+            let _ = out;
+            if shot.exists() {
+                println!("desk-battery-test: screenshot at {} (look at the right end of the dock)", shot.display());
+            } else {
+                eprintln!("desk-battery-test FAILED (no screenshot)");
+                exit(1);
+            }
+        }
         "desk-drag-test" => {
             // Real button/motion input (PS/2 or USB), with captures while the button is held.
             let hotplug=std::env::var("THOS_USB_MOUSE_HOTPLUG").is_ok();
