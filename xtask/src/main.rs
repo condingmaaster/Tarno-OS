@@ -1399,11 +1399,32 @@ fn main() {
             let logged_in = std::fs::read_to_string(&log).map(|t| t.contains("THOS login:")).unwrap_or(false);
             let _ = child.kill();
             let _ = child.wait();
+            // second round, same disk (now with a THOS on it): the stick must still run itself and offer the installation again
+            // (the Acer's first reinstall attempt ran the installed system instead and stopped at "THOS is already running from the internal disk")
+            let mut again = false;
             if ok && !logged_in {
-                println!("installer-menu-test PASSED: the start menu's install entry boots to the installer without a login and installs onto the blank disk");
+                let log2 = root.join("target/menu-serial2.log");
+                let _ = std::fs::remove_file(&log2);
+                let mut c2 = Command::new("qemu-system-x86_64")
+                    .args(["-M", "pc", "-m", "1024M", "-smp", "2", "-display", "none", "-no-reboot"])
+                    .args(["-drive", &format!("id=stick,if=none,format=raw,file={}", img.to_str().unwrap()), "-device", "usb-ehci,id=ehci", "-device", "usb-storage,bus=ehci.0,drive=stick,bootindex=0"])
+                    .args(["-drive", &format!("id=tgt,if=none,format=raw,file={}", target.to_str().unwrap()), "-device", "ahci,id=ahci1", "-device", "ide-hd,drive=tgt,bus=ahci1.0"])
+                    .args(["-serial", &format!("file:{}", log2.to_str().unwrap()), "-monitor", &format!("unix:{},server,nowait", sock.to_str().unwrap())])
+                    .spawn().expect("spawn qemu (second round)");
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                mon(&sock, "sendkey down");
+                mon(&sock, "sendkey ret");
+                again = wait_for(&log2, "Type YES", 300);
+                let t2 = std::fs::read_to_string(&log2).unwrap_or_default();
+                again = again && t2.contains("Started from the USB stick") && !t2.contains("already running from the internal disk");
+                let _ = c2.kill();
+                let _ = c2.wait();
+            }
+            if ok && !logged_in && again {
+                println!("installer-menu-test PASSED: the start menu's install entry boots to the installer without a login, installs onto the blank disk, and offers the installation again on a disk that already has THOS");
             } else {
                 eprintln!("{}", std::fs::read_to_string(&log).unwrap_or_default().lines().rev().take(25).collect::<Vec<_>>().join("\n"));
-                eprintln!("installer-menu-test FAILED (reached installer: {ok}, a login was shown: {logged_in})");
+                eprintln!("installer-menu-test FAILED (reached installer: {ok}, a login was shown: {logged_in}, installer offered again on an installed disk: {again})");
                 exit(1);
             }
         }
@@ -4608,6 +4629,8 @@ fn disk_image() -> PathBuf {
                 }
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-pkg", root.join("xtask/testdata/thos-pkg").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} thos-fetch", root.join("xtask/testdata/thos-fetch").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} apt", root.join("xtask/testdata/apt").to_str().unwrap()), img.to_str().unwrap()]));
+                run(Command::new("debugfs").args(["-w", "-R", &format!("write {} apt-get", root.join("xtask/testdata/apt").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg.sh", root.join("xtask/testdata/pkg.sh").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} pkg-repo-ui.sh", root.join("xtask/testdata/pkg-repo-ui.sh").to_str().unwrap()), img.to_str().unwrap()]));
                 run(Command::new("debugfs").args(["-w", "-R", &format!("write {} shrc", root.join("xtask/testdata/shrc").to_str().unwrap()), img.to_str().unwrap()]));
@@ -4958,7 +4981,7 @@ fn disk_image() -> PathBuf {
             img.to_str().unwrap(),
         ]));
     }
-    for (f, name) in [("thos-pkg", "thos-pkg"), ("thos-fetch", "thos-fetch"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall"), ("sudo", "sudo"), ("doas", "doas")] {
+    for (f, name) in [("thos-pkg", "thos-pkg"), ("apt", "apt"), ("apt-get", "apt-get"), ("thos-fetch", "thos-fetch"), ("hwreport", "hwreport"), ("openssl-shim", "openssl"), ("thos-autostart", "thos-autostart"), ("thos-install", "thos-install"), ("thoselevate", "thoselevate"), ("thosinstall", "thosinstall"), ("sudo", "sudo"), ("doas", "doas")] {
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("ln /{f} /bin/{name}"), img.to_str().unwrap()]).output();
         let _ = Command::new("debugfs").args(["-w", "-R", &format!("sif /{f} links_count 2"), img.to_str().unwrap()]).output();      // the hard link counts as a second name (e2fsck checks)
     }

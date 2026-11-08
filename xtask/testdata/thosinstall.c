@@ -72,12 +72,16 @@ static int list_disks(void) {
         if (!ok) { table = "unreadable"; fprintf(stderr, "cannot read the first sector of %s: %s\n", devs[d], strerror(errno)); }
         else if (mbr[510] == 0x55 && mbr[511] == 0xAA) table = "mbr";
         if (ok && pread(fd, gpt, 512, 512) == 512 && !memcmp(gpt, "EFI PART", 8)) table = "gpt";
-        int thosboot = 0;                                          /* the stick THOS started from: it carries the FAT partition THOSBOOT (the memory-image start never sees it as the boot disk otherwise) */
+        int hasboot = 0, hasroot = 0;                              /* the stick THOS started from carries the FAT partition THOSBOOT and nothing else; an installed disk has THOSROOT too (the memory-image start never sees the stick as the boot disk otherwise) */
         if (!strcmp(table, "mbr")) for (int i = 0; i < 4; i++) {
             const uint8_t *e = mbr + 0x1BE + 16 * i;
             char lb[20];
-            if (e[4] && le32(e + 12) && !strcmp(classify(fd, (uint64_t)le32(e + 8) * SEC, e[4], lb, sizeof lb), "FAT/exFAT") && !strcmp(lb, "THOSBOOT")) thosboot = 1;
+            if (!e[4] || !le32(e + 12)) continue;
+            const char *kind = classify(fd, (uint64_t)le32(e + 8) * SEC, e[4], lb, sizeof lb);
+            if (!strcmp(kind, "FAT/exFAT") && !strcmp(lb, "THOSBOOT")) hasboot = 1;
+            if (!strcmp(kind, "THOS")) hasroot = 1;
         }
+        int thosboot = hasboot && !hasroot;
         int isboot = thosboot || (d == 1 && !strncmp(bootd, "usb", 3)) || (d == 0 && !strncmp(bootd, "sata", 4)) || (d == 2 && !strncmp(bootd, "ram", 3));
         printf("disk %s %llu %s %s\n", devs[d], (unsigned long long)size >> 20, table, isboot ? "yes" : "no");
         uint64_t used_end = 2048, best = 0, total = (uint64_t)size / SEC;

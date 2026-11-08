@@ -1738,25 +1738,25 @@ fn start_input_devices() {
 /// filesystem, registry hives, the Security Service, input devices.
 #[cfg(not(feature = "selftest"))]
 fn boot_system() {
-    let mut have_root = ahci::init().is_ok() && ext2::open().is_ok();
-    if !have_root {
-        // booted from a stick (or the SATA disk carries no THOSROOT filesystem). A root file system loaded into memory by the boot
-        // loader (module thos-root.ext2 on the boot partition) comes first: it needs no USB driver. Then USB mass storage.
-        kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk");
-        if let Some(r) = MODULES_REQUEST.response() {
-            for f in r.modules() {
-                if f.path().ends_with("thos-disk.img") || f.path().ends_with("thos-root.ext2") {
-                    let d = f.data();
-                    kprintln!("THOS: boot             system disk image module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
-                    blk::use_ram(d.as_ptr() as u64, d.len() as u64);
-                    ext2::reset_cache();
-                    have_root = ext2::open().is_ok();
-                    if !have_root {
-                        kprintln!("THOS: boot             the module is not a THOSROOT file system");
-                    }
-                    break;
-                }
-            }
+    let ahci_ok = ahci::init().is_ok();
+    // A system disk image loaded into memory by the boot loader (module thos-disk.img / thos-root.ext2 on the boot partition: the live stick) always
+    // wins, even when the internal disk already carries a THOS: the stick must run (and install from) itself, not the installed system. The
+    // internal disk stays visible for the installer. A machine started from its own disk has no module and uses the SATA root.
+    let module = MODULES_REQUEST.response().and_then(|r| r.modules().iter().copied().find(|f| f.path().ends_with("thos-disk.img") || f.path().ends_with("thos-root.ext2")));
+    let mut have_root = false;
+    if let Some(f) = module {
+        let d = f.data();
+        kprintln!("THOS: boot             system disk image module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
+        blk::use_ram(d.as_ptr() as u64, d.len() as u64);
+        ext2::reset_cache();
+        have_root = ext2::open().is_ok();
+        if !have_root {
+            kprintln!("THOS: boot             the module is not a THOSROOT file system");
+        }
+    } else {
+        have_root = ahci_ok && ext2::open().is_ok();
+        if !have_root {
+            kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk");
         }
     }
     if !have_root {
