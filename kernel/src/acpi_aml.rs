@@ -26,6 +26,7 @@ extern "C" {
     fn thos_acpi_eval_pkg(path: *const c_char, out: *mut u64, max: c_int, s: *mut c_char, slen: c_int, sidx: c_int) -> c_int;
     fn thos_acpi_find(pnp: *const c_char, ty: c_int, nth: c_int, out: *mut c_char, outlen: c_int) -> c_int;
     fn thos_acpi_find_owner(name: *const c_char, nth: c_int, out: *mut c_char, outlen: c_int) -> c_int;
+    fn thos_acpi_ec_poll() -> c_int;
     fn thos_acpi_dump(line: extern "C" fn(*const c_char)) -> c_int;
 }
 
@@ -420,21 +421,56 @@ fn poll_once() -> String {
     out
 }
 
-/// Body of the interpreter thread: start lai, then refresh the sensor snapshot every few seconds.
+/// PM1a event block (status register; the enable register follows) from the FADT, 0 if unknown.
+fn pm1a_event_block() -> u16 {
+    let rsdp = RSDP.load(Ordering::Acquire) as *const u8;
+    unsafe {
+        match crate::acpi::find_table_ptr(rsdp, b"FACP") {
+            Some((fadt, len)) if len >= 60 => core::ptr::read_unaligned(fadt.add(56) as *const u32) as u16,
+            _ => 0,
+        }
+    }
+}
+
+/// Body of the interpreter thread: start lai, then every 100 ms look at the power button (PM1 status) and the embedded controller's event
+/// flag, and every 5 s refresh the sensor snapshot.
 pub fn run(rsdp: *const u8, revision: u8) -> ! {
     start(rsdp, revision);
     if ready() {
-        let mut first = true;
+        let pm1 = pm1a_event_block();
+        let mut tick = 0u32;
+        if pm1 != 0 {
+            unsafe { Port::<u16>::new(pm1).write(0x100) }; // a press that was recorded before we looked (the one that switched the machine on) must not shut it down
+        }
         loop {
-            let text = poll_once();
-            if first {
-                for l in text.lines() {
-                    crate::kprintln!("THOS: sensors          {l}");
+            if tick % 50 == 0 {
+                let text = poll_once();
+                if tick == 0 {
+                    for l in text.lines() {
+                        crate::kprintln!("THOS: sensors          {l}");
+                    }
                 }
-                first = false;
+                *SNAPSHOT.lock() = text;
             }
-            *SNAPSHOT.lock() = text;
-            crate::timer::sleep_until(crate::timer::deadline_after_ns(5_000_000_000));
+            tick = tick.wrapping_add(1);
+            if pm1 != 0 {
+                let st: u16 = unsafe { Port::new(pm1).read() };
+                if st & 0x100 != 0 {
+                    unsafe { Port::<u16>::new(pm1).write(0x100) }; // write 1 to clear
+                    crate::kprintln!("THOS: power button     pressed: shutting down");
+                    crate::power::poweroff();
+                }
+            }
+            let ev = {
+                let _g = LOCK.lock();
+                unsafe { thos_acpi_ec_poll() }
+            };
+            if ev >= 0 {
+                crate::kprintln!("THOS: embedded ctl     event _Q{:02X} handled", ev);
+                let text = poll_once();
+                *SNAPSHOT.lock() = text;
+            }
+            crate::timer::sleep_until(crate::timer::deadline_after_ns(100_000_000));
         }
     }
     crate::sched::exit()

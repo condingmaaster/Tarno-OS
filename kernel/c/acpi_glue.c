@@ -16,6 +16,7 @@ static int started;
 static struct lai_ec_driver ecs[2];
 static int ec_count;
 static int ec_fail;
+static lai_nsnode_t *ec_node[2];
 
 static int ec_wait(struct lai_ec_driver *d, uint8_t mask, int want) {
     for (int i = 0; i < 200000; i++) {
@@ -66,6 +67,7 @@ static void init_embedded_controller(void) {
         if (ecs[ec_count].cmd_port && ecs[ec_count].data_port) ecnode[ec_count++] = n;
     }
     lai_finalize_state(&st);
+    for (int i = 0; i < ec_count; i++) ec_node[i] = ecnode[i];
     if (!ec_count) return;
     it = (struct lai_ns_iterator)LAI_NS_ITERATOR_INITIALIZER;
     while ((n = lai_ns_iterate(&it))) {
@@ -235,4 +237,30 @@ int thos_acpi_find_owner(const char *name, int nth, char *out, int outlen) {
         return 0;
     }
     return -1;
+}
+
+// The embedded controller raises SCI_EVT (status bit 5) when something happened (Fn keys, battery/AC change, lid): ask which event it
+// was (query command 0x84) and run the firmware's _Qxx method for it. Polled, so no SCI interrupt routing is needed. Returns the number
+// of the event handled, -1 if none.
+int thos_acpi_ec_poll(void) {
+    int handled = -1;
+    for (int i = 0; i < ec_count; i++) {
+        struct lai_ec_driver *d = &ecs[i];
+        if (!(laihost_inb(d->cmd_port) & 0x20)) continue;
+        if (ec_wait(d, 2, 0)) continue;
+        laihost_outb(d->cmd_port, 0x84);
+        if (ec_wait(d, 1, 1)) continue;
+        uint8_t q = laihost_inb(d->data_port);
+        if (!q) continue;
+        char name[5] = {'_', 'Q', "0123456789ABCDEF"[q >> 4], "0123456789ABCDEF"[q & 15], 0};
+        lai_nsnode_t *m = lai_resolve_path(ec_node[i], name);
+        if (m) {
+            lai_state_t st;
+            lai_init_state(&st);
+            lai_eval(NULL, m, &st);
+            lai_finalize_state(&st);
+        }
+        handled = q;
+    }
+    return handled;
 }

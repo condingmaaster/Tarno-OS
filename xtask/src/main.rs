@@ -1334,6 +1334,29 @@ fn main() {
                 exit(1);
             }
         }
+        "powerbutton-test" => {
+            // a press of the (virtual) power button reaches the ACPI power-button status bit; the kernel notices it and shuts down
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/pwrbtn-serial.log"), root.join("target/pwrbtn-mon.sock"));
+            let h = std::thread::spawn(move || {
+                for _ in 0..600 {
+                    if std::fs::read_to_string(&log).unwrap_or_default().contains("interactive hold") { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(4));
+                mon(&sock, "system_powerdown");
+            });
+            let out = boot_and_run_args(&img, "pwrbtn", "sleep 60", "THOS: power button", 120, &[]);
+            let _ = h.join();
+            if out.contains("THOS: power button     pressed: shutting down") {
+                println!("powerbutton-test PASSED: the power button press is noticed and the system shuts down");
+            } else {
+                for l in out.lines().rev().take(12) { eprintln!("  {l}"); }
+                eprintln!("powerbutton-test FAILED");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");
