@@ -3909,7 +3909,7 @@ fn limine_conf(root: &Path) -> PathBuf {
     let mut text = std::fs::read_to_string(&src).expect("read limine.conf");
     if menu {
         // the start menu: the live/normal system and the installer (kernel command line `install`: no login, the installer runs as root)
-        text = "# SPDX-License-Identifier: GPL-2.0-or-later\n# THOS start menu\ntimeout: 6\ninterface_branding: THOS\n\n/THOS - start\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n\n/THOS - install to this computer\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n    cmdline: install\n".to_string();
+        text = "# SPDX-License-Identifier: GPL-2.0-or-later\n# THOS start menu\ntimeout: 6\ninterface_branding: THOS\n\n/THOS - start\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n\n/THOS - install to this computer\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n    cmdline: install\n\n/THOS - safe start (no ACPI interpreter)\n    protocol: limine\n    kernel_path: boot():/boot/thos-kernel\n    cmdline: noacpi\n".to_string();
     }
     if let Some(res) = res {
         text = text.replace("    protocol: limine\n", &format!("    protocol: limine\n    resolution: {res}\n"));
