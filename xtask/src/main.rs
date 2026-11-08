@@ -1389,6 +1389,18 @@ fn main() {
                 exit(1);
             }
         }
+        "input-inject-test" => {
+            // /dev/inject: keyboard input from userland arrives like a real keyboard (the shell reads it after the foreground command ends)
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "inject", "/busybox sh /inject.sh", "got-hello-world-end", 200, &[]);
+            if out.lines().any(|l| l.trim() == "got-hello-world-end") {
+                println!("input-inject-test PASSED: text typed through /dev/inject was read from the keyboard input by a program");
+            } else {
+                for l in out.lines().rev().take(14) { eprintln!("  {l}"); }
+                eprintln!("input-inject-test FAILED");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");
@@ -4716,14 +4728,14 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "thosshot", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "thosshot", "thosinput", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));

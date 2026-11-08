@@ -367,6 +367,7 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
             crate::pty::open_ctty(&p)
         }
         "/dev/kmsg" if want_write && !want_read => Arc::new(KmsgFile),
+        "/dev/inject" if want_write && !want_read => Arc::new(InjectFile { src: crate::ps2::usb_mouse_attach(), buttons: core::sync::atomic::AtomicU8::new(0) }),
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
                 Arc::new(KeyboardFile)
@@ -388,6 +389,42 @@ impl FileOps for KmsgFile {
         if crate::process::current_uid() != 0 { return -13; }
         let s = alloc::string::String::from_utf8_lossy(buf);
         for l in s.lines().filter(|l| !l.is_empty()) { crate::kprintln!("THOS: user           {l}"); }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
+/// `/dev/inject` (write only, root): synthetic keyboard and mouse input that flows through the same queues as real hardware (remote control, tests).
+/// One command per line: `m DX DY` moves the mouse by (DX, DY) · `b N` sets the held buttons (1 left, 2 right, 4 middle) · `w N` wheel (positive up) ·
+/// `k MODS CODE` holds a key (USB HID usage, modifier bits as in a boot report) · `u` releases all keys.
+struct InjectFile {
+    src: usize,
+    buttons: core::sync::atomic::AtomicU8,
+}
+impl Drop for InjectFile {
+    fn drop(&mut self) { crate::ps2::usb_mouse_detach(self.src); }
+}
+impl FileOps for InjectFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        let text = alloc::string::String::from_utf8_lossy(buf);
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            let Some(cmd) = it.next() else { continue };
+            let mut num = || it.next().and_then(|t| t.parse::<i32>().ok()).unwrap_or(0);
+            let b = self.buttons.load(core::sync::atomic::Ordering::Relaxed);
+            match cmd {
+                "m" => { let (dx, dy) = (num(), num()); crate::ps2::usb_mouse_event(self.src, b, dx, dy, 0); }
+                "b" => { let n = (num() & 7) as u8; self.buttons.store(n, core::sync::atomic::Ordering::Relaxed); crate::ps2::usb_mouse_event(self.src, n, 0, 0, 0); }
+                "w" => { let n = num(); crate::ps2::usb_mouse_event(self.src, b, 0, 0, n); }
+                "k" => { let (mods, code) = (num() as u8, num() as u8); crate::console::feed_report(&[mods, 0, code, 0, 0, 0, 0, 0]); }
+                "u" => crate::console::feed_report(&[0; 8]),
+                _ => return -22,
+            }
+        }
         buf.len() as i64
     }
     fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
