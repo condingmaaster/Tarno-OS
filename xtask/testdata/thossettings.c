@@ -343,7 +343,8 @@ static long thos2(long n, long a, long b) {
     __asm__ volatile("syscall" : "=a"(r) : "0"(n), "D"(a), "S"(b) : "rcx", "r11", "memory");
     return r;
 }
-static int slider_y[2];                                      /* top of the brightness and volume tracks (0: not shown) */
+static int pbtn_y;                                           /* top of the power button row (0: not shown yet) */
+static int slider_y[2];                                     /* top of the brightness and volume tracks (0: not shown) */
 static void slider(int x, int y, int w, const char *label, int pct) {
     ui_text(px, WW, WH, x + 4, y + 14, label, UI_REG, 13, UI_MUTED);
     char v[8]; snprintf(v, sizeof v, "%d %%", pct);
@@ -380,10 +381,28 @@ static void page_power(int x, int y, int w) {
     long bl = thos2(THOS_BASE + 2, 0, 0), vol = thos2(THOS_BASE + 3, 0, 0);
     if (bl >= 0) { slider(x, y, w, "Screen brightness", (int)bl); slider_y[0] = y + 26; y += 56; }
     if (vol >= 0) { slider(x, y, w, "Volume", (int)vol); slider_y[1] = y + 26; y += 56; }
-    if (bl < 0 && vol < 0) ui_text(px, WW, WH, x + 4, y + 14, "No adjustable brightness or sound output found.", UI_REG, 13, UI_MUTED);
+    if (bl < 0 && vol < 0) { ui_text(px, WW, WH, x + 4, y + 14, "No adjustable brightness or sound output found.", UI_REG, 13, UI_MUTED); y += 30; }
+    static const char *pb[3] = { "Do nothing", "Press twice to shut down", "Shut down at once" };
+    long pol = thos2(THOS_BASE + 4, 0, 0);
+    card(x, y, w, 1);
+    row(x, y + 2, w, "Power button (click to change)", pol >= 0 && pol < 3 ? pb[pol] : "?", 1);
+    pbtn_y = y;
+}
+static void save_power_button(long v) {
+    const char *h = getenv("HOME");
+    char path[220];
+    snprintf(path, sizeof path, "%s/.thos-power", h && h[0] == '/' && h[1] ? h : "/tmp");
+    FILE *f = fopen(path, "w");
+    if (f) { fprintf(f, "%ld\n", v); fclose(f); }
 }
 static void power_click(int mxp, int myp) {
     int x = SIDE + 28, w = WW - SIDE - 56;
+    if (pbtn_y && myp >= pbtn_y && myp < pbtn_y + ROWH + 4 && mxp >= x && mxp < x + w) {
+        long pol = thos2(THOS_BASE + 4, 0, 0);
+        long nx = pol >= 0 ? (pol + 1) % 3 : 0;
+        if (thos2(THOS_BASE + 4, 1, nx) >= 0) save_power_button(nx);
+        return;
+    }
     for (int i = 0; i < 2; i++) {
         if (!slider_y[i] || myp < slider_y[i] - 14 || myp > slider_y[i] + 24) continue;
         long pct = ((long)(mxp - x) * 100 + w / 2) / w;

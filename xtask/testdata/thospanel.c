@@ -480,8 +480,23 @@ static void update_clock(void) {
     snprintf(clock_day, sizeof clock_day, "%s %d %s", wd[lt.tm_wday], lt.tm_mday, mo[lt.tm_mon]);
 }
 
+/* the power button policy chosen in Settings (kept in ~/.thos-power) is applied when the desktop starts; until then the kernel ignores the button */
+static void apply_power_button(void) {
+    const char *h = getenv("HOME");
+    char path[220];
+    snprintf(path, sizeof path, "%s/.thos-power", h && h[0] == '/' && h[1] ? h : "/tmp");
+    FILE *f = fopen(path, "r");
+    if (!f) return;
+    int v = -1;
+    if (fscanf(f, "%d", &v) == 1 && v >= 0 && v <= 2) {
+        long r;
+        __asm__ volatile("syscall" : "=a"(r) : "0"(0x54480004L), "D"(1L), "S"((long)v) : "rcx", "r11", "memory");
+    }
+    fclose(f);
+}
 int main(void) {
     signal(SIGCHLD, SIG_IGN);
+    apply_power_button();
     int s = sock_connect();
     if (s < 0) { puts("panel FAIL: connect"); return 1; }
     struct wl_msg m = { WL_HELLO, 0, 0, 0, 0 };

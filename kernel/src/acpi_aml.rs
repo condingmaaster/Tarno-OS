@@ -452,6 +452,23 @@ fn pm1a_event_block() -> u16 {
     }
 }
 
+/// What a press of the power button does: 0 nothing (the default: a stray press or someone else's fingers must not kill the running work),
+/// 1 shut down on a second press within 3 s, 2 shut down at once. Set from the desktop (Settings) through the THOS-native power_button() call.
+static POWER_BUTTON: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
+const DOUBLE_PRESS_TICKS: u32 = 30;
+
+pub fn power_button_policy() -> u8 {
+    POWER_BUTTON.load(Ordering::Relaxed)
+}
+
+pub fn set_power_button_policy(p: u8) -> bool {
+    if p > 2 {
+        return false;
+    }
+    POWER_BUTTON.store(p, Ordering::Relaxed);
+    true
+}
+
 /// Body of the interpreter thread: start lai, then every 100 ms look at the power button (PM1 status) and the embedded controller's event
 /// flag, and every 5 s refresh the sensor snapshot.
 pub fn run(rsdp: *const u8, revision: u8) -> ! {
@@ -459,6 +476,7 @@ pub fn run(rsdp: *const u8, revision: u8) -> ! {
     if ready() {
         let pm1 = pm1a_event_block();
         let mut tick = 0u32;
+        let mut last_press: Option<u32> = None;
         if pm1 != 0 {
             unsafe { Port::<u16>::new(pm1).write(0x100) }; // a press that was recorded before we looked (the one that switched the machine on) must not shut it down
         }
@@ -478,8 +496,17 @@ pub fn run(rsdp: *const u8, revision: u8) -> ! {
                 let st: u16 = unsafe { Port::new(pm1).read() };
                 if st & 0x100 != 0 {
                     unsafe { Port::<u16>::new(pm1).write(0x100) }; // write 1 to clear
-                    crate::kprintln!("THOS: power button     pressed: shutting down");
-                    crate::power::poweroff();
+                    let policy = POWER_BUTTON.load(Ordering::Relaxed);
+                    let again = last_press.is_some_and(|t| tick.wrapping_sub(t) <= DOUBLE_PRESS_TICKS);
+                    if policy == 2 || (policy == 1 && again) {
+                        crate::kprintln!("THOS: power button     pressed: shutting down");
+                        crate::power::poweroff();
+                    } else if policy == 1 {
+                        crate::kprintln!("THOS: power button     pressed: press again within 3 s to shut down");
+                        last_press = Some(tick);
+                    } else {
+                        crate::kprintln!("THOS: power button     pressed: ignored (policy)");
+                    }
                 }
             }
             let ev = {

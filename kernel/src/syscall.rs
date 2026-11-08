@@ -118,6 +118,7 @@ const SYS_THOS_READPASS: u64 = THOS_BASE + 1;
 const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
 /// `volume(op, percent)`: op 0 = read the master volume (percent, or -ENODEV), op 1 = set it.
 const SYS_THOS_VOLUME: u64 = THOS_BASE + 3;
+const SYS_THOS_POWERBTN: u64 = THOS_BASE + 4;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -2328,6 +2329,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 0
             } else {
                 -19
+            }
+        }
+        SYS_THOS_POWERBTN => {
+            if a1 == 0 {
+                crate::acpi_aml::power_button_policy() as i64
+            } else if crate::acpi_aml::set_power_button_policy(a2 as u8) {
+                0
+            } else {
+                -22
             }
         }
         SYS_THOS_BACKLIGHT => {

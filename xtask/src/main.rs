@@ -1339,20 +1339,32 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let root = workspace_root();
             let (log, sock) = (root.join("target/pwrbtn-serial.log"), root.join("target/pwrbtn-mon.sock"));
+            let _ = std::fs::remove_file(&log);                      // a stale log would let the presses start before QEMU is up
+            let _ = std::fs::remove_file(&sock);
             let h = std::thread::spawn(move || {
+                let log2 = log.clone();
                 for _ in 0..600 {
                     if std::fs::read_to_string(&log).unwrap_or_default().contains("interactive hold") { break; }
                     std::thread::sleep(std::time::Duration::from_millis(500));
                 }
                 std::thread::sleep(std::time::Duration::from_secs(4));
-                mon(&sock, "system_powerdown");
+                mon(&sock, "system_powerdown");                      // default policy: ignored
+                for _ in 0..240 {                                    // wait until the guest has switched the policy to "twice"
+                    if std::fs::read_to_string(&log2).unwrap_or_default().contains("power button: twice") { break; }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                mon(&sock, "system_powerdown");                      // "twice": the first press only arms ...
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                mon(&sock, "system_powerdown");                      // ... the second one shuts down
             });
-            let out = boot_and_run_args(&img, "pwrbtn", "sleep 60", "THOS: power button", 120, &[]);
+            let out = boot_and_run_args(&img, "pwrbtn", "thospower; sleep 10; thospower twice; sleep 60", "THOS: power button     pressed: shutting down", 160, &[]);
             let _ = h.join();
-            if out.contains("THOS: power button     pressed: shutting down") {
-                println!("powerbutton-test PASSED: the power button press is noticed and the system shuts down");
+            let ok = out.contains("pressed: ignored (policy)") && out.contains("power button: ignore") && out.contains("pressed: press again within 3 s") && out.contains("pressed: shutting down");
+            if ok {
+                println!("powerbutton-test PASSED: a press is ignored by default, with \"twice\" the second press within 3 s shuts the system down");
             } else {
-                for l in out.lines().rev().take(12) { eprintln!("  {l}"); }
+                for l in out.lines().rev().take(14) { eprintln!("  {l}"); }
                 eprintln!("powerbutton-test FAILED");
                 exit(1);
             }
@@ -4620,7 +4632,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -8550,7 +8562,9 @@ fn boot_and_run_args(img: &Path, tag: &str, cmd: &str, needle: &str, secs: u64, 
         let _ = std::fs::write(root.join(format!("target/{tag}-regs.txt")), all);
     }
     if found {
-        mon(&sock,&format!("screendump {}",root.join(format!("target/{tag}-finish.ppm")).display()));
+        if std::os::unix::net::UnixStream::connect(&sock).is_ok() { // a guest that powered itself off is already gone
+            mon(&sock,&format!("screendump {}",root.join(format!("target/{tag}-finish.ppm")).display()));
+        }
     }
     let out = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = child.kill();
