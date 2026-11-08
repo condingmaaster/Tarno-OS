@@ -9,7 +9,7 @@ use alloc::vec::Vec;
 
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{self, ChecksumCapabilities, Device, DeviceCapabilities, Medium};
-use smoltcp::socket::{dhcpv4, icmp};
+use smoltcp::socket::{dhcpv4, icmp, udp};
 use smoltcp::time::Instant;
 use smoltcp::wire::{
     EthernetAddress, HardwareAddress, Icmpv4Packet, Icmpv4Repr, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr,
@@ -170,6 +170,9 @@ pub struct Stack {
     enabled: bool,
     automatic: bool,
     router: Option<Ipv4Address>,
+    /// Netconsole: the kernel log goes out as UDP datagrams to the gateway (port 6666) once there is an address, for machines without a serial port.
+    con: SocketHandle,
+    con_pos: usize,
 }
 
 pub static NET: Mutex<Option<Stack>> = Mutex::new(None);
@@ -215,6 +218,21 @@ pub fn control(bytes: &[u8]) -> i64 {
 }
 
 impl Stack {
+    /// Send new kernel log text as UDP datagrams of up to 1000 bytes (a few per call); the position only advances for what was queued.
+    fn netconsole(&mut self) {
+        if !self.configured || !self.enabled { return; }
+        let o = self.router.map_or([255, 255, 255, 255], |r| r.octets()); // the gateway (the PC that shares its network, or the QEMU host); broadcast without one
+        let dst = smoltcp::wire::IpEndpoint::new(IpAddress::v4(o[0], o[1], o[2], o[3]), 6666);
+        for _ in 0..4 {
+            let mut buf = [0u8; 1000];
+            let mut pos = self.con_pos;
+            let n = crate::serial::log_read(&mut pos, &mut buf);
+            if n == 0 { break; }
+            if self.sockets.get_mut::<udp::Socket>(self.con).send_slice(&buf[..n], dst).is_err() { break; }
+            self.con_pos = pos;
+        }
+    }
+
     pub fn poll(&mut self) {
         self.iface.poll(now(), &mut self.nic, &mut self.sockets);
         if self.automatic { self.service_dhcp(); }
@@ -331,11 +349,18 @@ pub fn init() -> Result<(), &'static str> {
     );
     let mut sockets = SocketSet::new(Vec::new());
     let dhcp = sockets.add(dhcpv4::Socket::new());
+    let con = {
+        let rx = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 1], vec![0u8; 16]);
+        let tx = udp::PacketBuffer::new(vec![udp::PacketMetadata::EMPTY; 8], vec![0u8; 8 * 1024]);
+        let mut s = udp::Socket::new(rx, tx);
+        let _ = s.bind(6665);
+        sockets.add(s)
+    };
     let mut iface = iface;
     iface.update_ip_addrs(|a| {
         let _ = a.push(IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(127, 0, 0, 1), 8)));
     });
-    *NET.lock() = Some(Stack { nic: dev, iface, sockets, dhcp: Some(dhcp), dns: Vec::new(), configured: false, enabled: true, automatic: true, router: None });
+    *NET.lock() = Some(Stack { nic: dev, iface, sockets, dhcp: Some(dhcp), dns: Vec::new(), configured: false, enabled: true, automatic: true, router: None, con, con_pos: 0 });
     Ok(())
 }
 
@@ -415,6 +440,7 @@ pub extern "C" fn net_thread(_: usize) -> ! {
     } } else { kprintln!("THOS: net dhcp         no lease/router yet; waiting without a fabricated address"); }
     loop {
         if let Some(st) = NET.lock().as_mut() {
+            st.netconsole();
             st.poll();
             crate::net_sock::reap(st);
         }

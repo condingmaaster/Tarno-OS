@@ -125,6 +125,21 @@ pub fn with_log_try(f: impl FnOnce(&[u8], &[u8])) -> bool {
     true
 }
 
+/// Copy retained log bytes starting at absolute position `*pos` into `out`, advancing `*pos` (netconsole). If the ring has wrapped past
+/// `*pos`, the position jumps to the oldest byte still held. Never blocks: 0 if the log is busy or nothing is new.
+pub fn log_read(pos: &mut usize, out: &mut [u8]) -> usize {
+    let Some(l) = LOG.try_lock() else { return 0 };
+    if l.total > LOG_SIZE && *pos < l.total - LOG_SIZE {
+        *pos = l.total - LOG_SIZE;
+    }
+    let n = (l.total - *pos).min(out.len());
+    for i in 0..n {
+        out[i] = l.buf[(*pos + i) % LOG_SIZE];
+    }
+    *pos += n;
+    n
+}
+
 /// The retained kernel log, oldest byte first.
 pub fn log_snapshot() -> alloc::vec::Vec<u8> {
     let l = LOG.lock();

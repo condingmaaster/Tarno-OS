@@ -3703,6 +3703,34 @@ fn main() {
             let img = prod_interactive_image(cmd);
             net_test(&img);
         }
+        "netconsole-test" => {
+            // the kernel log leaves the machine as UDP datagrams to the gateway (QEMU's 10.0.2.2 is the host): what a laptop without a serial port needs
+            let img = prod_interactive_image(cmd);
+            let sock = std::net::UdpSocket::bind("127.0.0.1:6666").expect("bind udp 6666 (is another listener running?)");
+            sock.set_read_timeout(Some(std::time::Duration::from_millis(500))).unwrap();
+            let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<u8>::new()));
+            let (g2, stop) = (got.clone(), std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)));
+            let stop2 = stop.clone();
+            let h = std::thread::spawn(move || {
+                let mut b = [0u8; 2048];
+                while !stop2.load(std::sync::atomic::Ordering::Relaxed) {
+                    if let Ok((n, _)) = sock.recv_from(&mut b) { g2.lock().unwrap().extend_from_slice(&b[..n]); }
+                }
+            });
+            let _ = boot_and_run_args(&img, "netcons", "sleep 4; echo nc-done-$((3))", "nc-done-3", 120, &[]);
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            let _ = h.join();
+            let text = String::from_utf8_lossy(&got.lock().unwrap()).to_string();
+            if text.contains("THOS: net dhcp") && text.len() > 500 {
+                println!("netconsole-test PASSED: {} bytes of kernel log arrived over UDP", text.len());
+                for l in text.lines().filter(|l| l.contains("sshd:")) { println!("  {l}"); }
+            } else {
+                eprintln!("netconsole-test FAILED: {} bytes received", text.len());
+                for l in text.lines().take(10) { eprintln!("  {l}"); }
+                exit(1);
+            }
+        }
         "random-test" => {
             let img = prod_interactive_image(cmd);
             random_test(&img);
@@ -8050,7 +8078,7 @@ fn suite(args: &[String]) {
     const SHARED: &[&str] = &[
         "real-test", "real2-test", "real3-test", "real4-test", "real5-test", "pipe2-test", "rust-test", "oom-test", "job-test", "ehci-test", "aslr-test", "winc-test", "dyn-test", "thr-test", "ipc-test", "event-test", "desk-test", "desk-kbd-test", "desk-term-test", "desk-panel-test", "desk-menu-test", "desk-tasklist-test", "desk-files-test", "desk-soft-test", "desk-settings-test", "desk-toast-test", "desk-theme-test", "desk-edit-test", "desk-cursor-test", "desk-minimize-test", "desk-drag-test", "desk-cal-test", "desk-elevate-test", "desk-switch-test", "desk-ctx-test", "install-test", "desk-shot-test", "desk-view-test", "pkg-test", "hw-test", "wbig-test", "winrt-test", "desk-win32-test", "desk-keys-test", "wayland-test", "foot-test", "desktop-test", "desk-vim-test", "proc-test", "fork-test", "mem-test", "bios-kbd-test",
         "shortcuts-test", "longcmd-test", "fb-test", "mouse-test", "ping-test", "lo-test", "httpd-test", "e1000-test", "dns-test",
-        "net-test", "net-settings-test", "random-test", "bios-power-test",
+        "net-test", "net-settings-test", "netconsole-test", "random-test", "bios-power-test",
     ];
     const ISO: &[&str] = &[
         "kbd-test", "ahci-test", "ext2-test", "fat-test", "integrity-test", "registry-crash-test",

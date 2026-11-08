@@ -366,6 +366,7 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
             let p = crate::sched::current().task().and_then(|t| t.ctty())?;
             crate::pty::open_ctty(&p)
         }
+        "/dev/kmsg" if want_write && !want_read => Arc::new(KmsgFile),
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
                 Arc::new(KeyboardFile)
@@ -377,6 +378,21 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
         }
         _ => return None,
     })
+}
+
+/// `/dev/kmsg` (write only, root): a line into the kernel log, so a boot service shows up in `dmesg` and on the netconsole.
+struct KmsgFile;
+impl FileOps for KmsgFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        let s = alloc::string::String::from_utf8_lossy(buf);
+        for l in s.lines().filter(|l| !l.is_empty()) { crate::kprintln!("THOS: user           {l}"); }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
 }
 
 /// `/dev/netctl`: authenticated network commands from Settings or the shell.
