@@ -42,6 +42,9 @@ pub struct Hda {
     wp: u64,
     played: u64,
     last_lpib: u32,
+    /// Output amplifiers on the paths: (widget, the gain step that means 0 dB). Master volume scales these.
+    outamps: Vec<(u8, u32)>,
+    volume: u32,
 }
 
 unsafe impl Send for Hda {}
@@ -211,6 +214,9 @@ impl Hda {
                     // output amplifier: unmute both channels at 0 dB
                     let g = self.amp_gain(nid, afg);
                     self.set16(nid, 0x3, 0xB000 | g);
+                    if !self.outamps.iter().any(|(n, _)| *n == nid) {
+                        self.outamps.push((nid, g));
+                    }
                 }
                 if w + 1 < path.len() && caps & (1 << 1) != 0 {
                     // input amplifier: unmute the input we use
@@ -298,6 +304,17 @@ impl Hda {
         self.last_lpib = lpib;
     }
 
+    /// Master volume 0-100 %: 100 is the codec's 0 dB step, 0 mutes; the steps in between scale linearly over the gain steps below 0 dB.
+    fn set_volume(&mut self, pct: u32) {
+        let pct = pct.min(100);
+        self.volume = pct;
+        let amps = self.outamps.clone();
+        for (nid, zero_db) in amps {
+            let payload = if pct == 0 { 0xB080 } else { 0xB000 | (zero_db * pct / 100).max(1).min(zero_db.max(1)) };
+            self.set16(nid, 0x3, payload);
+        }
+    }
+
     fn queued(&self) -> usize {
         self.wp.saturating_sub(self.played) as usize
     }
@@ -355,7 +372,7 @@ fn try_controller(loc: pci::Location) -> Result<Hda, &'static str> {
         return Err("HDA: DMA region unsuitable");
     }
     let dma = crate::mm::phys_to_virt(x86_64::PhysAddr::new(dma_phys)).as_mut_ptr::<u8>();
-    let mut h = Hda { mmio, dma, dma_phys, sd: 0, codec: 0, dacs: Vec::new(), configured: false, running: false, wp: 0, played: 0, last_lpib: 0 };
+    let mut h = Hda { mmio, dma, dma_phys, sd: 0, codec: 0, dacs: Vec::new(), configured: false, running: false, wp: 0, played: 0, last_lpib: 0, outamps: Vec::new(), volume: 100 };
     // controller reset
     h.w32(GCTL, 0);
     for _ in 0..100 {
@@ -403,6 +420,20 @@ fn try_controller(loc: pci::Location) -> Result<Hda, &'static str> {
         h.dacs.clear();
     }
     Err("HDA: no codec with a connected output")
+}
+
+/// Master volume in percent, `None` without an audio output.
+pub fn volume() -> Option<u32> {
+    HDA.lock().as_ref().map(|h| h.volume)
+}
+pub fn set_volume(pct: u32) -> bool {
+    match HDA.lock().as_mut() {
+        Some(h) => {
+            h.set_volume(pct);
+            true
+        }
+        None => false,
+    }
 }
 
 /// `/dev/dsp`

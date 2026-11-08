@@ -1619,6 +1619,31 @@ fn main() {
                 exit(1);
             }
         }
+        "volume-test" => {
+            // master volume: the HDA output amplifiers scale the tone (QEMU's hda-output applies the gain); 0 mutes
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let mut peaks = Vec::new();
+            let mut reads = String::new();
+            for (vol, tag) in [(100u32, "voll"), (30, "volb"), (0, "volc")] {
+                let wav = root.join(format!("target/volume-{tag}.wav"));
+                let _ = std::fs::remove_file(&wav);
+                let out = boot_and_run_args(&img, "volume", &format!("thosvol {vol}; audiotest; echo vol-after-$((7))"), "vol-after-7", 120,
+                    &["-audiodev", &format!("wav,id=a0,path={}", wav.display()), "-device", "intel-hda,id=hda0", "-device", "hda-output,audiodev=a0"]);
+                reads.push_str(&out.lines().filter(|l| l.starts_with("volume ")).collect::<Vec<_>>().join(","));
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let data = std::fs::read(&wav).unwrap_or_default();
+                let peak = data.get(44..).unwrap_or(&[]).chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap_or(0);
+                peaks.push(peak);
+            }
+            println!("  peaks at 100 / 30 / 0 %: {peaks:?}, thosvol said: {reads}");
+            if peaks[0] > 8000 && peaks[1] > 500 && peaks[1] < peaks[0] * 3 / 4 && peaks[2] < 300 {
+                println!("volume-test PASSED: the master volume scales the output and 0 mutes");
+            } else {
+                eprintln!("volume-test FAILED");
+                exit(1);
+            }
+        }
         "netsurf-test" => {
             // NetSurf, a real web browser (GTK 3, Wayland), renders a local page
             std::env::set_var("THOS_FS_MIB", "256");
@@ -4557,7 +4582,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {

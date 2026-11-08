@@ -116,6 +116,8 @@ const SYS_THOS_ELEVATE: u64 = THOS_BASE;
 const SYS_THOS_READPASS: u64 = THOS_BASE + 1;
 /// `backlight(op, percent)`: op 0 = read the brightness (percent, or -ENODEV), op 1 = set it.
 const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
+/// `volume(op, percent)`: op 0 = read the master volume (percent, or -ENODEV), op 1 = set it.
+const SYS_THOS_VOLUME: u64 = THOS_BASE + 3;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -2319,6 +2321,15 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         // against outside the `interactive` build, so it's ENOSYS there.
         #[cfg(feature = "interactive")]
         SYS_THOS_ELEVATE => sys_elevate(a1, a2, a3),
+        SYS_THOS_VOLUME => {
+            if a1 == 0 {
+                crate::hda::volume().map_or(-19, |p| p as i64)
+            } else if crate::hda::set_volume(a2 as u32) {
+                0
+            } else {
+                -19
+            }
+        }
         SYS_THOS_BACKLIGHT => {
             if a1 == 0 {
                 crate::acpi_aml::backlight_get().map_or(-19, |p| p as i64)
