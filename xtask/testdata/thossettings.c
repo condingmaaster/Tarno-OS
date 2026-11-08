@@ -34,9 +34,9 @@ static int page, hover_row = -1;
 static int net_mode, net_manual, net_focus;
 static char net_fields[4][32] = { "", "24", "0.0.0.0", "0.0.0.0" };
 static char net_message[128];
-static const char *names[] = { "About", "Network", "Storage", "Display", "Appearance", "Development" };
-static const uint32_t icons[] = { IC_INFO, 0xf0ac, IC_ARCHIVE, IC_DESKTOP, 0xf1fc, IC_TERMINAL };
-#define NPAGES 6
+static const char *names[] = { "About", "Network", "Storage", "Display", "Appearance", "Development", "Power & sound" };
+static const uint32_t icons[] = { IC_INFO, 0xf0ac, IC_ARCHIVE, IC_DESKTOP, 0xf1fc, IC_TERMINAL, 0xf011 };
+#define NPAGES 7
 
 static int slurp(const char *path, char *buf, size_t cap) {
     FILE *f = fopen(path, "r");
@@ -336,6 +336,63 @@ static void development_click(int mx,int my) {
     }
     if(command&&fork()==0) {close(sock);execl("/thosterm","thosterm","-l","-c",command,(char*)0);_exit(127);}
 }
+/* ---- power and sound: battery / AC / temperatures from /proc/power (what the firmware's AML reports), brightness and volume sliders ---- */
+#define THOS_BASE 0x54480000L
+static long thos2(long n, long a, long b) {
+    long r;
+    __asm__ volatile("syscall" : "=a"(r) : "0"(n), "D"(a), "S"(b) : "rcx", "r11", "memory");
+    return r;
+}
+static int slider_y[2];                                      /* top of the brightness and volume tracks (0: not shown) */
+static void slider(int x, int y, int w, const char *label, int pct) {
+    ui_text(px, WW, WH, x + 4, y + 14, label, UI_REG, 13, UI_MUTED);
+    char v[8]; snprintf(v, sizeof v, "%d %%", pct);
+    ui_text(px, WW, WH, x + w - 4 - ui_text_width(UI_REG, 13, v), y + 14, v, UI_REG, 13, UI_TEXT);
+    ui_bar(px, WW, WH, x, y + 26, w, 10, (float)pct / 100.0f, UI_ACCENT);
+}
+static void page_power(int x, int y, int w) {
+    ui_text(px, WW, WH, x, y + 28, "Power & sound", UI_BOLD, 22, UI_TEXT);
+    y += 48;
+    char pw[640], v[96], b[120];
+    slurp("/proc/power", pw, sizeof pw);
+    int rows = 0;
+    char st[24], pc[16], ac[16], lid[16], cpu[16], tz[16], full[24], rem[24], unit[8];
+    kv(pw, "bat0.state", st, sizeof st); kv(pw, "bat0.percent", pc, sizeof pc); kv(pw, "ac0", ac, sizeof ac);
+    kv(pw, "lid", lid, sizeof lid); kv(pw, "cputemp", cpu, sizeof cpu); kv(pw, "thermal0", tz, sizeof tz);
+    kv(pw, "bat0.full", full, sizeof full); kv(pw, "bat0.remaining", rem, sizeof rem); kv(pw, "bat0.unit", unit, sizeof unit);
+    int have_bat = pc[0] != 0, have_ac = ac[0] != 0;
+    rows = have_bat + have_ac + (cpu[0] != 0) + (tz[0] != 0) + (lid[0] != 0);
+    if (rows == 0) {
+        card(x, y, w, 1);
+        row(x, y, w, "Sensors", "The firmware reports none (or the ACPI interpreter is off)", 1);
+        y += ROWH + 24;
+    } else {
+        card(x, y, w, rows);
+        int r = 0;
+        if (have_bat) { snprintf(b, sizeof b, "%s %% (%s)", pc, st[0] ? st : "?"); row(x, y + 2 + r * ROWH, w, "Battery", b, r == rows - 1); r++; }
+        if (have_ac) { row(x, y + 2 + r * ROWH, w, "Power source", !strcmp(ac, "online") ? "Mains adapter" : "Battery", r == rows - 1); r++; }
+        if (cpu[0]) { snprintf(v, sizeof v, "%s", cpu); row(x, y + 2 + r * ROWH, w, "Processor temperature", v, r == rows - 1); r++; }
+        if (tz[0]) { snprintf(v, sizeof v, "%s", tz); row(x, y + 2 + r * ROWH, w, "Thermal zone", v, r == rows - 1); r++; }
+        if (lid[0]) { row(x, y + 2 + r * ROWH, w, "Lid", lid, r == rows - 1); r++; }
+        y += rows * ROWH + 24;
+    }
+    slider_y[0] = slider_y[1] = 0;
+    long bl = thos2(THOS_BASE + 2, 0, 0), vol = thos2(THOS_BASE + 3, 0, 0);
+    if (bl >= 0) { slider(x, y, w, "Screen brightness", (int)bl); slider_y[0] = y + 26; y += 56; }
+    if (vol >= 0) { slider(x, y, w, "Volume", (int)vol); slider_y[1] = y + 26; y += 56; }
+    if (bl < 0 && vol < 0) ui_text(px, WW, WH, x + 4, y + 14, "No adjustable brightness or sound output found.", UI_REG, 13, UI_MUTED);
+}
+static void power_click(int mxp, int myp) {
+    int x = SIDE + 28, w = WW - SIDE - 56;
+    for (int i = 0; i < 2; i++) {
+        if (!slider_y[i] || myp < slider_y[i] - 14 || myp > slider_y[i] + 24) continue;
+        long pct = ((long)(mxp - x) * 100 + w / 2) / w;
+        if (pct < 0) pct = 0;
+        if (pct > 100) pct = 100;
+        thos2(THOS_BASE + 2 + i, 1, pct);
+        return;
+    }
+}
 static void render(void) {
     for (int i = 0; i < WW * WH; i++) px[i] = UI_SURFACE;
     for (int y = 0; y < WH; y++) for (int x = 0; x < SIDE; x++) px[y * WW + x] = 0x131722;
@@ -350,7 +407,7 @@ static void render(void) {
     float t = tween_busy(&page_t) ? tween_value(&page_t, ease_out) : 1.0f;
     int cx = SIDE + 28, cw = WW - SIDE - 56, cy = 14 + (int)((1.0f - t) * 14);
     ui_set_clip(SIDE + 1, 0, WW, WH);
-    switch (page) { case 0: page_about(cx, cy, cw); break; case 1: page_net(cx, cy, cw); break; case 2: page_storage(cx, cy, cw); break; case 3: page_display(cx, cy, cw); break; case 5: page_development(cx, cy, cw); break; default: page_appear(cx, cy, cw); }
+    switch (page) { case 0: page_about(cx, cy, cw); break; case 1: page_net(cx, cy, cw); break; case 2: page_storage(cx, cy, cw); break; case 3: page_display(cx, cy, cw); break; case 5: page_development(cx, cy, cw); break; case 6: page_power(cx, cy, cw); break; default: page_appear(cx, cy, cw); }
     if (t < 1.0f) ui_rrect_g(px, WW, WH, SIDE + 1, 0, WW - SIDE - 1, WH, 0, UI_SURFACE, UI_SURFACE, (unsigned)((1.0f - t) * 255));      /* the old page fades into the new one */
     ui_set_clip(0, 0, 0x7fffffff, 0x7fffffff);
     struct wl_msg c = { WL_COMMIT, 0, 0, WW, WH };
@@ -412,6 +469,7 @@ int main(void) {
             else if ((int)m.a > SIDE && page == 1) net_click((int)m.a,(int)m.b);
             else if ((int)m.a > SIDE && page == 4) appear_click((int)m.a, (int)m.b);
             else if ((int)m.a > SIDE && page == 5) development_click((int)m.a,(int)m.b);
+            else if ((int)m.a > SIDE && page == 6) power_click((int)m.a, (int)m.b);
             render();
         } else if (m.op == WL_POINTER && m.c != 3) {
             int rw = m.c == 0 && (int)m.a < SIDE && (int)m.b >= 62 ? ui_list_at(&list, (int)m.b - 62) : -1;

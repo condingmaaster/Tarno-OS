@@ -2445,6 +2445,44 @@ fn main() {
                 exit(1);
             }
         }
+        "desk-power-test" => {
+            // Settings > Power & sound with the synthetic firmware (battery, AC, thermal zone, lid, backlight) and an HD Audio output:
+            // screenshots before and after a click on the brightness and volume bars
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let (log, sock) = (root.join("target/deskpower-serial.log"), root.join("target/deskpower-mon.sock"));
+            let shots: Vec<PathBuf> = (1..=2).map(|i| root.join(format!("target/deskpower{i}.ppm"))).collect();
+            for f in shots.iter().chain([&log, &sock]) { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, tshots) = (log.clone(), sock.clone(), shots.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "settings ready", 200) { return; }
+                std::thread::sleep(ms(3000));
+                mon(&tsock, &format!("screendump {}", tshots[0].to_str().unwrap()));
+                let (wx, wy) = log_window(&tlog, "760x500", 0).expect("settings window position");
+                let mut cur = (640, 400);
+                let w = 760 - 200 - 56;
+                pointer_to(&tsock, &mut cur, wx + 228 + w / 4, wy + 293);          // brightness bar, a quarter of the way
+                pointer_click(&tsock);
+                std::thread::sleep(ms(800));
+                pointer_to(&tsock, &mut cur, wx + 228 + w * 3 / 5, wy + 349);      // volume bar, 60 %
+                pointer_click(&tsock);
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", tshots[1].to_str().unwrap()));
+            });
+            let aml = root.join("xtask/testdata/fake-power.aml");
+            let tbl = format!("file={}", aml.display());
+            let wav = root.join("target/deskpower.wav");
+            let out = boot_and_run_args(&img, "deskpower", "/busybox sh /desk-power.sh", "desk ok:", 150,
+                &["-acpitable", &tbl, "-audiodev", &format!("wav,id=a0,path={}", wav.display()), "-device", "intel-hda,id=hda0", "-device", "hda-output,audiodev=a0"]);
+            let _ = out;
+            if shots.iter().all(|s| s.exists()) {
+                println!("desk-power-test: screenshots at target/deskpower1.ppm and deskpower2.ppm");
+            } else {
+                eprintln!("desk-power-test FAILED (no screenshots)");
+                exit(1);
+            }
+        }
         "desk-drag-test" => {
             // Real button/motion input (PS/2 or USB), with captures while the button is held.
             let hotplug=std::env::var("THOS_USB_MOUSE_HOTPLUG").is_ok();
@@ -4589,7 +4627,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
