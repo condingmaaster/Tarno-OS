@@ -1431,7 +1431,7 @@ fn main() {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                 }
             });
-            let out = boot_and_run_args(&img, "ssh", "/busybox sleep 330; /busybox cat /var/log/sshd.log; echo ssh-end-$((1))", "ssh-end-1", 700,
+            let out = boot_and_run_args(&img, "ssh", "/busybox sleep 150; /busybox ps; /busybox cat /var/log/sshd.log | /busybox tail -8; echo ssh-end-$((1))", "ssh-end-1", 400,
                 &["-netdev", "user,id=n0,hostfwd=tcp::2222-:22", "-device", "virtio-net-pci,netdev=n0"]);
             let r = result.lock().unwrap().clone();
             if r.contains("ssh-ok-20") && r.lines().any(|l| l.trim() == "0") {
@@ -1534,6 +1534,19 @@ fn main() {
                 println!("lockup-test PASSED: {}", out.lines().find(|l| l.contains("LOCKUP?")).unwrap_or("").trim());
             } else {
                 eprintln!("lockup-test FAILED (no report)");
+                exit(1);
+            }
+        }
+        "sigchld-test" => {
+            // the self-pipe pattern daemons use to notice that a child exited (Dropbear's session end depends on it)
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run(&img, "sigchld", "/sigchldtest; echo sigchld-end-$((2))", "sigchld-end-2", 200);
+            let line = out.lines().find(|l| l.trim().starts_with("sigchld: told")).unwrap_or("").trim().to_string();
+            if line.contains("lost 0 of 40") && line.contains("reaped 40") && out.contains("slow wakeups 0 of 6") {
+                println!("sigchld-test PASSED: {line}");
+            } else {
+                eprintln!("  {line}");
+                eprintln!("sigchld-test FAILED");
                 exit(1);
             }
         }
@@ -4480,7 +4493,7 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall","sudo","doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
@@ -8706,12 +8719,47 @@ fn build_update_tar(extra: &[(&str, &str)]) -> PathBuf {
     tar
 }
 
-/// Send the archive over SSH to `thos-update` on the machine; returns what the machine answered.
-fn push_update_to(host: &str, port: &str, tar: &Path) -> (bool, String) {
+/// Run `remote` on the machine over SSH with `stdin` from a file (or nothing); read its output until a line contains one of `until`
+/// (the session does not end by itself on THOS yet), then drop the connection. Returns (the matching phrase, all output).
+fn ssh_until(host: &str, port: &str, remote: &str, stdin: Option<&Path>, until: &[&str], secs: u64) -> (Option<String>, String) {
+    use std::io::{BufRead, BufReader};
     let key = workspace_root().join("target/thos-update-key");
-    let out = Command::new("sh").args(["-c", &format!("ssh -i {} -p {port} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 root@{host} '/busybox sh /thos-update' < {}", key.display(), tar.display())]).output().expect("ssh");
-    let text = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    (out.status.success() && text.contains("update: done"), text)
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-i", key.to_str().unwrap(), "-p", port, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "ConnectTimeout=20", "-o", "LogLevel=ERROR", &format!("root@{host}"), remote]);
+    cmd.stdin(match stdin { Some(f) => std::process::Stdio::from(std::fs::File::open(f).expect("open the file to send")), None => std::process::Stdio::null() });
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let Ok(mut child) = cmd.spawn() else { return (None, "cannot start ssh".into()) };
+    let out = child.stdout.take().unwrap();
+    let err = child.stderr.take().unwrap();
+    let (tx, rx) = std::sync::mpsc::channel::<String>();
+    let tx2 = tx.clone();
+    std::thread::spawn(move || { for l in BufReader::new(out).lines().map_while(Result::ok) { let _ = tx.send(l); } });
+    std::thread::spawn(move || { for l in BufReader::new(err).lines().map_while(Result::ok) { let _ = tx2.send(l); } });
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    let mut all = String::new();
+    let mut hit = None;
+    while std::time::Instant::now() < deadline {
+        match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+            Ok(l) => {
+                all.push_str(&l);
+                all.push('\n');
+                if let Some(p) = until.iter().find(|p| l.contains(**p)) { hit = Some(p.to_string()); break; }
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => { if child.try_wait().ok().flatten().is_some() { while let Ok(l) = rx.try_recv() { all.push_str(&l); all.push('\n'); } break; } }
+            Err(_) => break,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    (hit, all)
+}
+
+/// Send the archive to the machine (first as a file, then applied by `thos-update`); returns (success, what the machine said).
+fn push_update_to(host: &str, port: &str, tar: &Path) -> (bool, String) {
+    let (up, t1) = ssh_until(host, port, "/busybox cat > /var/update.tar; /busybox echo upload-done", Some(tar), &["upload-done"], 900);
+    if up.is_none() { return (false, format!("upload failed: {t1}")); }
+    let (done, t2) = ssh_until(host, port, "/busybox sh /thos-update /var/update.tar", None, &["update: done", "UPDATE FAILED"], 900);
+    (done.as_deref() == Some("update: done"), format!("{t2}"))
 }
 
 /// Dropbear (a small SSH server) unpacked under `target/dropbear-root` (`apt-get download`, no root needed).

@@ -11,7 +11,10 @@ OLD=$($B cat /etc/thos/version 2>/dev/null)
 echo "update: unpacking (installed: ${OLD:-unknown})"
 $B rm -rf $STAGE
 $B mkdir -p $STAGE || fail "no space for $STAGE"
-$B tar -x -C $STAGE || fail "the update archive is damaged"
+ARCHIVE=${1:-/var/update.tar}
+[ -f "$ARCHIVE" ] || fail "no archive at $ARCHIVE"
+$B tar -x -C $STAGE -f "$ARCHIVE" || fail "the update archive is damaged"
+$B rm -f "$ARCHIVE"
 [ -f $STAGE/MANIFEST ] || fail "the archive has no MANIFEST"
 (cd $STAGE && $B sha256sum -c MANIFEST > /tmp/update-check.log 2>&1) || { $B tail -3 /tmp/update-check.log; fail "a file does not match its checksum"; }
 NEW=$($B cat $STAGE/VERSION 2>/dev/null)
@@ -37,6 +40,7 @@ $B mkdir -p /etc/thos
 echo 1 > /etc/thos/autologin-once
 $B rm -rf $STAGE
 $B sync
-echo "update: done, restarting in 2 seconds"
-( $B sleep 2; $B sync; /bin/reboot -f ) > /dev/null 2>&1 &
-exit 0
+echo "update: done, restarting now"
+$B sleep 1
+$B sync
+exec /bin/reboot -f
