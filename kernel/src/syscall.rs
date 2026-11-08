@@ -119,6 +119,7 @@ const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
 /// `volume(op, percent)`: op 0 = read the master volume (percent, or -ENODEV), op 1 = set it.
 const SYS_THOS_VOLUME: u64 = THOS_BASE + 3;
 const SYS_THOS_POWERBTN: u64 = THOS_BASE + 4;
+const SYS_THOS_TRACE: u64 = THOS_BASE + 5;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -723,6 +724,10 @@ fn sys_pipe(fds_ptr: u64, flags: u64) -> i64 {
     }
     let cloexec = flags & 0o2000000 != 0;
     let (r, w) = crate::file::pipe();
+    if flags & 0o4000 != 0 {                                        // pipe2(O_NONBLOCK)
+        crate::file::FileOps::set_nonblock(&*r, true);
+        crate::file::FileOps::set_nonblock(&*w, true);
+    }
     let rf: alloc::sync::Arc<dyn crate::file::FileOps> = r;
     let wf: alloc::sync::Arc<dyn crate::file::FileOps> = w;
     let rfd = task.fd_alloc_flags(rf, cloexec);
@@ -1591,6 +1596,9 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
     let (nr, a1, a2, a3, a4, a5) =
         (frame.rax, frame.rdi, frame.rsi, frame.rdx, frame.r10, frame.r8);
     let _ = (a4, a5);
+    if sched::current().task().map_or(false, |t| t.trace.load(Ordering::Relaxed)) {
+        kprintln!("THOS: trace [{}] {} enter ({:#x}, {:#x}, {:#x})", process::current_pid(), nr, a1, a2, a3);   // a call that never returns shows up only here
+    }
 
     #[cfg(feature="ipc-diagnostics")]
     let ipc_trace = nr==SYS_MEMFD_CREATE ||
@@ -2331,6 +2339,12 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 -19
             }
         }
+        SYS_THOS_TRACE => {
+            // root only: a2 != 0 logs every system call of process a1 (and the children it forks later) to the kernel log, 0 stops
+            if crate::process::current_uid() != 0 { -1 }
+            else if let Some(t) = process::find_task(a1) { t.trace.store(a2 != 0, Ordering::Relaxed); 0 }
+            else { -3 }
+        }
         SYS_THOS_POWERBTN => {
             if a1 == 0 {
                 crate::acpi_aml::power_button_policy() as i64
@@ -2383,7 +2397,7 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
             257 | 262 => usercopy::cstr(a2, 200).unwrap_or_default(),
             _ => alloc::string::String::new(),
         };
-        kprintln!("THOS: trace {} ({:#x}, {:#x}, {:#x}, {:#x}) {} -> {}", nr, a1, a2, a3, a4, path, ret);
+        kprintln!("THOS: trace [{}] {} ({:#x}, {:#x}, {:#x}, {:#x}) {} -> {}", process::current_pid(), nr, a1, a2, a3, a4, path, ret);
     }
     let mut ret = ret;
     // A write to a pipe nobody reads raises SIGPIPE — here, in the syscall layer, so

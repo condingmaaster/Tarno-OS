@@ -1147,6 +1147,9 @@ struct PipeInner {
     buf: Mutex<VecDeque<u8>>,
     readers: AtomicUsize,
     writers: AtomicUsize,
+    /// O_NONBLOCK of the read / write end: an empty pipe answers EAGAIN instead of waiting (Dropbear drains its signal pipe that way).
+    read_nb: core::sync::atomic::AtomicBool,
+    write_nb: core::sync::atomic::AtomicBool,
     /// Woken on every state change: data added, space freed, an end closed.
     wq: crate::wait::WaitQueue,
 }
@@ -1164,6 +1167,8 @@ pub fn pipe() -> (Arc<PipeReadEnd>, Arc<PipeWriteEnd>) {
         buf: Mutex::new(VecDeque::new()),
         readers: AtomicUsize::new(1),
         writers: AtomicUsize::new(1),
+        read_nb: core::sync::atomic::AtomicBool::new(false),
+        write_nb: core::sync::atomic::AtomicBool::new(false),
         wq: crate::wait::WaitQueue::new(),
     });
     (Arc::new(PipeReadEnd(inner.clone())), Arc::new(PipeWriteEnd(inner)))
@@ -1186,6 +1191,12 @@ impl FileOps for PipeReadEnd {
     fn is_tty(&self) -> bool {
         false
     }
+    fn set_nonblock(&self, on: bool) {
+        self.0.read_nb.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.0.read_nb.load(Ordering::Relaxed)
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         loop {
             {
@@ -1202,6 +1213,9 @@ impl FileOps for PipeReadEnd {
                 if self.0.writers.load(Ordering::Acquire) == 0 {
                     return 0; // EOF — no writers left
                 }
+            }
+            if self.0.read_nb.load(Ordering::Relaxed) {
+                return -11; // EAGAIN
             }
             if crate::signal::interrupted() {
                 return -4; // EINTR
@@ -1236,6 +1250,12 @@ impl FileOps for PipeWriteEnd {
     fn is_tty(&self) -> bool {
         false
     }
+    fn set_nonblock(&self, on: bool) {
+        self.0.write_nb.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.0.write_nb.load(Ordering::Relaxed)
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EBADF
     }
@@ -1259,6 +1279,9 @@ impl FileOps for PipeWriteEnd {
                     self.0.wq.wake_all(); // data available — wake blocked readers
                     continue;
                 }
+            }
+            if self.0.write_nb.load(Ordering::Relaxed) {
+                return if done == 0 { -11 } else { done as i64 }; // EAGAIN: the pipe is full
             }
             self.0.wq.wait_if_intr(|| {
                 self.0.buf.lock().len() == PIPE_CAP && self.0.readers.load(Ordering::Acquire) != 0

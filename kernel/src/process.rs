@@ -2092,6 +2092,7 @@ pub fn fork(frame: &UserFrame) -> i64 {
     child.set_cwd(parent.cwd());
     *child.cmdline.lock() = parent.cmdline();
     child.set_exe(&parent.exe());
+    child.trace.store(parent.trace.load(Ordering::Relaxed), Ordering::Relaxed);                  // a traced program's children are traced too (strace -f)
     child.set_pgid(parent.pgid());
     child.set_ctty(parent.ctty());
     child.set_sid(parent.sid());

@@ -1503,6 +1503,50 @@ fn main() {
                 exit(1);
             }
         }
+        "ssh-exit-test" => {
+            // an SSH command must come back by itself once the command has finished (no hanging session, no leftover process in the guest)
+            std::env::set_var("THOS_SSH", "1");
+            std::env::set_var("THOS_FS_MIB", "256");
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let kp = root.join("target/thos-update-key");
+            let result = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+            let res2 = result.clone();
+            let log = root.join("target/ssh-serial.log");
+            let tlog = log.clone();
+            std::thread::spawn(move || {
+                if !wait_for(&tlog, "interactive hold", 240) { return; }
+                std::thread::sleep(std::time::Duration::from_secs(15));
+                for round in 0..3 {
+                    let t0 = std::time::Instant::now();
+                    let out = Command::new("timeout").args(["40", "ssh", "-i", kp.to_str().unwrap(), "-p", "2222", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "root@127.0.0.1", "echo exit-probe-ok"]).output();
+                    if let Ok(o) = out {
+                        let mut g = res2.lock().unwrap();
+                        g.push_str(&format!("round {round}: code {:?} after {} s, output {:?}\n", o.status.code(), t0.elapsed().as_secs(), String::from_utf8_lossy(&o.stdout).trim()));
+                    }
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+            });
+            let out = boot_and_run_args(&img, "ssh", "/busybox sh /sshexit.sh", "ssh-end-1", 400,
+                &["-netdev", "user,id=n0,hostfwd=tcp::2222-:22", "-device", "virtio-net-pci,netdev=n0"]);
+            let r = result.lock().unwrap().clone();
+            let ok = r.lines().filter(|l| l.starts_with("round")).count() == 3 && r.lines().filter(|l| l.starts_with("round")).all(|l| l.contains("code Some(0)") && l.contains("exit-probe-ok"));
+            for l in out.lines().filter(|l| l.contains("dropbear") || l.contains("THOS: trace")) { eprintln!("  guest: {l}"); }
+            if ok { println!("ssh-exit-test PASSED: three SSH commands came back by themselves ({})", r.trim().replace('\n', "; ")); }
+            else { eprintln!("  {r}"); eprintln!("ssh-exit-test FAILED"); exit(1); }
+        }
+        "dropbear-mimic-test" => {
+            // the process pattern behind `ssh host command`: pipes + fork/exec + SIGCHLD self-pipe + select; both EOF and the exit must be seen
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "mimic", "/sigmimic; echo mimic-end-$((1))", "mimic-end-1", 200, &[]);
+            if out.lines().any(|l| l.contains("mimic: done")) {
+                println!("dropbear-mimic-test PASSED: output EOF, SIGCHLD and the reaped child all arrived");
+            } else {
+                for l in out.lines().filter(|l| l.contains("mimic")).take(12) { eprintln!("  {l}"); }
+                eprintln!("dropbear-mimic-test FAILED");
+                exit(1);
+            }
+        }
         "push-update" => {
             // cargo xtask push-update <host> [port]: build, send over SSH, the machine verifies, updates, restarts and logs the account in again
             let host = args.get(1).cloned().unwrap_or_else(|| { eprintln!("usage: cargo xtask push-update <host-or-ip> [ssh-port]"); exit(2) });
@@ -4728,14 +4772,14 @@ fn disk_image() -> PathBuf {
                     std::fs::write(&marker, b"on\n").unwrap();
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} tmp/autostart", marker.to_str().unwrap()), img.to_str().unwrap()]));
                 }
-                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "thosshot", "thosinput", "sudo", "doas"] { // root frontends and disk copier
+                for prog in ["thoselevate", "thosinstall", "thos-fatput", "sigchldtest", "thosbl", "thosvol", "thospower", "thosshot", "thosinput", "sigmimic", "thostrace", "sudo", "doas"] { // root frontends and disk copier
                     let out = root.join(format!("target/{prog}"));
                     let source=if prog=="sudo"||prog=="doas" {"thospriv"}else{prog};
                     if Command::new("gcc").args(["-O1", "-o", out.to_str().unwrap(), root.join(format!("xtask/testdata/{source}.c")).to_str().unwrap()]).status().map(|s| s.success()).unwrap_or(false) {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["sshexit.sh", "inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
