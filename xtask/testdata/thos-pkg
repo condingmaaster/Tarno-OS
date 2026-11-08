@@ -152,7 +152,7 @@ IDX=$OPT/.index
 DB=$OPT/.db
 ROOT=$OPT/root
 # packages THOS already provides (the C library and friends) or that are only installer plumbing
-SKIP=" libc6 libc-bin libgcc-s1 gcc-14-base libstdc++6 debconf dpkg perl-base base-files base-passwd install-info libcrypt1 libgomp1 "
+SKIP=" libc6 libc-bin gcc-14-base debconf dpkg perl-base base-files base-passwd install-info libcrypt1 libgomp1 "
 
 GPGV=/usr/bin/gpgv
 KEYRING=/usr/share/keyrings/debian-archive-keyring.pgp
@@ -226,7 +226,12 @@ install_one() {
     [ -n "$pl" ] || { echo "thos-pkg: $pn is not in the archive index"; return 1; }
     pf=$(echo "$pl" | $B cut -d'|' -f3); ps=$(echo "$pl" | $B cut -d'|' -f4); pz=$(echo "$pl" | $B cut -d'|' -f6)
     echo "  $pn ($((pz / 1024)) kB)"
-    $B wget -q -O /tmp/pkg-$$.deb "$MIRROR/$pf" || { $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: download of $pn failed"; return 1; }
+    try=0
+    until $B wget -q -T 30 -O /tmp/pkg-$$.deb "$MIRROR/$pf"; do          # the CDN sometimes times out: try again before giving up
+        try=$((try + 1)); $B rm -f /tmp/pkg-$$.deb
+        [ $try -lt 4 ] || { echo "thos-pkg: download of $pn failed"; return 1; }
+        echo "    download failed, trying again ($try/3)"; $B sleep 3
+    done
     got=$($B sha256sum /tmp/pkg-$$.deb | $B cut -d' ' -f1)
     if [ "$got" != "$ps" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $pn does not match the index"; return 1; fi
     $B mkdir -p $ROOT $DB
@@ -249,10 +254,10 @@ cmd_install_repo() {
         case "$seen" in *" $cur "*) continue ;; esac
         seen="$seen$cur "
         case "$SKIP" in *" $cur "*) continue ;; esac
-        [ -f $DB/$cur.list ] && continue
         rline=$(idx_line "$cur")
-        if [ -z "$rline" ]; then echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
+        if [ -z "$rline" ]; then [ -f $DB/$cur.list ] && continue; echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
         deps=$(echo "$rline" | $B cut -d'|' -f5)
+        if [ -f $DB/$cur.list ]; then todo="$todo $deps"; continue; fi        # already there, but what it needs may be missing (an earlier run can have stopped half way)
         install_one "$cur" || return 1
         todo="$todo $deps"
     done
