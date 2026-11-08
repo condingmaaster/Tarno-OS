@@ -1443,6 +1443,11 @@ fn main() {
             std::thread::spawn(move || {
                 if !wait_for(&tlog, "interactive hold", 240) { return; }
                 std::thread::sleep(std::time::Duration::from_secs(15));
+                // a probe that connects and hangs up at once must not kill the listener
+                for _ in 0..3 {
+                    if let Ok(c) = std::net::TcpStream::connect(("127.0.0.1", 2222)) { drop(c); }
+                    std::thread::sleep(std::time::Duration::from_millis(300));
+                }
                 for _ in 0..6 {
                     let out = Command::new("timeout").args(["40", "ssh", "-v", "-i", kp.to_str().unwrap(), "-p", "2222", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "root@127.0.0.1", "echo ssh-ok-$((4*5)); id -u; ls /boot-not-here 2>&1 | head -c 0"]).output();
                     if let Ok(o) = out {
@@ -4094,7 +4099,7 @@ fn disk_image() -> PathBuf {
     // superblock + GDT in group 1 and the ext2 write path has to keep it synced.
     run(Command::new("mke2fs").args([
         "-q", "-F", "-t", "ext2", "-L", "THOSROOT", "-b", "1024", "-I", "128",
-        "-O", "^resize_inode,^dir_index,^ext_attr",
+        "-O", if std::env::var("THOS_GROWABLE_ROOT").is_ok() { "^dir_index,^ext_attr" } else { "^resize_inode,^dir_index,^ext_attr" },
         img.to_str().unwrap(), &(fs_mib() * 1024).to_string(),
     ]));
     // Grow the backing file past the 128 MiB filesystem: scratch space for the
@@ -8198,7 +8203,9 @@ fn bios_image() -> PathBuf {
     // installer copies from it. It is the ordinary image of this build, made first by a nested call with the switch off.
     let ram_fs = if ramroot() {
         std::env::remove_var("THOS_RAMROOT");
+        std::env::set_var("THOS_GROWABLE_ROOT", "1");                  // the installer grows this file system to the size of the target disk (reserved descriptor blocks)
         let reference = bios_image();
+        std::env::remove_var("THOS_GROWABLE_ROOT");
         std::env::set_var("THOS_RAMROOT", "1");
         let copy = root.join("target/thos-disk-module.img");
         std::fs::copy(&reference, &copy).expect("copy the reference image");

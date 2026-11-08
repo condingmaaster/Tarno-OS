@@ -112,6 +112,95 @@ static int list_disks(void) {
     return 0;
 }
 
+
+/* Growing the copied root file system to fill the disk. The stick's image carries a small ext2 (about 512 MiB, built with
+   resize_inode so the group descriptor table has reserved room to grow); here, on the freshly copied partition, the new
+   block groups are laid out the way mke2fs would (no flex_bg), the descriptor table and the backups are extended, and the
+   resize inode is rebuilt the way resize2fs does. Returns 1 when nothing was grown (unsupported layout or no room), -1 on I/O error. */
+#define GROW_MAX_BLOCKS (16u << 20)                                       /* 16 GiB of 1 KiB blocks; the descriptor table's reserve is the real limit */
+static int drd(uint64_t off, void *b, size_t len) { size_t d = 0; while (d < len) { ssize_t n = pread(dst, (char *)b + d, len - d, (off_t)(off + d)); if (n <= 0) return -1; d += (size_t)n; } return 0; }
+static void put32(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; p[2] = v >> 16; p[3] = v >> 24; }
+static void put16(uint8_t *p, uint32_t v) { p[0] = v; p[1] = v >> 8; }
+static int is_pow(uint32_t g, uint32_t b) { while (g > 1) { if (g % b) return 0; g /= b; } return g == 1; }
+static int has_backup(uint32_t g) { return g <= 1 || is_pow(g, 3) || is_pow(g, 5) || is_pow(g, 7); }
+static void setbits(uint8_t *bm, uint32_t from, uint32_t to) { for (uint32_t i = from; i < to; i++) bm[i >> 3] |= 1 << (i & 7); }
+
+static int grow_fs(uint64_t base, uint64_t avail, uint8_t *mbr) {
+    uint8_t sb[1024];
+    if (drd(base + 1024, sb, 1024)) return -1;
+    uint32_t bs = 1024u << le32(sb + 24), blocks = le32(sb + 4), first = le32(sb + 20), bpg = le32(sb + 32), ipg = le32(sb + 40);
+    uint32_t isz = le32(sb + 76) ? le16(sb + 88) : 128, compat = le32(sb + 92), incompat = le32(sb + 96), ro = le32(sb + 100), rsv = le16(sb + 206);
+    uint32_t dsc = (incompat & 0x80) ? le16(sb + 254) : 32;
+    if (bs != 1024 || dsc != 32 || !(compat & 0x10) || !(ro & 1) || (ro & 0x410) || (incompat & (0x10 | 0x80 | 0x200)) || bpg != 8192) return 1;
+    uint64_t nb64 = avail / bs;
+    if (nb64 > GROW_MAX_BLOCKS) nb64 = GROW_MAX_BLOCKS;
+    uint32_t nb = (uint32_t)nb64;
+    uint32_t oldg = (blocks - first + bpg - 1) / bpg, itb = (ipg * isz + bs - 1) / bs, olddesc = (oldg * dsc + bs - 1) / bs, tot = 1 + olddesc + rsv;
+    if (nb < blocks + 4 * bpg) return 1;
+    uint32_t newg = (nb - first + bpg - 1) / bpg;
+    for (;;) {                                                            /* the last group must hold its own metadata (and a little data) */
+        uint32_t lastb = nb - first - (newg - 1) * bpg;
+        if (lastb >= (has_backup(newg - 1) ? tot : 0) + 2 + itb + 50 || newg <= oldg + 1) break;
+        newg--; nb = first + newg * bpg;
+    }
+    uint32_t newdesc = (newg * dsc + bs - 1) / bs;
+    if (newg <= oldg || newdesc - olddesc > rsv) return 1;
+    uint8_t *gd = calloc(newdesc, bs), *bm = malloc(bs), *z = calloc(1, bs);
+    if (!gd || !bm || !z || drd(base + (uint64_t)(first + 1) * bs, gd, (size_t)olddesc * bs)) return -1;
+    uint64_t free_add = 0;
+    /* the old last group may have been short: its tail becomes ordinary free blocks */
+    { uint32_t g = oldg - 1, gf = first + g * bpg, oldn = blocks - gf, newn = nb - gf > bpg ? bpg : nb - gf; uint8_t *d = gd + (size_t)g * dsc;
+      if (newn > oldn) {
+          if (drd(base + (uint64_t)le32(d) * bs, bm, bs)) return -1;
+          for (uint32_t i = oldn; i < newn; i++) bm[i >> 3] &= ~(1 << (i & 7));
+          if (wr(base + (uint64_t)le32(d) * bs, bm, bs)) return -1;
+          put16(d + 12, le16(d + 12) + (newn - oldn)); free_add += newn - oldn;
+      } }
+    for (uint32_t g = oldg; g < newg; g++) {
+        uint32_t gf = first + g * bpg, gb = nb - gf > bpg ? bpg : nb - gf, b0 = gf + (has_backup(g) ? tot : 0), bb = b0, ib = b0 + 1, it = b0 + 2, endm = it + itb;
+        memset(bm, 0, bs); setbits(bm, 0, endm - gf); setbits(bm, gb, bs * 8);
+        if (wr(base + (uint64_t)bb * bs, bm, bs)) return -1;
+        memset(bm, 0, bs); setbits(bm, ipg, bs * 8);
+        if (wr(base + (uint64_t)ib * bs, bm, bs)) return -1;
+        for (uint32_t i = 0; i < itb; i++) if (wr(base + (uint64_t)(it + i) * bs, z, bs)) return -1;
+        uint8_t *d = gd + (size_t)g * dsc;
+        put32(d, bb); put32(d + 4, ib); put32(d + 8, it); put16(d + 12, gb - (endm - gf)); put16(d + 14, ipg);
+        free_add += gb - (endm - gf);
+        if ((g & 63) == 0) progress(95 + (int)((uint64_t)(g - oldg) * 4 / (newg - oldg)));
+    }
+    /* the resize inode (number 7): rebuilt as resize2fs does, for the reserve that is left */
+    uint32_t newrsv = rsv - (newdesc - olddesc), apb = bs / 4;
+    { uint8_t ino[128]; uint64_t io = base + (uint64_t)le32(gd + 8) * bs + 6ULL * isz;
+      if (drd(io, ino, 128)) return -1;
+      uint32_t dind = le32(ino + 40 + 13 * 4), iblocks = 2;
+      if (dind) {
+          uint32_t *D = calloc(apb, 4), *G = calloc(apb, 4);
+          for (uint32_t ro_ = 0, go = newdesc, gblk = first + 1 + newdesc; ro_ < newrsv; ro_++, go++, gblk++) {
+              D[go % apb] = gblk; iblocks += 2; memset(G, 0, apb * 4);
+              uint32_t last = 0;
+              for (uint32_t grp = 1; grp < newg; grp++) if (has_backup(grp)) { G[last++] = gblk + grp * bpg; iblocks += 2; }
+              if (wr(base + (uint64_t)gblk * bs, G, bs)) return -1;
+          }
+          if (wr(base + (uint64_t)dind * bs, D, bs)) return -1;
+          put32(ino + 28, iblocks);
+          if (wr(io, ino, 128)) return -1;
+      } }
+    /* superblock and descriptor table: primary and every backup */
+    put32(sb + 4, nb); put32(sb + 0, newg * ipg); put32(sb + 12, le32(sb + 12) + (uint32_t)free_add); put32(sb + 16, le32(sb + 16) + (newg - oldg) * ipg);
+    put32(sb + 8, (uint32_t)((uint64_t)le32(sb + 8) * nb / blocks)); put16(sb + 206, newrsv);
+    for (uint32_t g = 0; g < newg; g++) {
+        if (g && !has_backup(g)) continue;
+        uint64_t sbo = g ? base + (uint64_t)(first + g * bpg) * bs : base + 1024;
+        put16(sb + 90, g);
+        if (wr(sbo, sb, 1024) || wr(base + (uint64_t)(first + g * bpg + 1) * bs + (g ? 0 : 0), gd, (size_t)newdesc * bs)) return -1;
+    }
+    put32(mbr + 0x1BE + 16 + 12, (uint32_t)((uint64_t)nb * bs / SEC));
+    printf("grown: root file system %u MiB -> %u MiB (%u block groups)\n", blocks >> 10, nb >> 10, newg);
+    fflush(stdout);
+    free(gd); free(bm); free(z);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && !strcmp(argv[1], "--disks")) return list_disks();
     if (argc != 3 || strcmp(argv[1], "--erase") || strcmp(argv[2], "/dev/sda")) { fputs("usage: thosinstall --erase /dev/sda\n", stderr); return 2; }
@@ -170,6 +259,7 @@ int main(int argc, char **argv) {
         }
         progress(10 + (int)((uint64_t)(g + 1) * 85 / groups));
     }
+    { int gr = grow_fs(base, (uint64_t)dsz - pstart[1] * SEC, mbr); if (gr < 0) { fputs("cannot grow the root file system\n", stderr); return 1; } if (gr > 0) puts("note: root file system kept at the size of the image"); }
     /* last: the MBR, so the disk only becomes bootable once everything else is in place */
     if (wr(0, mbr, 512)) return 1;
     fsync(dst);

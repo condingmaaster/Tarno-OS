@@ -298,9 +298,19 @@ impl SockFile {
         let remote = wait_until(self.is_nonblock(), None, |st| {
             let s = st.sockets.get_mut::<tcp::Socket>(handle);
             match s.state() {
-                tcp::State::Established => Some(Ok(s.remote_endpoint())),
-                tcp::State::Listen | tcp::State::SynReceived => None,
-                _ => Some(Err(ECONNREFUSED)),
+                tcp::State::Established
+                | tcp::State::CloseWait
+                | tcp::State::FinWait1
+                | tcp::State::FinWait2
+                | tcp::State::Closing
+                | tcp::State::LastAck => Some(Ok(s.remote_endpoint())),
+                tcp::State::Closed | tcp::State::TimeWait => {
+                    // the peer reset before we accepted: put the listener back instead of dying
+                    s.abort();
+                    let _ = s.listen(port);
+                    None
+                }
+                _ => None,
             }
         })?;
         let fresh = {
@@ -571,7 +581,7 @@ impl FileOps for SockFile {
             Kind::Tcp => {
                 let s = st.sockets.get_mut::<tcp::Socket>(h);
                 if listening {
-                    if s.state() == tcp::State::Established {
+                    if matches!(s.state(), tcp::State::Established | tcp::State::CloseWait) {
                         r |= POLLIN;
                     }
                 } else {
