@@ -276,6 +276,9 @@ extern "C" fn kmain() -> ! {
             }
             sched::exit()
         }
+        if CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "nolockupreboot")) {
+            lockup::set_reset_on_lockup(false);
+        }
         if !CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "noacpi")) {
             sched::spawn("acpi-aml", aml_thread, 0);
         }

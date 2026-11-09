@@ -200,6 +200,26 @@ pub fn halt() -> ! {
     halt_forever()
 }
 
+/// Reset the machine right now, without syncing anything: for a machine whose kernel is stuck (the lock-up detector), where taking a
+/// file system lock could be what is stuck. Never returns.
+pub fn emergency_reset() -> ! {
+    unsafe {
+        core::arch::asm!("cli", options(nomem, nostack));
+        let rp = RESET_PORT.load(Ordering::Relaxed);
+        if rp != 0 {
+            outb(rp, RESET_VALUE.load(Ordering::Relaxed) as u8);
+            pause();
+        }
+        outb(0xCF9, 0x02);
+        outb(0xCF9, 0x06);
+        pause();
+        outb(0x64, 0xFE);
+        pause();
+        let idt = [0u8; 10];
+        core::arch::asm!("lidt [{0}]", "int3", in(reg) idt.as_ptr(), options(noreturn));
+    }
+}
+
 /// Reset the machine. Never returns.
 pub fn reboot() -> ! {
     if BUSY.swap(true, Ordering::SeqCst) {

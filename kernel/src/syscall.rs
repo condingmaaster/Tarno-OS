@@ -120,6 +120,7 @@ const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
 const SYS_THOS_VOLUME: u64 = THOS_BASE + 3;
 const SYS_THOS_POWERBTN: u64 = THOS_BASE + 4;
 const SYS_THOS_TRACE: u64 = THOS_BASE + 5;
+const SYS_THOS_HANG: u64 = THOS_BASE + 6;
 const SYS_SETTIMEOFDAY: u64 = 164;
 const SYS_CLOCK_SETTIME: u64 = 227;
 const SYS_POLL: u64 = 7;
@@ -2367,6 +2368,10 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                     _ => EFAULT,
                 }
             }
+        }
+        SYS_THOS_HANG => {
+            // root only, for testing the lock-up detector and its reset: spins in the kernel (interrupts on) for ever
+            if crate::process::current_uid() != 0 { -1 } else { kprintln!("THOS: lock-up test: spinning in the kernel"); loop { core::hint::spin_loop(); } }
         }
         SYS_THOS_TRACE => {
             // root only: a2 != 0 logs every system call of process a1 (and the children it forks later) to the kernel log, 0 stops

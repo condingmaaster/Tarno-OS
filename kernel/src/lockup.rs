@@ -9,6 +9,18 @@ use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 const N: usize = 8;
 const STUCK_TICKS: u32 = 3000; // ~3 s at the 1 kHz tick
+/// A CPU that stays stuck this long (a minute) takes the whole machine down with a reset: a hung machine nobody can reach is worth
+/// less than one that restarts and reports. The note on the screen has had the minute to be read; `nolockupreboot` switches this off.
+const RESET_TICKS: u32 = 60_000;
+static RESET_ON_LOCKUP: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+pub fn set_reset_on_lockup(on: bool) { RESET_ON_LOCKUP.store(on, Ordering::Relaxed); }
+fn give_up(why: &str, cpu: usize) -> ! {
+    let mut b = Buf([0; 400], 0);
+    let _ = write!(b, "\r\nTHOS: LOCKUP: cpu {} still stuck after a minute ({}): resetting the machine\r\n", cpu, why);
+    crate::serial::emergency(&b.0[..b.1]);
+    crate::fbcon::emergency(&b.0[..b.1]);
+    crate::power::emergency_reset()
+}
 static WIN: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
 static CNT: [AtomicU32; N] = [const { AtomicU32::new(0) }; N];
 static RIP: [AtomicU64; N] = [const { AtomicU64::new(0) }; N];
@@ -48,8 +60,13 @@ pub fn sample(cpu: usize, rip: u64, cs: u64) {
             }
             if seen != CHK[c].swap(seen, Ordering::Relaxed) {
                 STALE[c].store(0, Ordering::Relaxed);
-            } else if STALE[c].fetch_add(1, Ordering::Relaxed) + 1 == 3 && NMI_ASKED[c].fetch_add(1, Ordering::Relaxed) == 0 {
-                crate::apic::send_nmi(crate::smp::lapic_id_of(c));
+            } else {
+                let stale = STALE[c].fetch_add(1, Ordering::Relaxed) + 1;
+                if stale == 3 && NMI_ASKED[c].fetch_add(1, Ordering::Relaxed) == 0 {
+                    crate::apic::send_nmi(crate::smp::lapic_id_of(c));
+                } else if stale == 60 && RESET_ON_LOCKUP.load(Ordering::Relaxed) {
+                    give_up("no timer ticks, interrupts off", c);
+                }
             }
         }
     }
@@ -79,6 +96,8 @@ pub fn sample(cpu: usize, rip: u64, cs: u64) {
         let _ = write!(b, "\r\n");
         crate::serial::emergency(&b.0[..b.1]);
         crate::fbcon::emergency(&b.0[..b.1]);
+    } else if n == RESET_TICKS && RESET_ON_LOCKUP.load(Ordering::Relaxed) {
+        give_up("same kernel code", cpu);
     }
 }
 
