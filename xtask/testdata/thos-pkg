@@ -258,6 +258,24 @@ post_install() {
     if [ -x $pb/gdk-pixbuf-query-loaders ] && [ -d $pb/2.10.0/loaders ]; then
         GDK_PIXBUF_MODULEDIR=$pb/2.10.0/loaders $pb/gdk-pixbuf-query-loaders > $pb/2.10.0/loaders.cache.new 2>/dev/null && $B mv $pb/2.10.0/loaders.cache.new $pb/2.10.0/loaders.cache
     fi
+    # Firefox: THOS defaults (no welcome tour, no sandbox warning bar, less animation and telemetry for a weak machine)
+    ff=$ROOT/usr/lib/firefox-esr
+    if [ -d $ff ]; then
+        $B mkdir -p $ff/defaults/pref
+        printf '%s\n' 'pref("general.config.filename", "thos.cfg");' 'pref("general.config.obscure_value", 0);' > $ff/defaults/pref/thos-autoconfig.js
+        {
+            echo '// THOS defaults for Firefox (written by thos-pkg)'
+            for kv in 'security.sandbox.warn_unprivileged_namespaces:false' 'browser.shell.checkDefaultBrowser:false' 'browser.aboutwelcome.enabled:false' \
+                     'trailhead.firstrun.didSeeAboutWelcome:true' 'browser.startup.homepage_override.mstone:"ignore"' 'toolkit.telemetry.enabled:false' \
+                     'toolkit.telemetry.unified:false' 'datareporting.policy.dataSubmissionEnabled:false' 'datareporting.healthreport.uploadEnabled:false' \
+                     'browser.tabs.animate:false' 'browser.fullscreen.animate:false' 'general.smoothScroll:false' 'ui.prefersReducedMotion:1' \
+                     'browser.newtabpage.activity-stream.feeds.telemetry:false' 'browser.newtabpage.activity-stream.telemetry:false' \
+                     'extensions.pocket.enabled:false' 'browser.urlbar.suggest.quicksuggest.sponsored:false' \
+                     'browser.newtabpage.activity-stream.showSponsoredTopSites:false' 'browser.newtabpage.activity-stream.showSponsored:false' 'datareporting.policy.firstRunURL:""'; do
+                echo "defaultPref(\"${kv%%:*}\", ${kv#*:});"
+            done
+        } > $ff/thos.cfg
+    fi
     { [ -s /etc/machine-id ] || { $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n'; echo; } > /etc/machine-id; } 2>/dev/null     # 32 hex digits and a newline, as D-Bus insists (only root can write it)
     unset LD_LIBRARY_PATH
 }
@@ -301,7 +319,7 @@ cmd_upgrade() {
         line=$(idx_line "$name"); [ -n "$line" ] || continue
         [ "$($B cat "$f")" = "$(echo "$line" | $B cut -d'|' -f2)" ] || todo="$todo $name"
     done
-    [ -n "$todo" ] || { echo "all installed packages are up to date"; return 0; }
+    [ -n "$todo" ] || { post_install; echo "all installed packages are up to date"; return 0; }
     n=0
     for name in $todo; do
         echo "upgrading $name"
