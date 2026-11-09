@@ -257,7 +257,7 @@ post_install() {
     if [ -x $pb/gdk-pixbuf-query-loaders ] && [ -d $pb/2.10.0/loaders ]; then
         GDK_PIXBUF_MODULEDIR=$pb/2.10.0/loaders $pb/gdk-pixbuf-query-loaders > $pb/2.10.0/loaders.cache.new 2>/dev/null && $B mv $pb/2.10.0/loaders.cache.new $pb/2.10.0/loaders.cache
     fi
-    [ -s /etc/machine-id ] || $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n' > /etc/machine-id 2>/dev/null
+    [ -s /etc/machine-id ] || { $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n'; echo; } > /etc/machine-id 2>/dev/null     # 32 hex digits and a newline, as D-Bus insists
     unset LD_LIBRARY_PATH
 }
 
