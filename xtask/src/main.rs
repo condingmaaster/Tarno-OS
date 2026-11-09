@@ -9074,6 +9074,9 @@ fn build_update_tar(extra: &[(&str, &str)]) -> PathBuf {
         let name = f[5];
         if name.is_empty() || name == "." || name == ".." || name == "init" || name == "lost+found" { continue; }
         let _ = Command::new("debugfs").args(["-R", &format!("dump /{name} {}", stage.join(name).display()), disk.to_str().unwrap()]).output();
+        { use std::os::unix::fs::PermissionsExt;                     // debugfs dump drops the mode and the image stores 0644: programs and scripts must be executable (the Start menu tests X_OK)
+          let data = [".jpg", ".png", ".xkb", ".psf", ".txt", ".conf", ".cfg"].iter().any(|e| name.ends_with(e));
+          let _ = std::fs::set_permissions(stage.join(name), std::fs::Permissions::from_mode(if data { 0o644 } else { 0o755 })); }
         n += 1;
     }
     let stamp = Command::new("git").args(["rev-parse", "--short", "HEAD"]).current_dir(&root).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
