@@ -1,0 +1,9 @@
+#!/busybox sh
+# thos-shell: root's login shell for SSH sessions (Dropbear runs `shell -c command`). Sets what the console shell has: the search paths for
+# programs installed with apt/thos-pkg, so `ssh machine 'apt install tree'` and `ssh machine firefox-esr --version` just work.
+export PATH=/bin:/:/opt/root/usr/bin:/opt/root/bin:/usr/sbin:/usr/bin
+export LD_LIBRARY_PATH=/opt/root/usr/lib/x86_64-linux-gnu:/opt/root/lib/x86_64-linux-gnu:/opt/root/usr/lib
+export TERMINFO_DIRS=/usr/share/terminfo:/opt/root/lib/terminfo:/opt/root/usr/share/terminfo
+export XDG_DATA_DIRS=/opt/root/usr/share:/usr/share
+export HOME=/root
+exec /busybox sh "$@"

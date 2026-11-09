@@ -1591,7 +1591,7 @@ fn main() {
                 std::thread::sleep(std::time::Duration::from_secs(15));
                 for round in 0..3 {
                     let t0 = std::time::Instant::now();
-                    let out = Command::new("timeout").args(["40", "ssh", "-i", kp.to_str().unwrap(), "-p", "2222", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "root@127.0.0.1", "echo exit-probe-ok"]).output();
+                    let out = Command::new("timeout").args(["40", "ssh", "-i", kp.to_str().unwrap(), "-p", "2222", "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "ConnectTimeout=20", "-o", "BatchMode=yes", "root@127.0.0.1", "echo exit-probe-ok; echo $PATH"]).output();
                     if let Ok(o) = out {
                         let mut g = res2.lock().unwrap();
                         g.push_str(&format!("round {round}: code {:?} after {} s, output {:?}\n", o.status.code(), t0.elapsed().as_secs(), String::from_utf8_lossy(&o.stdout).trim()));
@@ -1602,7 +1602,7 @@ fn main() {
             let out = boot_and_run_args(&img, "ssh", "/busybox sh /sshexit.sh", "ssh-end-1", 400,
                 &["-netdev", "user,id=n0,hostfwd=tcp::2222-:22", "-device", "virtio-net-pci,netdev=n0"]);
             let r = result.lock().unwrap().clone();
-            let ok = r.lines().filter(|l| l.starts_with("round")).count() == 3 && r.lines().filter(|l| l.starts_with("round")).all(|l| l.contains("code Some(0)") && l.contains("exit-probe-ok"));
+            let ok = r.lines().filter(|l| l.starts_with("round")).count() == 3 && r.lines().filter(|l| l.starts_with("round")).all(|l| l.contains("code Some(0)") && l.contains("exit-probe-ok") && l.contains("/opt/root/usr/bin"));
             for l in out.lines().filter(|l| l.contains("dropbear") || l.contains("THOS: trace")) { eprintln!("  guest: {l}"); }
             if ok { println!("ssh-exit-test PASSED: three SSH commands came back by themselves ({})", r.trim().replace('\n', "; ")); }
             else { eprintln!("  {r}"); eprintln!("ssh-exit-test FAILED"); exit(1); }
@@ -4816,9 +4816,9 @@ fn disk_image() -> PathBuf {
                         let tmp = root.join("target/ssh-stage");
                         std::fs::create_dir_all(&tmp).unwrap();
                         for (name, body) in [
-                            ("passwd", "root:x:0:0:root:/root:/bin/sh\n".to_string()),
+                            ("passwd", "root:x:0:0:root:/root:/thos-shell\n".to_string()),
                             ("group", "root:x:0:\n".to_string()),
-                            ("shells", "/bin/sh\n".to_string()),
+                            ("shells", "/bin/sh\n/thos-shell\n".to_string()),          // Dropbear refuses a login shell that is not listed
                             ("authorized_keys", pubkey),
                             ("enabled", "1\n".to_string()),
                         ] {
@@ -4828,11 +4828,12 @@ fn disk_image() -> PathBuf {
                             dbg(&format!("rm {dst}"));
                             dbg(&format!("write {} {dst}", f.display()));
                         }
-                        for f in ["thos-sshd", "thos-update", "thos-fatput"] {
+                        for f in ["thos-sshd", "thos-shell", "thos-update", "thos-fatput"] {
                             let src = root.join(format!("xtask/testdata/{f}"));
                             if src.exists() {
                                 dbg(&format!("rm {f}"));
                                 dbg(&format!("write {} {f}", src.display()));
+                                if f == "thos-shell" { dbg("sif thos-shell mode 0100755"); }        // Dropbear executes it directly as root's login shell
                             }
                         }
                         eprintln!("ssh: dropbear and the update key are in the image");
