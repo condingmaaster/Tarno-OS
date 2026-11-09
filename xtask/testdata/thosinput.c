@@ -15,7 +15,9 @@
 
 static int fd;
 static void put(const char *fmt, int a, int b) { char l[64]; int n = snprintf(l, sizeof l, fmt, a, b); if (write(fd, l, n) != n) { perror("thosinput: write /dev/inject"); exit(1); } }
-static void move_to(int x, int y) { put("m %d %d\n", -4000, -4000); put("m %d %d\n", x, y); }
+/* absolute: first drive the pointer into the top-left corner, wait until the desktop has consumed (and clamped) that, then move to X,Y.
+   The desktop adds up the packets it finds waiting before it clamps to the screen, so a slow machine would cancel the reset if it were not waited for. */
+static void move_to(int x, int y) { put("m %d %d\n", -4000, -4000); usleep(700000); put("m %d %d\n", x, y); usleep(200000); }
 static void click(int x, int y, int btn) { if (x >= 0) move_to(x, y); usleep(60000); put("b %d\n", btn, 0); usleep(60000); put("b %d\n", 0, 0); }
 static void tap(int mods, int code) { put("k %d %d\n", mods, code); usleep(40000); put("u\n", 0, 0); usleep(30000); }
 

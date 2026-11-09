@@ -1401,6 +1401,51 @@ fn main() {
                 exit(1);
             }
         }
+        "input-mouse-test" => {
+            // thosinput move X Y puts the compositor's pointer at X,Y (absolute): compare the screen before and after
+            let img = prod_interactive_image(cmd);
+            let root = workspace_root();
+            let log = root.join("target/mouse-serial.log");
+            let sock = root.join("target/mouse-mon.sock");
+            let (a, b) = (root.join("target/mouse-a.ppm"), root.join("target/mouse-b.ppm"));
+            for f in [&log, &sock, &a, &b] { let _ = std::fs::remove_file(f); }
+            let (tlog, tsock, ta, tb) = (log.clone(), sock.clone(), a.clone(), b.clone());
+            std::thread::spawn(move || {
+                let ms = std::time::Duration::from_millis;
+                if !wait_for(&tlog, "mouse-desk-up", 240) { return; }
+                std::thread::sleep(ms(2500));
+                mon(&tsock, &format!("screendump {}", ta.to_str().unwrap()));
+                if !wait_for(&tlog, "mouse-moved", 60) { return; }
+                std::thread::sleep(ms(2000));
+                mon(&tsock, &format!("screendump {}", tb.to_str().unwrap()));
+            });
+            let _ = boot_and_run(&img, "mouse", "/busybox sh /mouse.sh", "mouse-end", 300);
+            // the bounding box of the pixels that differ between the two shots = old and new pointer position
+            let (pa, pb) = (read_ppm(&a), read_ppm(&b));
+            let ok = match (pa, pb) {
+                (Some((w, h, da)), Some((w2, h2, db))) if w == w2 && h == h2 => {
+                    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0usize, 0usize);
+                    for y in 0..h { for x in 0..w { let o = (y * w + x) * 3; if da[o..o + 3] != db[o..o + 3] { x0 = x0.min(x); x1 = x1.max(x); y0 = y0.min(y); y1 = y1.max(y); } } }
+                    println!("changed region {x0},{y0} - {x1},{y1} of {w}x{h}");
+                    x0 >= 636 && x0 <= 645 && y0 >= 298 && y0 <= 306 && x1 <= 665 && y1 >= 400
+                }
+                _ => false,
+            };
+            if ok { println!("input-mouse-test PASSED: the pointer went to the requested position"); }
+            else { eprintln!("input-mouse-test FAILED"); exit(1); }
+        }
+        "exe-link-test" => {
+            // /proc/self/exe is the real file even when the program was started through a symlink (Firefox locates libxul next to it)
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "exelink", "/busybox sh /exelink.sh", "exelink-end", 200, &[]);
+            if out.lines().any(|l| l.trim() == "/busybox") && !out.lines().any(|l| l.trim() == "/tmp/busybox") {
+                println!("exe-link-test PASSED: /proc/self/exe names the real program, not the symlink it was started through");
+            } else {
+                for l in out.lines().rev().take(8) { eprintln!("  {l}"); }
+                eprintln!("exe-link-test FAILED");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");
@@ -4779,7 +4824,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["sshexit.sh", "inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["exelink.sh", "mouse.sh", "sshexit.sh", "inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));

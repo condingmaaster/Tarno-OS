@@ -1567,7 +1567,9 @@ fn exec_resolved(path: alloc::string::String, argv: alloc::vec::Vec<alloc::strin
         Some(bytes) if crate::elf::validate(&bytes).is_err() => ENOEXEC,
         Some(bytes) => {
             if let Some(t) = sched::current().task() {
-                t.set_exe(&path);
+                // /proc/self/exe names the real file, not a symlink to it (Firefox finds its libraries next to it)
+                let real = ext2::open().ok().map(|fs| fs.resolve_final(&path)).unwrap_or_else(|| path.clone());
+                t.set_exe(&real);
             }
             process::execve(bytes, argv, envp) // -> ! on success
         }

@@ -269,10 +269,14 @@ cmd_install_repo() {
         case "$seen" in *" $cur "*) continue ;; esac
         seen="$seen$cur "
         case "$SKIP" in *" $cur "*) continue ;; esac
+        [ -f $DB/$cur.ok ] && [ -f $DB/$cur.list ] && continue               # checked before: no index lookup needed
         rline=$(idx_line "$cur")
         if [ -z "$rline" ]; then [ -f $DB/$cur.list ] && continue; echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
         deps=$(echo "$rline" | $B cut -d'|' -f5)
-        if [ -f $DB/$cur.list ]; then todo="$todo $deps"; continue; fi        # already there, but what it needs may be missing (an earlier run can have stopped half way)
+        if [ -f $DB/$cur.list ]; then
+            [ -f $DB/$cur.ok ] && continue                                   # installed and everything it needs was checked once
+            todo="$todo $deps"; continue                                     # already there, but what it needs may be missing (an earlier run can have stopped half way)
+        fi
         install_one "$cur" || return 1
         todo="$todo $deps"
         case "$cur" in libgtk-3-0t64) todo="$todo shared-mime-info libglib2.0-bin libgdk-pixbuf2.0-bin xkb-data fonts-dejavu-core" ;; esac
@@ -280,6 +284,7 @@ cmd_install_repo() {
     # A repository installation must be discoverable through the same UI as
     # a downloaded archive. Only register files owned by the requested package,
     # rather than unrelated programs from its shared /opt/root dependencies.
+    for n in $seen; do [ -f $DB/$n.list ] && : > $DB/$n.ok; done          # everything visited is installed together with what it needs
     post_install
     [ ! -f "$DB/$FIRST.list" ] || register "$ROOT" "$FIRST" "$DB/$FIRST.list"
     echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
@@ -307,7 +312,7 @@ remove_archive() {
         [ -n "$f" ] || continue
         if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi
     done
-    $B rm -f /tmp/pkg-del.$$ $DB/$name.list
+    $B rm -f /tmp/pkg-del.$$ $DB/$name.list $DB/$name.ok
     echo "removed $name"
 }
 
