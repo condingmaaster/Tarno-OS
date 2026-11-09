@@ -1916,6 +1916,11 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
         // fcntl: F_DUPFD(0) / F_DUPFD_CLOEXEC(1030), F_GETFD(1) / F_SETFD(2),
         // F_GETFL(3) / F_SETFL(4). FD_CLOEXEC is bit 0 of the F_*FD arg.
         73 => cur_fd(a1).map_or(EBADF, |file| crate::flock::apply(file, a2 as u32)),
+        // sync(2): everything the file system wrote is already submitted; make the drive's own cache durable too
+        162 => { let _ = crate::blk::flush(); 0 }
+        // readahead(2): the sector cache decides; getpriority(2): every process runs at nice 0 (the raw call returns 20 - nice)
+        187 => 0,
+        140 => 20,
         SYS_FCNTL => match a2 {
             0 => process::current_fd_dup(a1 as i32, a3 as i32) as i64,
             1030 => {

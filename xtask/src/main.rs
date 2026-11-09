@@ -1461,6 +1461,18 @@ fn main() {
                 exit(1);
             }
         }
+        "sync-test" => {
+            // sync(2) is implemented (it used to be an unhandled system call that merely logged a line)
+            let img = prod_interactive_image(cmd);
+            let out = boot_and_run_args(&img, "syncprobe", "/busybox sh /syncprobe.sh", "syncprobe-end", 200, &[]);
+            if out.lines().any(|l| l.trim() == "sync-rc=0") && !out.contains("unhandled syscall 162") {
+                println!("sync-test PASSED: sync returns 0 and no unhandled system call is logged");
+            } else {
+                for l in out.lines().rev().take(8) { eprintln!("  {l}"); }
+                eprintln!("sync-test FAILED");
+                exit(1);
+            }
+        }
         "installer-menu-test" => {
             // the stick's start menu: choosing "install" boots into the installer without any login; it installs onto the blank internal disk
             std::env::set_var("THOS_RAMROOT", "1");
@@ -4841,7 +4853,7 @@ fn disk_image() -> PathBuf {
                         run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {prog}", out.to_str().unwrap()), img.to_str().unwrap()]));
                     }
                 }
-                for f in ["timesync.sh", "exelink.sh", "mouse.sh", "sshexit.sh", "inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
+                for f in ["syncprobe.sh", "timesync.sh", "exelink.sh", "mouse.sh", "sshexit.sh", "inject.sh", "privilege.sh", "privilege-ui.sh", "downloads-large.sh", "desk-wininput.sh", "desk-winresize.sh", "thosrun-test.sh", "winargs.sh", "files-browser-exe.sh", "files-launch.sh", "jdk-ui.sh", "hwreport", "thos-install", "hw.sh", "pkg-repo.sh", "pkg-apps.sh", "pkg-msi.sh", "downloads.sh", "desk-native-resize.sh", "https.sh", "desk-tasklist.sh", "desk-files.sh", "desk-soft.sh", "desk-settings.sh", "desk-power.sh", "desk-edit.sh", "perf.sh", "desk-stress.sh", "desk-cal.sh", "desk-elevate.sh", "desk-theme.sh", "desk-ctx.sh", "desk-toast.sh", "desk-shot.sh", "desk-view.sh", "desk-showcase.sh", "desk-video-dock.sh", "desk-video-windows.sh", "desk-video-menu.sh", "desk-video-features.sh", "desk-video-min.sh", "desk-video-theme.sh", "desk-video-ctx.sh", "winrg.sh", "winrt.sh"] {
                     run(Command::new("debugfs").args(["-w", "-R", &format!("write {} {f}", root.join("xtask/testdata").join(f).to_str().unwrap()), img.to_str().unwrap()]));
                 }
                 run(Command::new("debugfs").args(["-w", "-R", "mkdir opt", img.to_str().unwrap()]));
