@@ -154,6 +154,11 @@ pub fn realtime_ns() -> u64 {
     BOOT_UNIX_NS.load(Ordering::Relaxed).saturating_add(monotonic_ns())
 }
 
+/// Set the wall clock (root, via `clock_settime` / `settimeofday`): the offset to the monotonic clock changes, nothing else.
+pub fn set_realtime_ns(ns: u64) {
+    BOOT_UNIX_NS.store(ns.saturating_sub(monotonic_ns()), Ordering::Relaxed);
+}
+
 /// Wall-clock time in whole seconds.
 pub fn unix_secs() -> u64 {
     realtime_ns() / 1_000_000_000

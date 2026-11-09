@@ -120,6 +120,8 @@ const SYS_THOS_BACKLIGHT: u64 = THOS_BASE + 2;
 const SYS_THOS_VOLUME: u64 = THOS_BASE + 3;
 const SYS_THOS_POWERBTN: u64 = THOS_BASE + 4;
 const SYS_THOS_TRACE: u64 = THOS_BASE + 5;
+const SYS_SETTIMEOFDAY: u64 = 164;
+const SYS_CLOCK_SETTIME: u64 = 227;
 const SYS_POLL: u64 = 7;
 const SYS_FALLOCATE: u64 = 285;
 const SYS_EPOLL_CREATE: u64 = 213;
@@ -2339,6 +2341,26 @@ extern "C" fn thos_syscall_dispatch(frame: &mut UserFrame) {
                 0
             } else {
                 -19
+            }
+        }
+        SYS_SETTIMEOFDAY | SYS_CLOCK_SETTIME => {
+            // root only; the new time is set in the kernel clock and written to the CMOS clock
+            let (ptr, usec_field) = if nr == SYS_SETTIMEOFDAY { (a1, true) } else { (a2, false) };
+            if crate::process::current_uid() != 0 { -1 }
+            else if nr == SYS_CLOCK_SETTIME && a1 != 0 { -22 }                 // only CLOCK_REALTIME can be set
+            else if ptr == 0 { 0 }
+            else {
+                match (usercopy::read_u64(ptr), usercopy::read_u64(ptr + 8)) {
+                    (Ok(sec), Ok(frac)) if sec < 4_102_444_800 && frac < 1_000_000_000 + 1 => {
+                        let ns = sec * 1_000_000_000 + if usec_field { frac * 1000 } else { frac };
+                        crate::timer::set_realtime_ns(ns);
+                        crate::rtc::write_unix(sec);
+                        kprintln!("THOS: clock            set to unix {} (and written to the CMOS clock)", sec);
+                        0
+                    }
+                    (Ok(_), Ok(_)) => -22,
+                    _ => EFAULT,
+                }
             }
         }
         SYS_THOS_TRACE => {

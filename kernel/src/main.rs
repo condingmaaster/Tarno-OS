@@ -292,6 +292,15 @@ extern "C" fn kmain() -> ! {
                 }
             }
         }
+        // The clock is set from the network time servers once the network is up (the CMOS clock of a machine that ran another system is often hours off).
+        if let Ok(fs) = ext2::open() {
+            if fs.path_lookup("/thos-timesync").is_some() && fs.path_lookup("/etc/thos/no-timesync").is_none() {
+                if let Some(sh) = fs.read_path("/busybox") {
+                    process::spawn_init(&sh, &["sh", "/thos-timesync"], &["PATH=/bin:/:/usr/sbin:/usr/bin", "HOME=/root", "USER=root", "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"]);
+                    kprintln!("THOS: time             the clock is set from the network once it is up (thos-timesync)");
+                }
+            }
+        }
         loop {
             let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
             // boot menu entry "THOS Installer" (kernel command line `install`): no login, the installer runs as root on the console

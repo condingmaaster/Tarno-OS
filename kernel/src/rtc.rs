@@ -110,3 +110,59 @@ pub fn read_unix() -> Option<u64> {
     let days = days_from_civil(year, mon as i64, day as i64);
     Some((days * 86400 + hour as i64 * 3600 + min as i64 * 60 + sec as i64) as u64)
 }
+
+/// Civil date from days since 1970-01-01 (Howard Hinnant's algorithm), the inverse of `days_from_civil`.
+fn civil_from_days(z: i64) -> (i64, i64, i64) {
+    let z = z + 719468;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    (if m <= 2 { y + 1 } else { y }, m, d)
+}
+
+fn set_reg(r: u8, v: u8) {
+    unsafe {
+        outb(0x70, r);
+        outb(0x71, v);
+    }
+}
+
+/// Write the CMOS clock (UTC) so a reboot starts with the right time. The update cycle is halted with the SET bit while the
+/// fields are written, in whatever format (BCD/binary, 12/24 h) the chip is configured for.
+pub fn write_unix(secs: u64) {
+    let days = (secs / 86_400) as i64;
+    let rem = secs % 86_400;
+    let (year, mon, day) = civil_from_days(days);
+    let (hour, min, sec) = ((rem / 3600) as u8, ((rem % 3600) / 60) as u8, (rem % 60) as u8);
+    let b = reg(0x0B);
+    let binary = b & 0x04 != 0;
+    let h24 = b & 0x02 != 0;
+    let enc = |v: u8| if binary { v } else { (v / 10) << 4 | (v % 10) };
+    let hour_enc = if h24 {
+        enc(hour)
+    } else {
+        let pm = hour >= 12;
+        let h12 = if hour % 12 == 0 { 12 } else { hour % 12 };
+        enc(h12) | if pm { 0x80 } else { 0 }
+    };
+    while updating() {
+        core::hint::spin_loop();
+    }
+    set_reg(0x0B, b | 0x80);                                   // SET: stop the update cycle
+    set_reg(0x00, enc(sec));
+    set_reg(0x02, enc(min));
+    set_reg(0x04, hour_enc);
+    set_reg(0x07, enc(day as u8));
+    set_reg(0x08, enc(mon as u8));
+    set_reg(0x09, enc((year % 100) as u8));
+    let cent = reg(0x32);
+    if (0x19..=0x21).contains(&cent) || (19..=21).contains(&cent) {      // only touch the century register when the chip has one
+        set_reg(0x32, enc((year / 100) as u8));
+    }
+    set_reg(0x0B, b & !0x80);                                  // run again
+}
