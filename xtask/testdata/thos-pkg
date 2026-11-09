@@ -245,6 +245,7 @@ install_one() {
         echo "thos-pkg: unpacking $pn failed (is the disk full? 'df' shows the free space)"; return 1
     fi
     $B mv /tmp/pkg-$$.list $DB/$pn.list
+    echo "$pl" | $B cut -d'|' -f2 > $DB/$pn.ver                                # the version that is installed (for `upgrade`)
     $B rm -f /tmp/pkg-$$.deb
 }
 
@@ -257,7 +258,7 @@ post_install() {
     if [ -x $pb/gdk-pixbuf-query-loaders ] && [ -d $pb/2.10.0/loaders ]; then
         GDK_PIXBUF_MODULEDIR=$pb/2.10.0/loaders $pb/gdk-pixbuf-query-loaders > $pb/2.10.0/loaders.cache.new 2>/dev/null && $B mv $pb/2.10.0/loaders.cache.new $pb/2.10.0/loaders.cache
     fi
-    [ -s /etc/machine-id ] || { $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n'; echo; } > /etc/machine-id 2>/dev/null     # 32 hex digits and a newline, as D-Bus insists
+    { [ -s /etc/machine-id ] || { $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n'; echo; } > /etc/machine-id; } 2>/dev/null     # 32 hex digits and a newline, as D-Bus insists (only root can write it)
     unset LD_LIBRARY_PATH
 }
 
@@ -288,6 +289,28 @@ cmd_install_repo() {
     post_install
     [ ! -f "$DB/$FIRST.list" ] || register "$ROOT" "$FIRST" "$DB/$FIRST.list"
     echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
+}
+
+# upgrade: every installed archive package whose version in the index differs from the one that was installed is installed again
+cmd_upgrade() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    todo=""
+    for f in $DB/*.ver; do
+        [ -f "$f" ] || continue
+        name=${f##*/}; name=${name%.ver}
+        line=$(idx_line "$name"); [ -n "$line" ] || continue
+        [ "$($B cat "$f")" = "$(echo "$line" | $B cut -d'|' -f2)" ] || todo="$todo $name"
+    done
+    [ -n "$todo" ] || { echo "all installed packages are up to date"; return 0; }
+    n=0
+    for name in $todo; do
+        echo "upgrading $name"
+        remove_archive "$name" > /dev/null 2>&1                               # the unpacker does not overwrite: the old files go first (files other packages also own stay)
+        install_one "$name" || return 1
+        n=$((n + 1))
+    done
+    post_install
+    echo "upgraded $n package(s)"
 }
 
 cmd_installed() { for f in $DB/*.list; do [ -f "$f" ] && { n=${f##*/}; echo "${n%.list}"; }; done; }
@@ -335,6 +358,7 @@ case "$1" in
     update) cmd_update ;;
     search) shift; cmd_search "$1" ;;
     installed) cmd_installed ;;
+    upgrade) cmd_upgrade ;;
     remove) shift; cmd_remove "$@" ;;
     *) echo "usage: thos-pkg install <file-or-url> [name] | list | remove <name>"; exit 1 ;;
 esac

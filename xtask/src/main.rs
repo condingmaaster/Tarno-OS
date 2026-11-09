@@ -1958,8 +1958,9 @@ fn main() {
             let img = prod_interactive_image(cmd);
             let out = boot_and_run(&img, "pkgrepo", "/busybox sh /pkg-repo.sh", "pkg-repo-done", 900);
             let lines = out.lines().find_map(|l| l.trim().strip_prefix("index-lines=")).and_then(|v| v.trim().parse::<u32>().ok()).unwrap_or(0);
-            if lines > 40000 && out.contains("installed=tree") && out.lines().any(|l| l.contains("directories")) && out.contains("removed tree") && out.contains("installed2=0") {
-                println!("pkg-repo-test PASSED: thos-pkg fetched the Debian index ({lines} packages), installed `tree` from the archive (checksum checked) and it ran");
+            if lines > 40000 && out.contains("installed=tree") && out.lines().any(|l| l.contains("directories")) && out.contains("removed tree") && out.contains("installed2=0")
+                && out.contains("upgraded 1 package(s)") && out.contains("all installed packages are up to date") && !out.contains("upgraded-version=old-version") {
+                println!("pkg-repo-test PASSED: thos-pkg fetched the Debian index ({lines} packages), installed `tree` from the archive (checksum checked), it ran, and `apt upgrade` reinstalled it after its recorded version was made stale");
             } else {
                 for l in out.lines().filter(|l| !l.trim().is_empty()).rev().take(30).collect::<Vec<_>>().into_iter().rev() {
                     eprintln!("  {l}");

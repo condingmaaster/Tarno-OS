@@ -28,6 +28,6 @@ case "$cmd" in
         exit $rc ;;
     list) $P installed ;;
     show) [ $# -ge 1 ] || usage; $P search "$1" ;;
-    upgrade|full-upgrade|dist-upgrade) echo "apt: upgrading installed packages is not supported yet (reinstall with: apt install <name>)"; exit 1 ;;
+    upgrade|full-upgrade|dist-upgrade) $P upgrade ;;
     *) usage ;;
 esac
