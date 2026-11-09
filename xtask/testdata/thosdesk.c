@@ -1317,6 +1317,13 @@ static int cascade_n;
 static void place_window(struct win *w) {
     { static int legacy = -1; if (legacy < 0) { const char *e = getenv("THOS_PLACE"); legacy = e && e[0] == 'l'; } if (legacy) return; }   /* THOS_PLACE=legacy: the fixed cascade the geometry-based tests were written for */
     int off = ((cascade_n++ % 6) - 2) * 30, wb = work_bottom();
+    if (w->csd && (w->gw > W - 16 || w->gh > wb - 18) && w->wl) {            /* bigger than the screen (a browser restores its last size): it gets the whole work area, maximized */
+        int rw = W * 4 / 5, rh = wb * 4 / 5;
+        w->rw = rw; w->rh = rh; w->rx = (W - rw) / 2; w->ry = (wb - rh) / 2;     /* what "restore" later gives back */
+        w->maxed = 1; w->x = -w->gx; w->y = -w->gy; w->cfg_w = W; w->cfg_h = wb;
+        configure_window(w, W, wb, 1);
+        return;
+    }
     if (w->csd) {
         int x = (W - w->gw) / 2 + off, y = (wb - w->gh) / 2 + off / 2;
         if (x < 8) x = 8;
