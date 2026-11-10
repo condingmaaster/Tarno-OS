@@ -144,10 +144,57 @@ pub fn control(cmd: &str) -> i64 {
                 Err(e) => { crate::kprintln!("THOS: wlan core        enable failed: {}", e); -5 }
             }
         }
+        "ucode" => ucode_start(hw, &rd),
         _ => -22,
     };
     pci::write32(hw.loc, 0xac, w1);
     pci::write32(hw.loc, 0x80, w0);
     pci::write16(hw.loc, 4, command);
     r
+}
+
+const MACCONTROL: usize = 0x120;
+const MACINTSTATUS: usize = 0x128;
+const OBJADDR: usize = 0x160;
+const OBJDATA: usize = 0x164;
+const MCTL_WAKE: u32 = 1 << 26;
+const MCTL_INFRA: u32 = 1 << 17;
+const MCTL_IHR_EN: u32 = 1 << 10;
+const MCTL_PSM_JMP_0: u32 = 1 << 2;
+const MCTL_PSM_RUN: u32 = 1 << 1;
+const MI_MACSSPNDD: u32 = 1;
+/// brcmsmac brcms_b_coreinit: reset the PSM, upload the MIMO16 microcode, let it run until it suspends itself, write the init tables.
+fn ucode_start(hw: Hw, rd: &dyn Fn(usize) -> u32) -> i64 {
+    let wr = |o: usize, v: u32| unsafe { core::ptr::write_volatile((hw.mmio + o) as *mut u32, v) };
+    let fw = (|| {
+        let bin = crate::firmware::read("brcm/bcm43xx-0.fw", crate::brcm_firmware::MAX_BIN)?;
+        let index = crate::firmware::read("brcm/bcm43xx_hdr-0.fw", crate::brcm_firmware::MAX_INDEX)?;
+        let f = crate::brcm_firmware::Firmware::parse(&bin, &index)?;
+        Ok::<_, &'static str>((f.section(10)?.to_vec(), f.section(8)?.to_vec(), f.section(9)?.to_vec()))
+    })();
+    let Ok((code, bsinit, init)) = fw else { crate::kprintln!("THOS: wlan ucode       firmware unavailable"); return -2 };
+    crate::pci::write32(hw.loc, 0x80, hw.d11);
+    crate::pci::write32(hw.loc, 0xac, hw.wrapper);
+    let delay = |us: u64| { let t = unsafe { core::arch::x86_64::_rdtsc() }; let n = us * crate::timer::tsc_mhz().max(1); while unsafe { core::arch::x86_64::_rdtsc() }.wrapping_sub(t) < n { core::hint::spin_loop(); } };
+    crate::kprintln!("THOS: wlan ucode       machwcap {:#x} phyversion {:#x} maccontrol {:#x}", rd(0x15c), rd(0x3e0) & 0xffff, rd(MACCONTROL));
+    wr(MACCONTROL, MCTL_IHR_EN | MCTL_PSM_JMP_0 | MCTL_WAKE);
+    wr(OBJADDR, 0x0300_0000); let _ = rd(OBJADDR);                       // auto-increment, microcode memory
+    for w in code.chunks_exact(4) { wr(OBJDATA, u32::from_le_bytes([w[0], w[1], w[2], w[3]])); }
+    wr(OBJADDR, 0x0200_0000); let _ = rd(OBJADDR);                       // read back the first words
+    let back = [rd(OBJDATA), rd(OBJDATA), rd(OBJDATA), rd(OBJDATA)];
+    crate::kprintln!("THOS: wlan ucode       uploaded {} bytes, readback {:08x?} expected {:02x?}", code.len(), back, &code[..16]);
+    wr(MACINTSTATUS, u32::MAX);
+    wr(MACCONTROL, MCTL_IHR_EN | MCTL_INFRA | MCTL_PSM_RUN | MCTL_WAKE);
+    let mut waited = 0;
+    while rd(MACINTSTATUS) & MI_MACSSPNDD == 0 && waited < 1000 { delay(1000); waited += 1; }
+    crate::kprintln!("THOS: wlan ucode       macintstatus {:#x} after {} ms ({}), maccontrol {:#x}", rd(MACINTSTATUS), waited, if waited < 1000 { "ucode self-suspended" } else { "ucode did NOT suspend" }, rd(MACCONTROL));
+    let write_inits = |table: &[u8]| { let mut n = 0; for e in table.chunks_exact(8) {
+        let (addr, size, val) = (u16::from_le_bytes([e[0], e[1]]) as usize, u16::from_le_bytes([e[2], e[3]]), u32::from_le_bytes([e[4], e[5], e[6], e[7]]));
+        if addr == 0xffff { break; }
+        match size { 2 => unsafe { core::ptr::write_volatile((hw.mmio + addr) as *mut u16, val as u16) }, 4 => wr(addr, val), _ => break }
+        n += 1; } n };
+    let n = write_inits(&init);
+    crate::kprintln!("THOS: wlan ucode       {} init values written", n);
+    let _ = bsinit;
+    0
 }
