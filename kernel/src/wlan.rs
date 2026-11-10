@@ -7,6 +7,9 @@ use crate::{bcma_core, bcma_erom, pci};
 #[derive(Clone, Copy)]
 struct Status { present: bool, phase: &'static str, detail: &'static str, revision: u8, cores: usize, firmware: &'static str, microcode_bytes: usize, d11_revision: u8, core: Option<bcma_core::Snapshot> }
 static STATUS: Mutex<Status> = Mutex::new(Status { present: false, phase: "absent", detail: "No Wi-Fi adapter detected", revision: 0, cores: 0, firmware: "unchecked", microcode_bytes: 0, d11_revision: 0, core: None });
+#[derive(Clone, Copy)]
+struct Hw { loc: pci::Location, mmio: usize, d11: u32, wrapper: u32 }
+static HW: Mutex<Option<Hw>> = Mutex::new(None);
 pub fn present() -> bool { STATUS.lock().present }
 pub fn info() -> String {
     let s = *STATUS.lock();
@@ -86,6 +89,7 @@ fn probe(loc: pci::Location) -> Result<(u8, usize, u8, bcma_core::Snapshot), &'s
         let scan = bcma_erom::parse(&words)?;
         let d11 = scan.cores[..scan.count].iter().find(|c| c.manufacturer == 0x4bf && c.id == 0x812).ok_or("BCMA Wi-Fi core not found")?;
         if d11.wrapper & 0xfff != 0 || !(0x18100000..0x19000000).contains(&d11.wrapper) { return Err("BCMA Wi-Fi reset wrapper not found"); }
+        *HW.lock() = Some(Hw { loc, mmio, d11: d11.address, wrapper: d11.wrapper });
         pci::write32(loc, 0xac, d11.wrapper);
         if pci::read32(loc, 0xac) != d11.wrapper { return Err("BCMA wrapper window selection failed"); }
         let core = bcma_core::snapshot(&mut Wrapper { mmio })?;
@@ -97,4 +101,53 @@ fn probe(loc: pci::Location) -> Result<(u8, usize, u8, bcma_core::Snapshot), &'s
     pci::write32(loc, 0x80, window);
     pci::write16(loc, 4, command);
     result
+}
+
+/// `/dev/wlan` commands (root), for bring-up on the real adapter only: `cc` reads ChipCommon/PMU and applies the PMU control bit,
+/// `sprom` dumps the SPROM words, `core` enables the D11 core and reads its MAC registers. Results go to the kernel log.
+pub fn control(cmd: &str) -> i64 {
+    let Some(hw) = *HW.lock() else { return -19 };
+    let command = pci::read16(hw.loc, 4);
+    let (w0, w1) = (pci::read32(hw.loc, 0x80), pci::read32(hw.loc, 0xac));
+    pci::write16(hw.loc, 4, command | 2);
+    let rd = |o: usize| unsafe { core::ptr::read_volatile((hw.mmio + o) as *const u32) };
+    let rd16 = |o: usize| unsafe { core::ptr::read_volatile((hw.mmio + o) as *const u16) };
+    let r = match cmd.trim() {
+        "cc" => {
+            pci::write32(hw.loc, 0x80, 0x18000000);
+            let (chip, caps, pmucap, ctl, stat) = (rd(0), rd(4), rd(0x604), rd(0x600), rd(0x608));
+            crate::kprintln!("THOS: wlan cc          chip {:#x} caps {:#x} pmucap {:#x} pmuctl {:#x} pmustatus {:#x} minres {:#x} maxres {:#x}", chip, caps, pmucap, ctl, stat, rd(0x618), rd(0x61c));
+            if pmucap & 0xff >= 2 { unsafe { core::ptr::write_volatile((hw.mmio + 0x600) as *mut u32, ctl | 0x200); } }
+            crate::kprintln!("THOS: wlan cc          pmuctl now {:#x}", rd(0x600));
+            0
+        }
+        "sprom" => {
+            pci::write32(hw.loc, 0x80, 0x18000000);
+            for row in 0..16 {
+                let mut line = alloc::string::String::new();
+                for i in 0..16 { line.push_str(&format!(" {:04x}", rd16(0x800 + (row * 16 + i) * 2))); }
+                crate::kprintln!("THOS: wlan sprom {:3x}{}", row * 16, line);
+            }
+            0
+        }
+        "core" => {
+            pci::write32(hw.loc, 0x80, hw.d11);
+            pci::write32(hw.loc, 0xac, hw.wrapper);
+            let mut w = Wrapper { mmio: hw.mmio };
+            match bcma_core::enable(&mut w, 4) {
+                Ok(()) => {
+                    let s = bcma_core::snapshot(&mut w).ok();
+                    crate::kprintln!("THOS: wlan core        enabled {:?}", s);
+                    crate::kprintln!("THOS: wlan core        maccontrol {:#x} macintstatus {:#x} id {:#x}", rd(0x120), rd(0x128), rd(0));
+                    0
+                }
+                Err(e) => { crate::kprintln!("THOS: wlan core        enable failed: {}", e); -5 }
+            }
+        }
+        _ => -22,
+    };
+    pci::write32(hw.loc, 0xac, w1);
+    pci::write32(hw.loc, 0x80, w0);
+    pci::write16(hw.loc, 4, command);
+    r
 }

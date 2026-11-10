@@ -367,6 +367,7 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
             crate::pty::open_ctty(&p)
         }
         "/dev/kmsg" if want_write && !want_read => Arc::new(KmsgFile),
+        "/dev/wlan" if want_write && !want_read => Arc::new(WlanFile),
         "/dev/inject" if want_write && !want_read => Arc::new(InjectFile { src: crate::ps2::usb_mouse_attach(), buttons: core::sync::atomic::AtomicU8::new(0) }),
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
@@ -424,6 +425,23 @@ impl FileOps for InjectFile {
                 "u" => crate::console::feed_report(&[0; 8]),
                 _ => return -22,
             }
+        }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
+/// `/dev/wlan` (write only, root): bring-up commands for the Wi-Fi adapter (see wlan::control).
+struct WlanFile;
+impl FileOps for WlanFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        for line in alloc::string::String::from_utf8_lossy(buf).lines() {
+            let r = crate::wlan::control(line);
+            if r < 0 { return r; }
         }
         buf.len() as i64
     }
