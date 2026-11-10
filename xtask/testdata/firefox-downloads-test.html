@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>THOS browser download check</title>
+<style>body{font:18px sans-serif;background:#171d2b;color:#edf1ff;margin:36px}a{display:block;width:280px;padding:20px;margin:24px 0;color:#07151b;text-decoration:none;border-radius:10px}#win{background:#2dc9c0}#linux{background:#e27941}</style>
+<h1>Windows and Linux downloads</h1><p>Local test files. Downloading does not run them.</p>
+<a id="win" onmousedown="this.style.background='#6b799d'" href="windows.exe" download="Firefox Tool.exe" onclick="if(this.dataset.clicked)return false;this.dataset.clicked='1';this.style.background='#5a9cdd'">Download Windows program</a>
+<a id="linux" onmousedown="this.style.background='#b29d74'" href="native" download="busybox Linux" onclick="if(this.dataset.clicked)return false;this.dataset.clicked='1';this.style.background='#9e76dc'">Download Linux program</a>
+
+<script>
+const marker = document.createElement('div');
+marker.id = 'js-ready';
+marker.style.cssText = 'position:fixed;right:12px;top:12px;width:48px;height:48px;background:#78d59c';
+document.body.appendChild(marker);
+window.addEventListener('load', () => { marker.style.background = '#a991ef'; });
+</script>

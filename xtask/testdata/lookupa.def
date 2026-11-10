@@ -1,0 +1,6 @@
+LIBRARY lookupa.dll
+EXPORTS
+ marker_a @1
+ ForwardFind=KERNEL32.FindFirstFileExA @2
+ ForwardOrdinal="KERNEL32.#4" @3
+ Loop=lookupb.Loop @4

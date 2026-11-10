@@ -6,7 +6,6 @@
 //! (then the wake already happened). The word is identified by its **physical** address, so
 //! threads of one process — and, later, processes sharing a mapping — meet at the same queue.
 
-use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 
 use spin::Mutex;
@@ -26,7 +25,7 @@ const FUTEX_WAKE_BITSET: u64 = 10;
 const FUTEX_CLOCK_REALTIME: u64 = 256;
 
 /// Wait queues by physical address of the futex word.
-static QUEUES: Mutex<BTreeMap<u64, Arc<WaitQueue>>> = Mutex::new(BTreeMap::new());
+static QUEUES: Mutex<crate::futex_registry::Registry<WaitQueue>> = Mutex::new(crate::futex_registry::Registry::new());
 
 fn key_of(uaddr: u64) -> Result<u64, i64> {
     if uaddr & 3 != 0 || !usercopy::user_ok(uaddr, 4, false) {
@@ -37,27 +36,21 @@ fn key_of(uaddr: u64) -> Result<u64, i64> {
 }
 
 fn queue(key: u64) -> Arc<WaitQueue> {
-    QUEUES.lock().entry(key).or_insert_with(|| Arc::new(WaitQueue::new())).clone()
+    QUEUES.lock().lease(key,WaitQueue::new)
 }
 
 /// Wake up to `n` threads waiting on `uaddr`; the number woken.
 pub fn wake(uaddr: u64, n: u64) -> i64 {
     let Ok(key) = key_of(uaddr) else { return EFAULT };
-    let q = match QUEUES.lock().get(&key) {
-        Some(q) => q.clone(),
+    let q = match QUEUES.lock().get(key) {
+        Some(q) => q,
         None => return 0,
     };
     let mut woken = 0;
     while woken < n && q.wake_one() {
         woken += 1;
     }
-    if q.is_empty() {
-        let mut t = QUEUES.lock();
-        // Only drop the entry if nobody queued up in the meantime.
-        if t.get(&key).is_some_and(|x| Arc::ptr_eq(x, &q)) && q.is_empty() {
-            t.remove(&key);
-        }
-    }
+    QUEUES.lock().retire_if_idle(key,&q,WaitQueue::is_empty);
     woken as i64
 }
 
@@ -73,6 +66,7 @@ fn wait(uaddr: u64, val: u32, deadline: Option<u64>) -> i64 {
     // The page was validated and is mapped for this process, so the read cannot fault.
     let still_equal = || unsafe { core::ptr::read_volatile(word) } == val && !signal::interrupted();
     if unsafe { core::ptr::read_volatile(word) } != val {
+        QUEUES.lock().retire_if_idle(key,&q,WaitQueue::is_empty);
         return EAGAIN;
     }
     let timed_out = match deadline {
@@ -82,6 +76,7 @@ fn wait(uaddr: u64, val: u32, deadline: Option<u64>) -> i64 {
             false
         }
     };
+    QUEUES.lock().retire_if_idle(key,&q,WaitQueue::is_empty);
     if timed_out {
         ETIMEDOUT
     } else if signal::interrupted() {

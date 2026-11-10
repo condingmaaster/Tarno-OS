@@ -54,7 +54,21 @@ pub const NT_WIDECHARTOMULTIBYTE: u16 = 27;
 pub const NT_SETUNHANDLEDEXCEPTIONFILTER: u16 = 28;
 pub const NT_VIRTUALQUERY: u16 = 29;
 pub const NT_SLEEP: u16 = 30;
-pub const NT_STUB_COUNT: u16 = 31;
+pub const NT_FREELIBRARY:u16=31;
+pub const NT_LOADLIBRARYW:u16=32;
+pub const NT_GETMODULEHANDLEW:u16=33;
+pub const NT_LOADLIBRARYEXW:u16=34;
+pub const NT_SETDEFAULTDLLDIRECTORIES:u16=35;
+pub const NT_GETCONSOLEWINDOW:u16=36;
+pub const NT_LOADLIBRARYEXA:u16=37;
+pub const NT_CREATETOOLHELP32SNAPSHOT:u16=38;
+pub const NT_PROCESS32FIRSTW:u16=39;
+pub const NT_PROCESS32NEXTW:u16=40;
+pub const NT_GETEXITCODETHREAD:u16=41;
+pub const NT_GETTHREADID:u16=42;
+pub const NT_GETCURRENTTHREADID:u16=43;
+pub const NT_GETTHREADTIMES:u16=44;
+pub const NT_STUB_COUNT: u16 = 45;
 
 /// The `kernel32` export table, in stub-index order. Drives both
 /// [`crate::pe::resolve_import`] (import → stub index) and the synthetic
@@ -93,6 +107,20 @@ pub const NT_EXPORTS: [&str; NT_STUB_COUNT as usize] = [
     "SetUnhandledExceptionFilter",
     "VirtualQuery",
     "Sleep",
+    "FreeLibrary",
+    "LoadLibraryW",
+    "GetModuleHandleW",
+    "LoadLibraryExW",
+    "SetDefaultDllDirectories",
+    "GetConsoleWindow",
+    "LoadLibraryExA",
+    "CreateToolhelp32Snapshot",
+    "Process32FirstW",
+    "Process32NextW",
+    "GetExitCodeThread",
+    "GetThreadId",
+    "GetCurrentThreadId",
+    "GetThreadTimes",
 ];
 
 /// Selector bit OR-ed into a stub's index when it belongs to the **native NT**
@@ -273,6 +301,7 @@ fn wx_to_win32_protect(writable: bool, exec: bool) -> u32 {
 // NTSTATUS values the `Nt*` layer returns (low 32 bits; the high bit marks an
 // error, which a caller tests with `NT_SUCCESS`).
 const STATUS_SUCCESS: u32 = 0x0000_0000;
+const STATUS_NOT_IMPLEMENTED:u32=0xc000_0002;
 const STATUS_END_OF_FILE: u32 = 0xC000_0011;
 const STATUS_INVALID_HANDLE: u32 = 0xC000_0008;
 const STATUS_INVALID_PARAMETER: u32 = 0xC000_000D;
@@ -386,9 +415,38 @@ const GDI_SELECTOBJECT: u16 = 2;
 const GDI_SETPIXEL: u16 = 3;
 const GDI_GETPIXEL: u16 = 4;
 const GDI_RECTANGLE: u16 = 5;
-pub const GDI32_STUB_COUNT: u16 = 6;
-pub const GDI32_EXPORTS: [&str; GDI32_STUB_COUNT as usize] =
-    ["GetStockObject", "CreateSolidBrush", "SelectObject", "SetPixel", "GetPixel", "Rectangle"];
+const GDI_CREATECOMPATIBLEDC:u16=6;
+const GDI_CREATECOMPATIBLEBITMAP:u16=7;
+const GDI_DELETEDC:u16=8;
+const GDI_DELETEOBJECT:u16=9;
+const GDI_BITBLT:u16=10;
+const GDI_SETDCBRUSHCOLOR:u16=11;
+const GDI_GETDCBRUSHCOLOR:u16=12;
+const GDI_ALPHABLEND:u16=13;
+const GDI_CREATEFONTW:u16=14;
+const GDI_CREATEFONTA:u16=15;
+const GDI_SETTEXTCOLOR:u16=16;
+const GDI_GETTEXTCOLOR:u16=17;
+const GDI_SETBKCOLOR:u16=18;
+const GDI_GETBKCOLOR:u16=19;
+const GDI_SETBKMODE:u16=20;
+const GDI_GETBKMODE:u16=21;
+const GDI_TEXTOUTW:u16=22;
+const GDI_TEXTEXTENTW:u16=23;
+const GDI_TEXTMETRICSW:u16=24;
+const GDI_TEXTFACEW:u16=25;
+const GDI_GETCURRENTOBJECT:u16=26;
+const GDI_CREATEPEN:u16=27;
+const GDI_SETDCPENCOLOR:u16=28;
+const GDI_GETDCPENCOLOR:u16=29;
+pub const GDI32_STUB_COUNT:u16=30;
+pub const GDI32_EXPORTS:[&str;GDI32_STUB_COUNT as usize]=[
+    "GetStockObject","CreateSolidBrush","SelectObject","SetPixel","GetPixel","Rectangle",
+    "CreateCompatibleDC","CreateCompatibleBitmap","DeleteDC","DeleteObject","BitBlt",
+    "SetDCBrushColor","GetDCBrushColor","GdiAlphaBlend","CreateFontW","CreateFontA",
+    "SetTextColor","GetTextColor","SetBkColor","GetBkColor","SetBkMode","GetBkMode",
+    "TextOutW","GetTextExtentPoint32W","GetTextMetricsW","GetTextFaceW","GetCurrentObject","CreatePen","SetDCPenColor","GetDCPenColor",
+];
 
 /// Selector bit for the synthetic `user32.dll` layer (`0x2000`).
 pub const NT_USER32_FLAG: u16 = 0x2000;
@@ -406,7 +464,27 @@ const USER_DISPATCHMESSAGEA: u16 = 10;
 const USER_POSTQUITMESSAGE: u16 = 11;
 const USER_TRANSLATEMESSAGE: u16 = 12;
 const USER_POSTMESSAGEA: u16 = 13;
-pub const USER32_STUB_COUNT: u16 = 14;
+const USER_GETCLIENTRECT:u16=14;
+const USER_SETWINDOWTEXTA:u16=15;
+const USER_GETWINDOWTEXTA:u16=16;
+const USER_GETWINDOWTEXTLENGTHA:u16=17;
+const USER_FILLRECT:u16=18;
+const USER_ADJUSTWINDOWRECT:u16=19;
+const USER_ADJUSTWINDOWRECTEX:u16=20;
+const USER_REGISTERCLASSW:u16=21;
+const USER_REGISTERCLASSEXA:u16=22;
+const USER_REGISTERCLASSEXW:u16=23;
+const USER_CREATEWINDOWEXW:u16=24;
+const USER_DEFWINDOWPROCW:u16=25;
+const USER_GETMESSAGEW:u16=26;
+const USER_DISPATCHMESSAGEW:u16=27;
+const USER_CALLWINDOWPROCW:u16=28;
+const USER_POSTMESSAGEW:u16=29;
+const USER_SETWINDOWTEXTW:u16=30;
+const USER_GETWINDOWTEXTW:u16=31;
+const USER_GETWINDOWTEXTLENGTHW:u16=32;
+const USER_ISWINDOWUNICODE:u16=33;
+pub const USER32_STUB_COUNT: u16 = 34;
 pub const USER32_EXPORTS: [&str; USER32_STUB_COUNT as usize] = [
     "GetSystemMetrics",
     "GetDC",
@@ -422,8 +500,32 @@ pub const USER32_EXPORTS: [&str; USER32_STUB_COUNT as usize] = [
     "PostQuitMessage",
     "TranslateMessage",
     "PostMessageA",
+    "GetClientRect",
+    "SetWindowTextA",
+    "GetWindowTextA",
+    "GetWindowTextLengthA",
+    "FillRect",
+    "AdjustWindowRect",
+    "AdjustWindowRectEx",
+    "RegisterClassW",
+    "RegisterClassExA",
+    "RegisterClassExW",
+    "CreateWindowExW",
+    "DefWindowProcW",
+    "GetMessageW",
+    "DispatchMessageW",
+    "CallWindowProcW",
+    "PostMessageW",
+    "SetWindowTextW",
+    "GetWindowTextW",
+    "GetWindowTextLengthW",
+    "IsWindowUnicode",
 ];
 
+fn counted_gdi_wide(ptr:u64,count:i32)->Result<&'static[u8],u32>{
+    if count<0||count>32768{return Err(87);}if count==0{return Ok(&[]);}
+    crate::usercopy::slice(ptr,count as usize*2).map_err(|_|998)
+}
 /// `GetStockObject`/`CreateSolidBrush`/`SelectObject`/`SetPixel`/`GetPixel`/
 /// `Rectangle` — thin syscall skin over `crate::gdi`. The `HDC` argument every
 /// one of these takes is ignored: there is exactly one DC (the whole screen)
@@ -438,11 +540,68 @@ fn dispatch_gdi32(idx: u16, frame: &mut UserFrame) -> i64 {
         GDI_GETSTOCKOBJECT => crate::gdi::get_stock_object(a0 as i64) as i64,
         GDI_CREATESOLIDBRUSH => crate::gdi::create_solid_brush(a0 as u32) as i64,
         GDI_SELECTOBJECT => crate::gdi::select_object(a0, a1) as i64,
-        GDI_SETPIXEL => crate::gdi::set_pixel(a0, a1 as i64, a2 as i64, a3 as u32) as i64,
-        GDI_GETPIXEL => crate::gdi::get_pixel(a0, a1 as i64, a2 as i64) as i64,
+        GDI_SETPIXEL => crate::gdi::set_pixel(a0, a1 as i32 as i64, a2 as i32 as i64, a3 as u32) as i64,
+        GDI_GETPIXEL => crate::gdi::get_pixel(a0, a1 as i32 as i64, a2 as i32 as i64) as i64,
+        GDI_CREATECOMPATIBLEDC=>crate::gdi::create_compatible_dc(a0) as i64,
+        GDI_CREATECOMPATIBLEBITMAP=>crate::gdi::create_compatible_bitmap(a0,a1 as i32,a2 as i32) as i64,
+        GDI_DELETEDC=>crate::gdi::delete_dc(a0) as i64,
+        GDI_DELETEOBJECT=>crate::gdi::delete_object(a0) as i64,
+        GDI_BITBLT=>crate::gdi::bit_blt(a0,a1 as i32,a2 as i32,a3 as i32,stack(0) as i32,stack(1),stack(2) as i32,stack(3) as i32,stack(4) as u32) as i64,
+        GDI_CREATEFONTW|GDI_CREATEFONTA=>{
+            let(height,width,escape,orientation)=(a0 as i32,a1 as i32,a2 as i32,a3 as i32);let weight=stack(0) as i32;
+            if height==i32::MIN||weight<0||weight>1000{set_last_error(87);return 0;}
+            let charset=stack(4) as u32;let precision=stack(5) as u32;let quality=stack(7) as u32;let pitch=stack(8) as u32;
+            if width!=0||escape!=0||orientation!=0||stack(1) as u32!=0||stack(2) as u32!=0||stack(3) as u32!=0||!matches!(charset,0|1|255)||!matches!(precision,0|4|6)||stack(6) as u32!=0||quality>6||quality==3||pitch&3==1{
+                set_last_error(50);return 0; // unsupported raster-face request
+            }
+            let face=stack(9);if face!=0{
+                if idx==GDI_CREATEFONTW{for i in 0..32u64{let Some(p)=face.checked_add(i*2) else{set_last_error(998);return 0;};match crate::usercopy::slice(p,2).map(|b|u16::from_le_bytes([b[0],b[1]])){Ok(0)=>break,Ok(_)=>{},Err(_)=>{set_last_error(998);return 0;}}}}
+                else if crate::usercopy::cstr_bytes(face,32).is_err(){set_last_error(998);return 0;}
+            }
+            let h=crate::gdi::create_font(height,weight);if h==0{set_last_error(8);}h as i64
+        }
+        GDI_SETTEXTCOLOR|GDI_SETBKCOLOR|GDI_SETBKMODE=>{
+            let kind=match idx{GDI_SETTEXTCOLOR=>0,GDI_SETBKCOLOR=>1,_=>2};
+            match crate::gdi::set_text_property(a0,kind,a1 as u32){Some(old)=>old as i64,None=>{set_last_error(87);if kind==2{0}else{u32::MAX as i64}}}
+        }
+        GDI_GETTEXTCOLOR|GDI_GETBKCOLOR|GDI_GETBKMODE=>{
+            let kind=match idx{GDI_GETTEXTCOLOR=>0,GDI_GETBKCOLOR=>1,_=>2};
+            crate::gdi::get_text_property(a0,kind).map_or(if kind==2{0}else{u32::MAX as i64},|x|x as i64)
+        }
+        GDI_GETCURRENTOBJECT=>crate::gdi::current_object(a0,a1 as u32) as i64,
+        GDI_TEXTOUTW=>{
+            let bytes=match counted_gdi_wide(a3,stack(0) as i32){Ok(b)=>b,Err(e)=>{set_last_error(e);return 0;}};
+            crate::gdi::text_out(a0,a1 as i32,a2 as i32,bytes) as i64
+        }
+        GDI_TEXTEXTENTW=>{
+            let bytes=match counted_gdi_wide(a1,a2 as i32){Ok(b)=>b,Err(e)=>{set_last_error(e);return 0;}};
+            let Some((w,h))=crate::gdi::text_extent(a0,bytes) else{set_last_error(6);return 0;};
+            if crate::usercopy::put(a3,[w,h]){1}else{set_last_error(998);0}
+        }
+        GDI_TEXTMETRICSW=>{
+            let Some(font)=crate::gdi::selected_font(a0) else{set_last_error(6);return 0;};let m=font.metrics;
+            let values=[m.height(),m.ascent,m.descent,(m.height()-m.pixels).max(0),(m.line_height-m.height()).max(0),m.average_width,m.max_advance,m.weight,0,96,96];
+            let mut bytes=[0u8;60];for(i,v)in values.iter().enumerate(){bytes[i*4..i*4+4].copy_from_slice(&v.to_le_bytes());}
+            for(i,ch)in [32u16,0x20ac,63,32].iter().enumerate(){bytes[44+i*2..46+i*2].copy_from_slice(&ch.to_le_bytes());}bytes[55]=0x21; // variable-pitch raster Swiss family
+            if crate::usercopy::put(a1,bytes){1}else{set_last_error(998);0}
+        }
+        GDI_TEXTFACEW=>{
+            if crate::gdi::selected_font(a0).is_none(){set_last_error(6);return 0;}
+            // Report the installed fallback face, not a requested Windows name.
+            let face=[84u16,72,79,83,32,85,73,0];if a2==0{return face.len() as i64;}
+            let cap=a1 as i32;if cap<=0{set_last_error(87);return 0;}let n=(cap as usize).min(face.len());
+            let Ok(out)=crate::usercopy::slice_mut(a2,n*2) else{set_last_error(998);return 0;};
+            for i in 0..n{let ch=if i+1==n{0}else{face[i]};out[i*2..i*2+2].copy_from_slice(&ch.to_le_bytes());}n as i64
+        }
+        GDI_ALPHABLEND=>crate::gdi::alpha_blend(a0,a1 as i32,a2 as i32,a3 as i32,stack(0) as i32,stack(1),stack(2) as i32,stack(3) as i32,stack(4) as i32,stack(5) as i32,stack(6) as u32) as i64,
+        GDI_SETDCBRUSHCOLOR=>crate::gdi::set_dc_brush_color(a0,a1 as u32) as i64,
+        GDI_GETDCBRUSHCOLOR=>crate::gdi::get_dc_brush_color(a0) as i64,
+        GDI_CREATEPEN=>crate::gdi::create_pen(a0 as i32,a1 as i32,a2 as u32) as i64,
+        GDI_SETDCPENCOLOR=>crate::gdi::set_dc_pen_color(a0,a1 as u32) as i64,
+        GDI_GETDCPENCOLOR=>crate::gdi::get_dc_pen_color(a0) as i64,
         GDI_RECTANGLE => {
-            let bottom = stack(0) as i64;
-            crate::gdi::fill_rect(a0, a1 as i64, a2 as i64, a3 as i64, bottom) as i64
+            let bottom = stack(0) as i32 as i64;
+            crate::gdi::rectangle(a0,a1 as i32,a2 as i32,a3 as i32,bottom as i32) as i64
         }
         _ => -1,
     }
@@ -452,6 +611,45 @@ fn dispatch_gdi32(idx: u16, frame: &mut UserFrame) -> i64 {
 /// deliberately tiny: `GetDC`/`ReleaseDC` don't need to track anything (one
 /// DC, never freed), `GetSystemMetrics` only knows the two screen-size
 /// indices `crate::gdi` can actually answer.
+fn copy_window_title(hwnd:u32,ptr:u64,cap:usize)->i64 {
+    if cap==0{return 0;}
+    let Some(title)=crate::window::title_of(hwnd) else{set_last_error(1400);return 0;};
+    let mut bytes:alloc::vec::Vec<u8>=title.chars().take(cap-1).map(|c|c as u8).collect();
+    let n=bytes.len();bytes.push(0);
+    let Ok(out)=crate::usercopy::slice_mut(ptr,bytes.len()) else{set_last_error(998);return 0;};
+    out.copy_from_slice(&bytes);n as i64
+}
+fn window_text(ptr:u64,wide:bool,max:usize,null_empty:bool)->Result<alloc::string::String,u32>{
+    if ptr==0{return if null_empty{Ok(alloc::string::String::new())}else{Err(998)};}
+    if !wide{return crate::usercopy::cstr_bytes(ptr,max).map(|b|b.into_iter().map(|c|c as char).collect()).map_err(|e|if e == -36{206}else{998});}
+    let mut units=alloc::vec::Vec::new();
+    for i in 0..=max {
+        let p=ptr.checked_add((i as u64).checked_mul(2).ok_or(998u32)?).ok_or(998u32)?;
+        let b=crate::usercopy::slice(p,2).map_err(|_|998u32)?;let u=u16::from_le_bytes([b[0],b[1]]);
+        if u==0{return alloc::string::String::from_utf16(&units).map_err(|_|1113);}
+        if i==max{return Err(206);}units.push(u);
+    }
+    Err(206)
+}
+fn window_instance(instance:u64)->u64{
+    if instance!=0{return instance;}
+    teb().map_or(0,|t|{let peb=crate::usercopy::get::<u64>(unsafe{t.add(0x60)});crate::usercopy::get::<u64>(peb.wrapping_add(0x10))})
+}
+fn register_user_class(ptr:u64,wide:bool,extended:bool)->Result<u16,u32>{
+    let bytes=crate::usercopy::slice(ptr,if extended{80}else{72}).map_err(|_|998u32)?;
+    let d=|at:usize|u32::from_le_bytes(bytes[at..at+4].try_into().unwrap());
+    let q=|at:usize|u64::from_le_bytes(bytes[at..at+8].try_into().unwrap());
+    if extended&&d(0)!=80{return Err(87);}
+    if d(if extended{4}else{0})&!3!=0||d(16)!=0||d(20)!=0||q(56)!=0||q(32)!=0||q(40)!=0||q(48)!=0||(extended&&q(72)!=0){return Err(50);}
+    let name=window_text(q(64),wide,256,false)?;
+    crate::window::register_class_encoded(name,q(8),window_instance(q(24)),wide)
+}
+fn copy_window_title_w(hwnd:u32,ptr:u64,cap:usize)->i64{
+    if cap==0{return 0;}let Some(title)=crate::window::title_of(hwnd) else{set_last_error(1400);return 0;};
+    let mut units:alloc::vec::Vec<u16>=title.encode_utf16().take(cap-1).collect();let n=units.len();units.push(0);
+    let Ok(out)=crate::usercopy::slice_mut(ptr,units.len()*2) else{set_last_error(998);return 0;};
+    for(i,u)in units.iter().enumerate(){out[i*2..i*2+2].copy_from_slice(&u.to_le_bytes());}n as i64
+}
 fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
     let a0 = frame.r10;
     let a1 = frame.rdx;
@@ -459,11 +657,49 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
     let a3 = frame.r9;
     let stack = |i: u64| crate::usercopy::win64_stack_arg(frame.rsp, i);
     match idx {
+        USER_ISWINDOWUNICODE=>if a0<=u32::MAX as u64{crate::window::is_unicode(a0 as u32).unwrap_or(false) as i64}else{0},
+        USER_SETWINDOWTEXTA|USER_GETWINDOWTEXTA|USER_GETWINDOWTEXTLENGTHA|USER_SETWINDOWTEXTW|USER_GETWINDOWTEXTW|USER_GETWINDOWTEXTLENGTHW=>{
+            if a0>u32::MAX as u64{set_last_error(1400);return 0;}
+            let wide=matches!(idx,USER_SETWINDOWTEXTW|USER_GETWINDOWTEXTW|USER_GETWINDOWTEXTLENGTHW);
+            let set=matches!(idx,USER_SETWINDOWTEXTA|USER_SETWINDOWTEXTW);let get=matches!(idx,USER_GETWINDOWTEXTA|USER_GETWINDOWTEXTW);
+            let Some(owner)=crate::window::owner_process(a0 as u32) else{set_last_error(1400);return 0;};
+            if get&&(a2 as i32)<=0{return 0;}
+            if owner==process::current_pid(){
+                // Cross-encoding callback marshalling needs a separate user
+                // buffer/lifetime protocol. Never pass an A pointer to W code.
+                if crate::window::is_unicode(a0 as u32)!=Some(wide){set_last_error(50);return 0;}
+                let Some(proc)=crate::window::wndproc_of(a0 as u32) else{return 0;};
+                let (msg,wp,lp)=if set{(0xc,0,a1)}else if get{(0xd,a2,a1)}else{(0xe,0,0)};
+                invoke_ring3_callback(proc,[a0,msg,wp,lp],frame)
+            }else if set{set_last_error(5);0}
+            else if get{if wide{copy_window_title_w(a0 as u32,a1,a2 as u32 as usize)}else{copy_window_title(a0 as u32,a1,a2 as u32 as usize)}}
+            else{crate::window::title_of(a0 as u32).map_or(0,|s|if wide{s.encode_utf16().count() as i64}else{s.chars().count() as i64})}
+        }
+        USER_FILLRECT=>{
+            let Ok(bytes)=crate::usercopy::slice(a1,16) else{set_last_error(998);return 0;};
+            let mut rect=[0i32;4];for i in 0..4{rect[i]=i32::from_le_bytes(bytes[i*4..i*4+4].try_into().unwrap());}
+            crate::gdi::fill_with_brush(a0,rect,a2) as i64
+        }
+        USER_GETCLIENTRECT=>{
+            let Some((_,_,w,h))=crate::window::rect_of(a0 as u32) else{set_last_error(1400);return 0;};
+            if crate::usercopy::put(a1,[0i32,0,w,h]) {1}else{set_last_error(998);0}
+        }
+        USER_ADJUSTWINDOWRECT|USER_ADJUSTWINDOWRECTEX=>{
+            let Ok(bytes)=crate::usercopy::slice(a0,16) else{set_last_error(998);return 0;};
+            let mut rect=[0i32;4];for i in 0..4{rect[i]=i32::from_le_bytes(bytes[i*4..i*4+4].try_into().unwrap());}
+            let extended=if idx==USER_ADJUSTWINDOWRECTEX{a3 as u32}else{0};
+            match crate::window_frame::adjust(rect,a1 as u32,extended,a2 as u32!=0){
+                Ok(r)=>if crate::usercopy::put(a0,r){1}else{set_last_error(998);0},
+                Err(e)=>{set_last_error(e);0}
+            }
+        }
         USER_GETSYSTEMMETRICS => {
             let (w, h) = crate::gdi::screen_size();
             match a0 as i64 {
                 crate::gdi::SM_CXSCREEN => w as i64,
                 crate::gdi::SM_CYSCREEN => h as i64,
+                4 => crate::window_frame::CAPTION as i64,
+                5|6|7|8|32|33 => crate::window_frame::BORDER as i64,
                 _ => 0,
             }
         }
@@ -472,11 +708,9 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
         // gdi.rs's drawing calls know to offset/clip into that window's
         // client rect instead of drawing in raw screen coordinates.
         USER_GETDC => {
-            if a0 == 0 {
-                1
-            } else {
-                (crate::gdi::WINDOW_DC_TAG | a0) as i64
-            }
+            if a0==0{1}
+            else if a0<=u32::MAX as u64 && crate::window::rect_of(a0 as u32).is_some(){(crate::gdi::WINDOW_DC_TAG|a0) as i64}
+            else{set_last_error(1400);0}
         }
         // ReleaseDC(hWnd, hDC) -> BOOL. DCs aren't allocated objects here
         // (just a tagged integer), so there's nothing to release.
@@ -486,7 +720,7 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
         // function (a0) with the next four Win64 args shifted left by one
         // (hWnd/Msg/wParam here, lParam on the stack) and hand its LRESULT
         // back as this syscall's own return value.
-        USER_CALLWINDOWPROCA => {
+        USER_CALLWINDOWPROCA|USER_CALLWINDOWPROCW => {
             let lparam = crate::usercopy::win64_stack_arg(frame.rsp, 0);
             invoke_ring3_callback(a0, [frame.rdx, frame.r8, frame.r9, lparam], frame)
         }
@@ -496,27 +730,31 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
         // @0x40 (real WNDCLASSA layout — natural alignment puts the pointer
         // fields there after the leading `UINT style`). `0` (real
         // `ATOM` failure value) if the class name is empty.
-        USER_REGISTERCLASSA => {
-            let wndproc = unsafe { crate::usercopy::get::<u64>((a0 + 0x08)) };
-            let name_ptr = unsafe { crate::usercopy::get::<u64>((a0 + 0x40)) };
-            let name = user_cstr(name_ptr);
-            if name.is_empty() {
-                0
-            } else {
-                crate::window::register_class(name, wndproc);
-                1 // a nonzero ATOM — THOS looks classes up by name again, never by it
-            }
-        }
+        USER_REGISTERCLASSA|USER_REGISTERCLASSW|USER_REGISTERCLASSEXA|USER_REGISTERCLASSEXW=>match register_user_class(a0,matches!(idx,USER_REGISTERCLASSW|USER_REGISTERCLASSEXW),matches!(idx,USER_REGISTERCLASSEXA|USER_REGISTERCLASSEXW)){
+            Ok(atom)=>atom as i64,Err(e)=>{set_last_error(e);0}
+        },
 
         // CreateWindowExA(dwExStyle, lpClassName, lpWindowName, dwStyle, x,
         //                  y, nWidth, nHeight, hWndParent, hMenu, hInstance,
         //                  lpParam) -> HWND (`0` on failure — unregistered
         // class). hWndParent/hMenu/hInstance/lpParam aren't used yet (no
         // parent/child windows, no menus).
-        USER_CREATEWINDOWEXA => {
-            let class = user_cstr(a1);
+        USER_CREATEWINDOWEXA|USER_CREATEWINDOWEXW => {
+            if let Err(e)=crate::window_frame::supported(a3 as u32,a0 as u32,stack(5)!=0){set_last_error(e);return 0;}
+            if stack(4)!=0{set_last_error(50);return 0;}
+            let wide=idx==USER_CREATEWINDOWEXW;
+            let class=if a1>0&&a1<=u16::MAX as u64{crate::window::class_by_atom(a1 as u16)}else{
+                let name=match window_text(a1,wide,256,false){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+                crate::window::class_by_name(window_instance(stack(6)),&name)
+            };
+            let Some(class)=class else{set_last_error(1407);return 0;};
+            if class.wide!=wide{set_last_error(50);return 0;}
+            let title=match window_text(a2,wide,4096,true){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
             let (x, y, w, h) = (stack(0) as i32, stack(1) as i32, stack(2) as i32, stack(3) as i32);
-            crate::window::create_window(&class, x, y, w, h, process::current_tid()) as i64
+            let (w,h)=match crate::window_frame::client_size(w,h){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+            let (x,y)=match crate::window_frame::client_origin(x,y){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+            let hwnd=crate::window::create_window_class(class,x,y,w,h,process::current_tid(),a3 as u32);
+            if hwnd!=0 {crate::window::set_title(hwnd,title);}else{set_last_error(8);}hwnd as i64
         }
 
         // ShowWindow(hWnd, nCmdShow) -> BOOL. No compositor yet, so there is
@@ -542,31 +780,36 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
         // message handling implemented yet (no painting, no hit-testing) —
         // `0`, same as real DefWindowProc's default case for anything it
         // doesn't specifically handle.
-        USER_DEFWINDOWPROCA => 0,
+        USER_DEFWINDOWPROCA|USER_DEFWINDOWPROCW => match a1 as u32 {
+            0xc=>{
+                let title=match window_text(a3,idx==USER_DEFWINDOWPROCW,4096,true){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+                crate::window::set_title(a0 as u32,title) as i64
+            }
+            0xd=>if idx==USER_DEFWINDOWPROCW{copy_window_title_w(a0 as u32,a3,a2 as usize)}else{copy_window_title(a0 as u32,a3,a2 as usize)},
+            0xe=>crate::window::title_of(a0 as u32).map_or(0,|s|if idx==USER_DEFWINDOWPROCW{s.encode_utf16().count() as i64}else{s.chars().count() as i64}),
+            _=>0,
+        },
 
         // GetMessageA(&msg, hWnd, wMsgFilterMin, wMsgFilterMax) -> BOOL. The
         // hWnd/filter args aren't applied yet (one queue per thread, no
         // per-window or per-message filtering). `0` only for WM_QUIT, `1`
         // otherwise — real GetMessageA's BOOL-shaped tri-state return.
-        USER_GETMESSAGEA => {
+        USER_GETMESSAGEA|USER_GETMESSAGEW => {
+            if a1!=0||a2!=0||a3!=0{set_last_error(50);return -1;}
+            if !crate::usercopy::user_ok(a0,48,true){set_last_error(998);return -1;}
             let m = crate::window::get_message(process::current_tid());
-            unsafe {
-                crate::usercopy::put::<u64>(a0, (m.hwnd as u64) as u64); // MSG.hwnd
-                crate::usercopy::put::<u32>((a0 + 0x08), (m.message) as u32); // MSG.message
-                crate::usercopy::put::<u64>((a0 + 0x10), (m.wparam) as u64); // MSG.wParam
-                crate::usercopy::put::<u64>((a0 + 0x18), (m.lparam) as u64); // MSG.lParam
-            }
+            let mut bytes=[0u8;48];bytes[0..8].copy_from_slice(&(m.hwnd as u64).to_le_bytes());bytes[8..12].copy_from_slice(&m.message.to_le_bytes());bytes[16..24].copy_from_slice(&m.wparam.to_le_bytes());bytes[24..32].copy_from_slice(&m.lparam.to_le_bytes());
+            if !crate::usercopy::put(a0,bytes){set_last_error(998);return -1;}
             (m.message != crate::window::WM_QUIT) as i64
         }
 
         // DispatchMessageA(const MSG *lpMsg) -> LRESULT. Calls the target
         // window's WndProc in ring 3 (`invoke_ring3_callback`, the same
         // mechanism `CallWindowProcA` uses) and hands its result back.
-        USER_DISPATCHMESSAGEA => {
-            let hwnd = unsafe { crate::usercopy::get::<u64>(a0) } as u32;
-            let message = unsafe { crate::usercopy::get::<u32>((a0 + 0x08)) };
-            let wparam = unsafe { crate::usercopy::get::<u64>((a0 + 0x10)) };
-            let lparam = unsafe { crate::usercopy::get::<u64>((a0 + 0x18)) };
+        USER_DISPATCHMESSAGEA|USER_DISPATCHMESSAGEW => {
+            let Ok(b)=crate::usercopy::slice(a0,48) else{set_last_error(998);return 0;};
+            let hwnd=u64::from_le_bytes(b[0..8].try_into().unwrap());if hwnd>u32::MAX as u64{set_last_error(1400);return 0;}let hwnd=hwnd as u32;
+            let message=u32::from_le_bytes(b[8..12].try_into().unwrap());let wparam=u64::from_le_bytes(b[16..24].try_into().unwrap());let lparam=u64::from_le_bytes(b[24..32].try_into().unwrap());
             match crate::window::wndproc_of(hwnd) {
                 Some(wndproc) => invoke_ring3_callback(wndproc, [hwnd as u64, message as u64, wparam, lparam], frame),
                 None => 0,
@@ -587,7 +830,7 @@ fn dispatch_user32(idx: u16, frame: &mut UserFrame) -> i64 {
         USER_TRANSLATEMESSAGE => 1,
 
         // PostMessageA(hWnd, Msg, wParam, lParam) -> BOOL.
-        USER_POSTMESSAGEA => crate::window::post_message(a0 as u32, a1 as u32, a2, a3) as i64,
+        USER_POSTMESSAGEA|USER_POSTMESSAGEW => if a0<=u32::MAX as u64{crate::window::post_message(a0 as u32,a1 as u32,a2,a3) as i64}else{set_last_error(1400);0},
 
         _ => -1,
     }
@@ -672,8 +915,13 @@ const MSV_C_SPECIFIC_HANDLER: u16 = 31;
 
 /// Set the exit status and leave ring 3 for good.
 fn proc_terminate(code: i32) -> ! {
-    process::set_exit_status(code);
+    if (code as u32) >> 28 == 0xC {
+        use core::sync::atomic::Ordering::Relaxed;
+        let lf = &crate::seh::LAST_FAULT;
+        crate::kprintln!("THOS: pe process {} ended with exception status {:#x} (last fault rip={:#x} cr2={:#x} err={:#x})", process::current_pid(), code as u32, lf[0].load(Relaxed), lf[1].load(Relaxed), lf[2].load(Relaxed));
+    }
     crate::syscall::note_user_exit();
+    process::set_exit_status(code);
     sched::exit();
 }
 
@@ -728,12 +976,12 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         NT_NTTERMINATEPROCESS => proc_terminate(a1 as i32),
 
         // NtClose(Handle) — one per-process table; files and objects alike.
-        NT_NTCLOSE => status(handle_close_core(a0 as i32), STATUS_INVALID_HANDLE),
+        NT_NTCLOSE => status(a0 <= i32::MAX as u64 && handle_close_core(a0 as i32), STATUS_INVALID_HANDLE),
 
         // NtWriteFile(FileHandle, Event, ApcRoutine, ApcContext, IoStatusBlock,
         //             Buffer, Length, ByteOffset, Key)
         NT_NTWRITEFILE => {
-            let (iosb, buf, len) = (stack(0), stack(1), stack(2) as usize);
+            let (iosb, buf, len) = (stack(0), stack(1), (stack(2) & 0xFFFF_FFFF) as usize);
             let n = file_write_core(a0 as i32, buf, len);
             if n < 0 {
                 return STATUS_INVALID_HANDLE as i64;
@@ -744,7 +992,7 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
 
         // NtReadFile(same shape as NtWriteFile)
         NT_NTREADFILE => {
-            let (iosb, buf, len) = (stack(0), stack(1), stack(2) as usize);
+            let (iosb, buf, len) = (stack(0), stack(1), (stack(2) & 0xFFFF_FFFF) as usize);
             let n = file_read_core(a0 as i32, buf, len);
             if n < 0 {
                 return STATUS_INVALID_HANDLE as i64;
@@ -1080,37 +1328,30 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
             STATUS_SUCCESS as i64
         }
 
-        // NtCreateThreadEx(*Handle, DesiredAccess, *ObjAttr, ProcessHandle,
-        //                  StartRoutine, Argument, CreateFlags, ZeroBits,
-        //                  StackSize, MaxStackSize, *AttrList). One worker per
-        // process for now; CREATE_SUSPENDED is ignored (starts immediately).
-        // The returned handle is a manual-reset event signalled on thread exit.
+        // Current-process threads with default stack and no attributes only.
+        // Unsupported requests fail before publishing a runnable thread.
         NT_NTCREATETHREADEX => {
-            let (start, arg) = (stack(0), stack(1));
-            if start == 0 {
-                return STATUS_INVALID_PARAMETER as i64;
-            }
-            match crate::pe::spawn_thread(start, arg) {
-                Ok((_tid, ev)) => {
-                    let h = process::current_alloc_event(ev);
-                    if h < 0 {
-                        return STATUS_NO_MEMORY as i64;
-                    }
-                    unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
-                    STATUS_SUCCESS as i64
-                }
-                Err(_) => STATUS_NO_MEMORY as i64,
+            if !crate::usercopy::user_ok(a0,8,true){return 0xc0000005u32 as i64;}
+            if a3!=(-1i64 as u64){return STATUS_INVALID_HANDLE as i64;}
+            let (start,arg)=(stack(0),stack(1));
+            if start==0{return STATUS_INVALID_PARAMETER as i64;}
+            // CreateFlags is ULONG: Win64 leaves the high half of its
+            // eight-byte argument slot unspecified. Pointer/SIZE_T args are 64-bit.
+            if a2!=0||stack(2) as u32!=0||(3..=6).any(|i|stack(i)!=0){return STATUS_NOT_IMPLEMENTED as i64;}
+            let Some(task)=sched::current().task()else{return STATUS_INVALID_HANDLE as i64;};
+            let thread=crate::nt_thread::Thread::new();
+            let h=match task.try_handle_alloc(process::HandleObject::Thread(thread.clone()),true,4096){Ok(h)=>h,Err(_)=>return STATUS_NO_MEMORY as i64};
+            match crate::pe::spawn_thread(start,arg,thread) {
+                Ok(_)=>{unsafe{crate::usercopy::put::<u64>(a0,h as u64);}STATUS_SUCCESS as i64},
+                Err(_)=>{task.fd_close(h);STATUS_NO_MEMORY as i64},
             }
         }
 
-        // NtTerminateThread(ThreadHandle, ExitStatus). A worker thread signals
-        // its exit event and dies; the process's original thread takes the whole
-        // process down (matching `ExitProcess` on the last thread).
+        // Only self-termination is implemented. Never silently kill this
+        // caller when a remote/foreign handle was requested.
         NT_NTTERMINATETHREAD => {
-            if process::signal_thread_exit(process::current_tid()) {
-                sched::exit();
-            }
-            proc_terminate(a1 as i32)
+            if a0!=0 && a0!=(-2i64 as u64){return STATUS_NOT_IMPLEMENTED as i64;}
+            crate::syscall::exit_current_thread(a1 as i32)
         }
 
         // NtCreateSection(*Handle, DesiredAccess, *ObjectAttributes,
@@ -1336,39 +1577,29 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
 
         // NtCreateKey(*KeyHandle, DesiredAccess, *ObjectAttributes, TitleIndex,
         //             *Class, CreateOptions, *Disposition). Creates missing
-        // ancestors; class / security / options ignored.
+        // ancestors. Unsupported class/security/volatile options are refused.
         NT_NTCREATEKEY => {
-            let Some(path) = (unsafe { oa_path(a2) }) else {
-                return STATUS_INVALID_PARAMETER as i64;
-            };
-            let existed = crate::registry::open(&path);
-            let uid = process::current_uid();
-            // Opening an existing key is a read (always allowed); *creating*
-            // a new one is a write to the nearest existing ancestor —
-            // per-key security's real enforcement point.
-            if !existed && !crate::registry::create_write_ok(&path, uid) {
-                return STATUS_ACCESS_DENIED as i64;
-            }
-            if !crate::registry::create_owned(&path, uid) {
-                return STATUS_INVALID_PARAMETER as i64;
-            }
+            let disp=stack(2);
+            if !crate::usercopy::user_ok(a0,8,true)||(disp!=0&&!crate::usercopy::user_ok(disp,4,true)){return STATUS_ACCESS_VIOLATION as i64;}
+            if stack(0)!=0||stack(1) as u32!=0{return 0xC000_00BBu32 as i64;}
+            let path=match registry_oa_path(a2){Ok(p)=>p,Err(e)=>return e as i64};
+            let uid=process::current_uid();
+            let created=match crate::registry::create_for_user(&path,uid){Ok(created)=>created,Err(e)=>return registry_status(e) as i64};
             let h = process::current_alloc_regkey(crate::registry::canon(&path));
             if h < 0 {
                 return STATUS_NO_MEMORY as i64;
             }
             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
-            let disp = stack(2);
             if disp != 0 {
-                unsafe { crate::usercopy::put::<u32>(disp, (if existed { 2 } else { 1 }) as u32); } // OPENED_EXISTING / CREATED_NEW
+                unsafe { crate::usercopy::put::<u32>(disp, (if created { 1 } else { 2 }) as u32); } // OPENED_EXISTING / CREATED_NEW
             }
             STATUS_SUCCESS as i64
         }
 
         // NtOpenKey(*KeyHandle, DesiredAccess, *ObjectAttributes)
         NT_NTOPENKEY => {
-            let Some(path) = (unsafe { oa_path(a2) }) else {
-                return STATUS_INVALID_PARAMETER as i64;
-            };
+            if !crate::usercopy::user_ok(a0,8,true){return STATUS_ACCESS_VIOLATION as i64;}
+            let path=match registry_oa_path(a2){Ok(p)=>p,Err(e)=>return e as i64};
             if !crate::registry::open(&path) {
                 return STATUS_OBJECT_NAME_NOT_FOUND as i64;
             }
@@ -1383,32 +1614,28 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         // NtSetValueKey(KeyHandle, *ValueName(UNICODE_STRING), TitleIndex, Type,
         //               *Data, DataSize)
         NT_NTSETVALUEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
             if !crate::registry::write_key_ok(&path, process::current_uid()) {
                 return STATUS_ACCESS_DENIED as i64;
             }
-            let name = unsafe { unicode_string_ascii(a1) };
-            let (data_ptr, size) = (stack(0), stack(1) as usize);
+            let name=match registry_name(a1){Ok(n)=>n,Err(e)=>return e as i64};
+            let (data_ptr, size) = (stack(0), stack(1) as u32 as usize);
+            // Bounded native profile, rather than allowing a hostile value to
+            // request an unbounded kernel allocation. Not full NT limits.
+            if size>1024*1024{return 0xC000_009Au32 as i64;}
             let Ok(data) = crate::usercopy::slice(data_ptr, size) else {
                 return STATUS_ACCESS_VIOLATION as i64;
             };
-            status(
-                crate::registry::set_value(&path, &name, a3 as u32, data),
-                STATUS_OBJECT_NAME_NOT_FOUND,
-            )
+            match crate::registry::set_value_for_user(&path,&name,a3 as u32,data,process::current_uid()) {Ok(())=>STATUS_SUCCESS as i64,Err(e)=>registry_status(e) as i64}
         }
 
         // NtQueryValueKey(KeyHandle, *ValueName, InfoClass, *Info, Length,
         //                 *ResultLength). Only KeyValuePartialInformation
         // (class 2): { u32 TitleIndex; u32 Type; u32 DataLength; u8 Data[]; }.
         NT_NTQUERYVALUEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
-            let name = unsafe { unicode_string_ascii(a1) };
-            if a2 != 2 {
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
+            let name=match registry_name(a1){Ok(n)=>n,Err(e)=>return e as i64};
+            if a2 as u32 != 2 {
                 return STATUS_INVALID_INFO_CLASS as i64;
             }
             let Some((ty, data)) = crate::registry::query_value(&path, &name) else {
@@ -1417,9 +1644,9 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
             let need = 12 + data.len();
             let ret_len = stack(1);
             if ret_len != 0 {
-                unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+                if crate::usercopy::write_u32(ret_len,need as u32).is_err(){return STATUS_ACCESS_VIOLATION as i64;}
             }
-            if (stack(0) as usize) < need {
+            if (stack(0) as u32 as usize) < need {
                 return STATUS_INFO_LENGTH_MISMATCH as i64;
             }
             if !crate::usercopy::user_ok(a3, need, true) {
@@ -1438,13 +1665,11 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         // NtDeleteKey(KeyHandle) — "mini": drop the key from its parent now
         // (a real one defers until the last handle closes).
         NT_NTDELETEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
             if !crate::registry::write_key_ok(&path, process::current_uid()) {
                 return STATUS_ACCESS_DENIED as i64;
             }
-            status(crate::registry::delete_key(&path), STATUS_OBJECT_NAME_NOT_FOUND)
+            match crate::registry::delete_key_for_user(&path,process::current_uid()){Ok(())=>STATUS_SUCCESS as i64,Err(e)=>registry_status(e) as i64}
         }
 
         // NtNotifyChangeKey(KeyHandle, Event, ApcRoutine, ApcContext,
@@ -1459,9 +1684,8 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         // anything under it) changes; a fired watch needs a fresh call to
         // re-arm, same as real NT.
         NT_NTNOTIFYCHANGEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
+            if a1>i32::MAX as u64{return STATUS_INVALID_HANDLE as i64;}
             let Some(ev) = process::current_event(a1 as i32) else {
                 return STATUS_INVALID_HANDLE as i64;
             };
@@ -1478,22 +1702,20 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         //                natural (sorted) order; STATUS_NO_MORE_ENTRIES once
         //                `Index` runs past the last subkey.
         NT_NTENUMERATEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
-            if a2 != 0 {
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
+            if a2 as u32 != 0 {
                 return STATUS_INVALID_INFO_CLASS as i64;
             }
-            let Some(name) = crate::registry::enumerate_key(&path, a1 as usize) else {
+            let Some(name) = crate::registry::enumerate_key(&path, a1 as u32 as usize) else {
                 return STATUS_NO_MORE_ENTRIES as i64;
             };
-            let name_len = name.len() * 2; // UTF-16LE; registry names are ASCII here
+            let name_len = name.encode_utf16().count() * 2;
             let need = 16 + name_len;
             let ret_len = stack(1);
             if ret_len != 0 {
-                unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+                if crate::usercopy::write_u32(ret_len,need as u32).is_err(){return STATUS_ACCESS_VIOLATION as i64;}
             }
-            if (stack(0) as usize) < need {
+            if (stack(0) as u32 as usize) < need {
                 return STATUS_BUFFER_TOO_SMALL as i64;
             }
             if !crate::usercopy::user_ok(a3, need, true) {
@@ -1519,22 +1741,20 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
         //                     follow-up NtQueryValueKey by name, same as real
         //                     NT's typical RegEnumValue two-call pattern.
         NT_NTENUMERATEVALUEKEY => {
-            let Some(path) = process::current_regkey(a0 as i32) else {
-                return STATUS_INVALID_HANDLE as i64;
-            };
-            if a2 != 0 {
+            let path=match registry_handle(a0){Ok(p)=>p,Err(e)=>return e as i64};
+            if a2 as u32 != 0 {
                 return STATUS_INVALID_INFO_CLASS as i64;
             }
-            let Some((name, ty, _len)) = crate::registry::enumerate_value(&path, a1 as usize) else {
+            let Some((name, ty, _len)) = crate::registry::enumerate_value(&path, a1 as u32 as usize) else {
                 return STATUS_NO_MORE_ENTRIES as i64;
             };
-            let name_len = name.len() * 2;
+            let name_len = name.encode_utf16().count() * 2;
             let need = 12 + name_len;
             let ret_len = stack(1);
             if ret_len != 0 {
-                unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+                if crate::usercopy::write_u32(ret_len,need as u32).is_err(){return STATUS_ACCESS_VIOLATION as i64;}
             }
-            if (stack(0) as usize) < need {
+            if (stack(0) as u32 as usize) < need {
                 return STATUS_BUFFER_TOO_SMALL as i64;
             }
             if !crate::usercopy::user_ok(a3, need, true) {
@@ -1554,9 +1774,16 @@ fn dispatch_ntdll(idx: u16, frame: &mut UserFrame) -> i64 {
 
         // LdrGetProcedureAddress(DllHandle, *AnsiName(STRING), Ordinal, *Address)
         NT_LDRGETPROCEDUREADDRESS => {
+            if crate::usercopy::slice_mut(a3,8).is_err() { return STATUS_ACCESS_VIOLATION as i64; }
             let addr = if a1 != 0 {
-                let namebuf = unsafe { crate::usercopy::get::<u64>((a1 + 8)) }; // STRING.Buffer
-                export_by_name(a0, &user_cstr(namebuf), 0)
+                let Ok(header)=crate::usercopy::slice(a1,16) else {return STATUS_ACCESS_VIOLATION as i64;};
+                let len=u16::from_le_bytes(header[0..2].try_into().unwrap()) as usize;
+                let cap=u16::from_le_bytes(header[2..4].try_into().unwrap()) as usize;
+                let namebuf=u64::from_le_bytes(header[8..16].try_into().unwrap());
+                if len>cap || len>4096 {return STATUS_INVALID_PARAMETER as i64;}
+                let Ok(bytes)=crate::usercopy::slice(namebuf,len) else {return STATUS_ACCESS_VIOLATION as i64;};
+                let name:alloc::string::String=bytes.iter().map(|&b|b as char).collect();
+                export_by_name(a0, &name, 0)
             } else {
                 export_by_ordinal(a0, a2 as u16, 0)
             };
@@ -1659,24 +1886,48 @@ fn frame_regs(frame: &UserFrame, status_ax: u32) -> crate::apc::Regs {
     }
 }
 
-/// Resolve an `OBJECT_ATTRIBUTES` to a registry path string: its `ObjectName`
-/// (`+0x10`, a `PUNICODE_STRING`), prefixed with the `RootDirectory` (`+0x08`)
-/// key's path when that handle is set.
-unsafe fn oa_path(oa: u64) -> Option<alloc::string::String> {
-    if oa == 0 || !crate::usercopy::user_ok(oa, 0x18, false) {
-        return None;
-    }
-    let root = crate::usercopy::get::<u64>((oa + 0x08));
-    let name = unicode_string_ascii(crate::usercopy::get::<u64>((oa + 0x10)));
-    if name.is_empty() && root == 0 {
-        return None;
-    }
-    if root != 0 {
-        let base = process::current_regkey(root as i32)?;
-        Some(alloc::format!("{base}\\{name}"))
-    } else {
-        Some(name)
-    }
+/// Native registry-specific validation. Other legacy native personalities
+/// still have their own narrower name readers; don't silently change them.
+fn registry_status(error:crate::registry::Error)->u32{match error{
+    crate::registry::Error::NotFound=>STATUS_OBJECT_NAME_NOT_FOUND,
+    crate::registry::Error::Denied=>STATUS_ACCESS_DENIED,
+    crate::registry::Error::Io=>0xC000_0185,
+    crate::registry::Error::Unsupported=>0xC000_00BB,
+    crate::registry::Error::Resources=>0xC000_009A,
+}}
+fn registry_handle(h:u64)->Result<alloc::string::String,u32>{
+    if h>i32::MAX as u64{return Err(STATUS_INVALID_HANDLE);}
+    process::current_regkey(h as i32).ok_or(STATUS_INVALID_HANDLE)
+}
+fn registry_name(us:u64)->Result<alloc::string::String,u32>{
+    let header=crate::usercopy::slice(us,16).map_err(|_|STATUS_ACCESS_VIOLATION)?;
+    let length=u16::from_le_bytes(header[0..2].try_into().unwrap());
+    let maximum=u16::from_le_bytes(header[2..4].try_into().unwrap());
+    let buffer=u64::from_le_bytes(header[8..16].try_into().unwrap());
+    if length%2!=0||length>maximum{return Err(STATUS_INVALID_PARAMETER);}
+    let bytes=crate::usercopy::slice(buffer,length as usize).map_err(|_|STATUS_ACCESS_VIOLATION)?;
+    crate::nt_registry_name::decode(bytes,length,maximum).map_err(|e|match e{crate::nt_registry_name::Error::Invalid=>STATUS_INVALID_PARAMETER,crate::nt_registry_name::Error::NoMemory=>STATUS_NO_MEMORY})
+}
+fn registry_oa_path(oa:u64)->Result<alloc::string::String,u32>{
+    let h=crate::usercopy::slice(oa,48).map_err(|_|STATUS_ACCESS_VIOLATION)?;
+    let length=u32::from_le_bytes(h[0..4].try_into().unwrap());
+    let root=u64::from_le_bytes(h[8..16].try_into().unwrap());
+    let name=u64::from_le_bytes(h[16..24].try_into().unwrap());
+    let flags=u32::from_le_bytes(h[24..28].try_into().unwrap());
+    let security=u64::from_le_bytes(h[32..40].try_into().unwrap());
+    let qos=u64::from_le_bytes(h[40..48].try_into().unwrap());
+    if length!=48{return Err(STATUS_INVALID_PARAMETER);}
+    if flags&!0x40!=0||security!=0||qos!=0{return Err(0xC000_00BB);}
+    let name=registry_name(name)?;
+    let path=if root!=0{
+        let mut base=registry_handle(root)?;
+        if name.starts_with('\\')||name.starts_with('/'){return Err(STATUS_INVALID_PARAMETER);}
+        if !name.is_empty(){base.try_reserve(name.len()+1).map_err(|_|STATUS_NO_MEMORY)?;base.push('\\');base.push_str(&name);}
+        base
+    }else{if name.is_empty(){return Err(STATUS_INVALID_PARAMETER);}name};
+    // The recursive tree/serializer must not receive adversarial stack depth.
+    if path.bytes().filter(|b|*b==b'\\'||*b==b'/').count()>128{return Err(0xC000_0106);}
+    Ok(path)
 }
 
 /// Decode a `UNICODE_STRING` (`{ u16 Length; u16 Max; u64 Buffer; }`, `Length`
@@ -1809,8 +2060,17 @@ fn dispatch_kernel32(idx: u16, frame: &mut UserFrame) -> i64 {
             }
         }
 
+        NT_GETTHREADTIMES => match crate::nt_thread::times(a0,[a1,a2,a3,stack(0)]){Ok(())=>1,Err(e)=>{set_last_error(e);0}},
+        NT_GETEXITCODETHREAD => match crate::nt_thread::exit_code(a0,a1){Ok(())=>1,Err(e)=>{set_last_error(e);0}},
+        NT_GETTHREADID|NT_GETCURRENTTHREADID => match crate::nt_thread::id(if idx==NT_GETCURRENTTHREADID{-2i64 as u64}else{a0}){Ok(id)=>id as i64,Err(e)=>{set_last_error(e);0}},
+        NT_CREATETOOLHELP32SNAPSHOT => match crate::nt_toolhelp::create(a0 as u32,a1 as u32) {
+            Ok(h)=>h,Err(e)=>{set_last_error(e);INVALID_HANDLE_VALUE}
+        },
+        NT_PROCESS32FIRSTW|NT_PROCESS32NEXTW => match crate::nt_toolhelp::read(a0,a1,idx==NT_PROCESS32FIRSTW) {
+            Ok(())=>1,Err(e)=>{set_last_error(e);0}
+        },
         NT_CLOSEHANDLE => {
-            if handle_close_core(a0 as i32) {
+            if a0 <= i32::MAX as u64 && handle_close_core(a0 as i32) {
                 1
             } else {
                 set_last_error(ERROR_INVALID_HANDLE);
@@ -1838,7 +2098,8 @@ fn dispatch_kernel32(idx: u16, frame: &mut UserFrame) -> i64 {
                     crate::usercopy::get::<u64>((peb + 0x10)) as i64
                 })
             } else {
-                match ldr_find(&normalize_mod(&user_cstr(a0))) {
+                let raw=match loader_name_a(a0){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+                match loader_handle_fallback(&raw) {
                     b if b != 0 => b as i64,
                     _ => {
                         set_last_error(126); // ERROR_MOD_NOT_FOUND
@@ -1848,14 +2109,37 @@ fn dispatch_kernel32(idx: u16, frame: &mut UserFrame) -> i64 {
             }
         }
 
-        // LoadLibraryA(lpLibFileName) -> HMODULE. No on-disk DLLs yet, so this
-        // only hands back an already-present module (the synthetic kernel32).
-        NT_LOADLIBRARYA => match ldr_find(&normalize_mod(&user_cstr(a0))) {
-            b if b != 0 => b as i64,
-            _ => {
-                set_last_error(126); // ERROR_MOD_NOT_FOUND
-                0
-            }
+        // Real runtime leaf-DLL loader; unsupported initialisation is explicit.
+        NT_LOADLIBRARYA | NT_LOADLIBRARYEXA => {
+            if idx==NT_LOADLIBRARYEXA && a1!=0{set_last_error(87);return 0;}
+            let raw=match loader_name_a(a0){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};let existing=ldr_find(&normalize_mod(&raw));
+            let Some(proc)=sched::current_proc()else{set_last_error(126);return 0;};
+            match crate::pe::runtime_load(&proc,&raw,existing,if idx==NT_LOADLIBRARYEXA{a2 as u32}else{0}){Ok(base)=>base as i64,Err(e)=>{set_last_error(e);0}}
+        },
+        NT_LOADLIBRARYW | NT_LOADLIBRARYEXW => {
+            if idx==NT_LOADLIBRARYEXW && a1!=0{set_last_error(87);return 0;}
+            let raw=match window_text(a0,true,1024,false){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+            let existing=ldr_find(&normalize_mod(&raw));let Some(proc)=sched::current_proc()else{set_last_error(126);return 0;};
+            match crate::pe::runtime_load(&proc,&raw,existing,if idx==NT_LOADLIBRARYEXW{a2 as u32}else{0}){Ok(base)=>base as i64,Err(e)=>{set_last_error(e);0}}
+        },
+        NT_GETMODULEHANDLEW => {
+            if a0==0{return window_instance(0)as i64;}
+            let raw=match window_text(a0,true,1024,false){Ok(s)=>s,Err(e)=>{set_last_error(e);return 0;}};
+            let base=loader_handle_fallback(&raw);
+            if base==0{set_last_error(126);}base as i64
+        },
+        // Current PE launches inherit POSIX streams; none attaches a Win32
+        // console/window object. NULL reports that actual absence. Ordinary
+        // GDI application windows are unrelated. No console allocation or
+        // successful console association is simulated; LastError is untouched.
+        NT_GETCONSOLEWINDOW => 0,
+        NT_SETDEFAULTDLLDIRECTORIES => {
+            let Some(proc)=sched::current_proc()else{set_last_error(87);return 0;};
+            match crate::pe::runtime_set_policy(&proc,a0 as u32){Ok(())=>1,Err(e)=>{set_last_error(e);0}}
+        },
+        NT_FREELIBRARY => {
+            let Some(proc)=sched::current_proc()else{set_last_error(6);return 0;};
+            match crate::pe::runtime_free(&proc,a0){Ok(())=>1,Err(e)=>{set_last_error(e);0}}
         },
 
         // GetProcAddress(hModule, lpProcName) -> FARPROC. Parses the module's
@@ -1979,6 +2263,11 @@ fn dispatch_kernel32(idx: u16, frame: &mut UserFrame) -> i64 {
         }
         // MultiByteToWideChar(cp, flags, src, srclen, dst, dstlen)
         NT_MULTIBYTETOWIDECHAR => {
+            if a0 as u32 == 65001 {
+                return match utf8_to_wide(a1 as u32,a2,a3 as i32,stack(0),stack(1) as i32) {
+                    Ok(n)=>n,Err(error)=>{set_last_error(error);0}
+                };
+            }
             let (src, srclen) = (a2, a3 as i32);
             let (dst, dstlen) = (stack(0), stack(1) as usize);
             let n = if srclen < 0 { user_cstr_len(src) + 1 } else { srclen as usize };
@@ -1993,6 +2282,12 @@ fn dispatch_kernel32(idx: u16, frame: &mut UserFrame) -> i64 {
         }
         // WideCharToMultiByte(cp, flags, src, srclen, dst, dstlen, defchar, used)
         NT_WIDECHARTOMULTIBYTE => {
+            if a0 as u32 == 65001 {
+                if stack(2)!=0 || stack(3)!=0 {set_last_error(87);return 0;}
+                return match wide_to_utf8(a1 as u32,a2,a3 as i32,stack(0),stack(1) as i32) {
+                    Ok(n)=>n,Err(error)=>{set_last_error(error);0}
+                };
+            }
             let (src, srclen) = (a2, a3 as i32);
             let (dst, dstlen) = (stack(0), stack(1) as usize);
             let mut n = 0usize;
@@ -2316,24 +2611,18 @@ fn dispatch_msvcrt(idx: u16, frame: &mut UserFrame) -> i64 {
         MSV_GETMAINARGS => {
             let cmdline = crate::pe::PE_ANSI_CMDLINE_ADDR;
             let argv_base = crt(CRT_ARGV_OFF);
-            let strs = argv_base + 32 * 8; // room for 32 argv pointers
+            let strs = argv_base + 33 * 8; // 32 pointers plus the terminating NULL
             let mut argc = 0u64;
             let mut sp = strs;
-            let mut p = cmdline;
+            let input=crate::usercopy::cstr_bytes(cmdline,crate::pe::PE_ANSI_CMDLINE_CAP).unwrap_or_default();
+            let args=crate::winargs::parse(&input,32);
             unsafe {
-                loop {
-                    while crate::usercopy::get::<u8>(p) == b' ' {
-                        p += 1;
-                    }
-                    if crate::usercopy::get::<u8>(p) == 0 || argc >= 32 {
-                        break;
-                    }
+                for arg in args {
                     crate::usercopy::put::<u64>((argv_base + argc * 8), (sp) as u64);
                     argc += 1;
-                    while crate::usercopy::get::<u8>(p) != 0 && crate::usercopy::get::<u8>(p) != b' ' {
-                        crate::usercopy::put::<u8>(sp, (crate::usercopy::get::<u8>(p)) as u8);
+                    for c in arg {
+                        crate::usercopy::put::<u8>(sp,c);
                         sp += 1;
-                        p += 1;
                     }
                     crate::usercopy::put::<u8>(sp, (0) as u8);
                     sp += 1;
@@ -2442,7 +2731,7 @@ fn ldr_find(want: &str) -> u64 {
         let head = ldr + 0x10; // InLoadOrderModuleList
         let mut cur = crate::usercopy::get::<u64>(head); // first Flink
         // InLoadOrderLinks sits at offset 0 of LDR_DATA_TABLE_ENTRY.
-        for _ in 0..64 {
+        for _ in 0..crate::pe_ldr_layout::MAX_MODULES+6 {
             if cur == head || cur == 0 {
                 break;
             }
@@ -2457,105 +2746,109 @@ fn ldr_find(want: &str) -> u64 {
     0
 }
 
-/// Parsed `IMAGE_EXPORT_DIRECTORY` — absolute pointers into the mapped module.
+/// Runtime exports are user-controlled bytes. Bound every RVA before following it.
 struct ExportDir {
-    base: u64,
-    eat: u64,   // AddressOfFunctions   (u32 RVAs)
-    enpt: u64,  // AddressOfNames       (u32 RVAs)
-    ords: u64,  // AddressOfNameOrdinals(u16 indices)
-    n_names: usize,
-    n_funcs: u64,
-    ord_base: u64,
-    dir_rva: u64,
-    dir_size: u64,
+    image:crate::pe_export_bounds::Image,
+    eat:u64,enpt:u64,ords:u64,n_names:usize,n_funcs:u64,ord_base:u64,
+    dir_rva:u64,dir_size:u64,
 }
-
 impl ExportDir {
-    /// Locate and sanity-check the export directory of the PE mapped at `base`.
-    unsafe fn parse(base: u64) -> Option<ExportDir> {
-        if base == 0 {
-            return None;
-        }
-        let pe = base + crate::usercopy::get::<u32>((base + 0x3C)) as u64;
-        if crate::usercopy::get::<u32>(pe) != 0x0000_4550 {
-            return None; // "PE\0\0"
-        }
-        let opt = pe + 4 + 20;
-        if crate::usercopy::get::<u16>(opt) != 0x20B || crate::usercopy::get::<u32>((opt + 108)) < 1 {
-            return None; // not PE32+, or no export data dir slot
-        }
-        let dir_rva = crate::usercopy::get::<u32>((opt + 112)) as u64;
-        let dir_size = crate::usercopy::get::<u32>((opt + 116)) as u64;
-        if dir_rva == 0 {
-            return None;
-        }
-        let ed = base + dir_rva;
-        Some(ExportDir {
-            base,
-            eat: base + crate::usercopy::get::<u32>((ed + 0x1C)) as u64,
-            enpt: base + crate::usercopy::get::<u32>((ed + 0x20)) as u64,
-            ords: base + crate::usercopy::get::<u32>((ed + 0x24)) as u64,
-            n_names: crate::usercopy::get::<u32>((ed + 0x18)) as usize,
-            n_funcs: crate::usercopy::get::<u32>((ed + 0x14)) as u64,
-            ord_base: crate::usercopy::get::<u32>((ed + 0x10)) as u64,
-            dir_rva,
-            dir_size,
-        })
+    fn parse(base:u64)->Option<Self>{
+        let dos=crate::usercopy::slice(base,64).ok()?;
+        if &dos[..2]!=b"MZ"{return None;}
+        let pe_rva=u32::from_le_bytes(dos[60..64].try_into().ok()?) as u64;
+        if pe_rva<64||pe_rva>1024*1024{return None;}
+        let pe=base.checked_add(pe_rva)?;
+        let hdr=crate::usercopy::slice(pe,144).ok()?;
+        if &hdr[..4]!=b"PE\0\0"||u16::from_le_bytes(hdr[20..22].try_into().ok()?)<120||u16::from_le_bytes(hdr[24..26].try_into().ok()?)!=0x20b{return None;}
+        let d=|at:usize|u32::from_le_bytes(hdr[at..at+4].try_into().unwrap()) as u64;
+        if d(132)<1{return None;}
+        let image=crate::pe_export_bounds::Image::new(base,d(80))?;
+        image.span(pe_rva,144)?;
+        let (dir_rva,dir_size)=(d(136),d(140));
+        if dir_size<40{return None;}
+        let ed=image.span(dir_rva,dir_size)?;
+        let b=crate::usercopy::slice(ed,40).ok()?;
+        let d=|at:usize|u32::from_le_bytes(b[at..at+4].try_into().unwrap()) as u64;
+        let(n_funcs,n_names)=(d(20),d(24));
+        if n_funcs==0{return None;}
+        let eat=image.table(d(28),n_funcs,4)?;
+        let enpt=if n_names==0{0}else{image.table(d(32),n_names,4)?};
+        let ords=if n_names==0{0}else{image.table(d(36),n_names,2)?};
+        // Validate the complete ranges, not just the first table entry.
+        crate::usercopy::slice(eat,(n_funcs*4) as usize).ok()?;
+        if n_names!=0 {crate::usercopy::slice(enpt,(n_names*4) as usize).ok()?;crate::usercopy::slice(ords,(n_names*2) as usize).ok()?;}
+        Some(Self{image,eat,enpt,ords,n_names:n_names as usize,n_funcs,ord_base:d(16),dir_rva,dir_size})
     }
-
-    /// `base + AddressOfFunctions[idx]`. A forwarder RVA (one pointing back
-    /// inside the export directory) is followed: read the `"Dll.Func"` string,
-    /// find the target module in the `Ldr` list, resolve there. 0 on any problem.
-    unsafe fn resolve_slot(&self, idx: u64, depth: u32) -> i64 {
-        if idx >= self.n_funcs {
-            return 0;
-        }
-        let frva = crate::usercopy::get::<u32>((self.eat + idx * 4)) as u64;
-        if frva == 0 {
-            return 0;
-        }
-        if frva < self.dir_rva || frva >= self.dir_rva + self.dir_size {
-            return (self.base + frva) as i64; // ordinary address
-        }
-        // Forwarder.
-        if depth > 8 {
-            return 0;
-        }
-        let s = user_cstr(self.base + frva);
-        let Some((dll, func)) = s.rsplit_once('.') else { return 0 };
-        let tbase = ldr_find(&normalize_mod(dll));
-        if tbase == 0 {
-            return 0;
-        }
-        match func.strip_prefix('#') {
-            Some(n) => match n.parse::<u16>() {
-                Ok(o) => export_by_ordinal(tbase, o, depth + 1),
-                _ => 0,
-            },
-            None => export_by_name(tbase, func, depth + 1),
-        }
+    fn text(&self,rva:u64,end:u64)->Option<alloc::vec::Vec<u8>>{
+        let max=self.image.string_limit(rva,end)?;
+        // A terminator must be inside the image/forwarder directory. Read in
+        // bounded page chunks so an unmapped gap fails rather than escaping.
+        let mut out=alloc::vec::Vec::new();let mut at=self.image.span(rva,1)?;let mut remaining=max;
+        while remaining>0 {
+            let n=remaining.min((4096-(at&4095)) as usize);
+            let b=crate::usercopy::slice(at,n).ok()?;
+            for &c in b{if c==0{return Some(out);}out.push(c);}
+            remaining-=n;at=at.checked_add(n as u64)?;
+        }None
+    }
+    fn resolve_slot(&self,idx:u64,depth:u32)->i64{
+        if idx>=self.n_funcs||depth>8{return 0;}
+        let Ok(frva)=crate::usercopy::read_u32(self.eat+idx*4) else{return 0;};let frva=frva as u64;
+        let Some(addr)=self.image.span(frva,1) else{return 0;};
+        if frva<self.dir_rva||frva>=self.dir_rva+self.dir_size{return if crate::usercopy::user_ok(addr,1,false){addr as i64}else{0};}
+        let Some(bytes)=self.text(frva,self.dir_rva+self.dir_size) else{return 0;};
+        let Ok(s)=core::str::from_utf8(&bytes) else{return 0;};
+        let Some((dll,func))=s.rsplit_once('.') else{return 0;};
+        if dll.is_empty()||func.is_empty(){return 0;}
+        let base=ldr_find(&normalize_mod(dll));if base==0{return 0;}
+        if let Some(n)=func.strip_prefix('#'){n.parse::<u16>().map_or(0,|o|export_by_ordinal(base,o,depth+1))}else{export_by_name(base,func,depth+1)}
     }
 }
 
-fn export_by_name(base: u64, name: &str, depth: u32) -> i64 {
-    unsafe {
-        let Some(ed) = ExportDir::parse(base) else { return 0 };
-        for i in 0..ed.n_names {
-            let nrva = crate::usercopy::get::<u32>((ed.enpt + (i * 4) as u64)) as u64;
-            if user_cstr(base + nrva) == name {
-                let ord = crate::usercopy::get::<u16>((ed.ords + (i * 2) as u64)) as u64;
-                return ed.resolve_slot(ord, depth);
+pub(crate) fn export_by_name(base: u64, name: &str, depth: u32) -> i64 {
+    if base==0 || depth>8 {return 0;}
+    // These extensions must already be loaded, just like LoadLibraryA's current
+    // module-list contract. Do not silently load arbitrary on-disk libraries here.
+    for module in ["kernel32.dll","ntdll.dll","msvcrt.dll"] {
+        if base!=ldr_find(module) {continue;}
+        if let Some(extension)=crate::pe::system_extension(module) {
+            let ext=ldr_find(extension);
+            if ext!=0 && ext!=base {
+                let addr=export_by_name_raw(ext,name,depth+1);
+                if addr!=0 {return addr;}
             }
         }
+        break;
     }
-    0
+    export_by_name_raw(base,name,depth)
 }
 
-fn export_by_ordinal(base: u64, ordinal: u16, depth: u32) -> i64 {
-    unsafe {
-        let Some(ed) = ExportDir::parse(base) else { return 0 };
-        ed.resolve_slot((ordinal as u64).wrapping_sub(ed.ord_base), depth)
-    }
+fn export_by_name_raw(base:u64,name:&str,depth:u32)->i64{
+    if base==0||depth>8{return 0;}
+    let Some(ed)=ExportDir::parse(base) else{return 0;};
+    // PE name pointers are lexically ordered. A bounded binary search avoids
+    // one linear scan of thousands of exports for every vendor API lookup.
+    let(mut lo,mut hi)=(0,ed.n_names);
+    while lo<hi {
+        let mid=lo+(hi-lo)/2;
+        let Ok(rva)=crate::usercopy::read_u32(ed.enpt+mid as u64*4) else{return 0;};
+        let Some(bytes)=ed.text(rva as u64,ed.image.size) else{return 0;};
+        match bytes.as_slice().cmp(name.as_bytes()){
+            core::cmp::Ordering::Less=>lo=mid+1,
+            core::cmp::Ordering::Greater=>hi=mid,
+            core::cmp::Ordering::Equal=>{
+                let Ok(b)=crate::usercopy::slice(ed.ords+mid as u64*2,2) else{return 0;};
+                let ordinal=u16::from_le_bytes([b[0],b[1]]) as u64;
+                return ed.resolve_slot(ordinal,depth);
+            }
+        }
+    }0
+}
+pub(crate) fn export_by_ordinal(base:u64,ordinal:u16,depth:u32)->i64{
+    if base==0||depth>8{return 0;}
+    let Some(ed)=ExportDir::parse(base) else{return 0;};
+    let Some(index)=(ordinal as u64).checked_sub(ed.ord_base) else{return 0;};ed.resolve_slot(index,depth)
 }
 
 fn user_cstr(ptr: u64) -> alloc::string::String {
@@ -2563,4 +2856,74 @@ fn user_cstr(ptr: u64) -> alloc::string::String {
     crate::usercopy::cstr_bytes(ptr, 4096)
         .map(|b| b.into_iter().map(|c| c as char).collect())
         .unwrap_or_default()
+}
+
+// UTF-8 conversion is deliberately separate from the legacy single-byte code
+// pages below. Bound hostile counts and validate user buffers before writing.
+const MAX_WIN_CONVERSION:usize=1024*1024;
+fn utf8_to_wide(flags:u32,src:u64,count:i32,dst:u64,capacity:i32)->Result<i64,u32>{
+    if flags & !8 != 0 {return Err(1004);}
+    if src==0 || count==0 || count < -1 || capacity<0 || (capacity>0 && (dst==0 || src==dst)) {return Err(87);}
+    let mut terminated;
+    let input=if count == -1 {
+        terminated=crate::usercopy::cstr_bytes(src,MAX_WIN_CONVERSION).map_err(|_|998u32)?;
+        terminated.try_reserve(1).map_err(|_|8u32)?;terminated.push(0);terminated.as_slice()
+    } else {
+        if count as usize>MAX_WIN_CONVERSION{return Err(8);}
+        crate::usercopy::slice(src,count as usize).map_err(|_|998u32)?
+    };
+    let converted=crate::winunicode::to_wide(input,flags&8!=0)?;
+    if capacity==0{return Ok(converted.len() as i64);}
+    if converted.len()>capacity as usize{return Err(122);}
+    let output=crate::usercopy::slice_mut(dst,converted.len()*2).map_err(|_|998u32)?;
+    for (slot,unit) in output.chunks_exact_mut(2).zip(converted.iter()){slot.copy_from_slice(&unit.to_le_bytes());}
+    Ok(converted.len() as i64)
+}
+fn wide_to_utf8(flags:u32,src:u64,count:i32,dst:u64,capacity:i32)->Result<i64,u32>{
+    if flags & !0x80 != 0 {return Err(1004);}
+    if src==0 || count==0 || count < -1 || capacity<0 || (capacity>0 && (dst==0 || src==dst)) {return Err(87);}
+    let units=if count == -1 {
+        let mut n=0usize;
+        loop {
+            if n>=MAX_WIN_CONVERSION{return Err(8);}
+            let address=src.checked_add((n*2) as u64).ok_or(998u32)?;
+            let bytes=crate::usercopy::slice(address,2).map_err(|_|998u32)?;
+            n+=1;if bytes==[0,0]{break;}
+        }
+        n
+    } else {count as usize};
+    if units>MAX_WIN_CONVERSION{return Err(8);}
+    let bytes=crate::usercopy::slice(src,units*2).map_err(|_|998u32)?;
+    let mut input=alloc::vec::Vec::new();input.try_reserve_exact(units).map_err(|_|8u32)?;
+    input.extend(bytes.chunks_exact(2).map(|b|u16::from_le_bytes([b[0],b[1]])));
+    let converted=crate::winunicode::to_utf8(&input,flags&0x80!=0)?;
+    if capacity==0{return Ok(converted.len() as i64);}
+    if converted.len()>capacity as usize{return Err(122);}
+    crate::usercopy::slice_mut(dst,converted.len()).map_err(|_|998u32)?.copy_from_slice(&converted);
+    Ok(converted.len() as i64)
+}
+
+// Loader A entrypoints use the process ACP (1252), independently of legacy
+// Latin-1 helpers used by unrelated APIs. W entrypoints decode UTF-16 directly.
+fn loader_name_a(ptr:u64)->Result<alloc::string::String,u32>{
+ if ptr==0{return Err(87);}
+ const SPECIAL:[u16;32]=[0x20ac,0x81,0x201a,0x192,0x201e,0x2026,0x2020,0x2021,0x2c6,0x2030,0x160,0x2039,0x152,0x8d,0x17d,0x8f,0x90,0x2018,0x2019,0x201c,0x201d,0x2022,0x2013,0x2014,0x2dc,0x2122,0x161,0x203a,0x153,0x9d,0x17e,0x178];
+ let bytes=crate::usercopy::cstr_bytes(ptr,1024).map_err(|e|if e == -36{206u32}else{998u32})?;
+ let mut text=alloc::string::String::new();text.try_reserve(bytes.len().checked_mul(3).ok_or(8u32)?).map_err(|_|8u32)?;
+ for b in bytes{let u=if b>=0x80&&b<0xa0{SPECIAL[(b-0x80)as usize]}else{b as u16};text.push(core::char::from_u32(u as u32).unwrap());}Ok(text)
+}
+
+// Exact bounded PEB-name fallback for executable and synthetic modules. Full
+// paths must match FullDllName, never an unrelated module's last component.
+fn loader_handle_fallback(raw:&str)->u64{
+ let explicit=raw.contains('/')||raw.contains('\\')||raw.contains(':');
+ let want=if explicit{let mut p=raw.replace('/',"\\");if p.starts_with('\\'){p=alloc::format!("C:{p}");}p}else{normalize_mod(raw)};
+ let Some(t)=teb()else{return 0;};let peb=crate::usercopy::get::<u64>(unsafe{t.add(0x60)});let ldr=crate::usercopy::get::<u64>(peb.wrapping_add(0x18));if ldr==0{return 0;}
+ let head=ldr+0x10;let mut cur=crate::usercopy::get::<u64>(head);
+ for _ in 0..crate::pe_ldr_layout::MAX_MODULES+6{
+  if cur==head||cur==0{break;}let field=if explicit{0x48}else{0x58};
+  let n=crate::usercopy::get::<u16>(cur.wrapping_add(field))as usize;let ptr=crate::usercopy::get::<u64>(cur.wrapping_add(field+8));
+  if n<=2048&&n%2==0&&ptr!=0&&n/2==want.encode_utf16().count(){if let Ok(bytes)=crate::usercopy::slice(ptr,n){let lower=|u:u16|if u>=65&&u<=90{u+32}else{u};if bytes.chunks_exact(2).zip(want.encode_utf16()).all(|(c,u)|lower(u16::from_le_bytes([c[0],c[1]]))==lower(u)){return crate::usercopy::get::<u64>(cur.wrapping_add(0x30));}}}
+  cur=crate::usercopy::get::<u64>(cur);
+ }0
 }

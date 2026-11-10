@@ -1,0 +1,66 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1859:17
+     |
+1859 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5.24s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask gdi-pen-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (2.9% non-contiguous), 103812/524288 blocks
+gdi-pen-ok default-black-pen
+gdi-pen-ok initial-dc-pen-color
+gdi-pen-ok rectangle-default-border-fill
+gdi-pen-ok rectangle-right-bottom-excluded
+gdi-pen-ok dc-pen-color-independent-of-solid
+gdi-pen-ok solid-black-not-recolored
+gdi-pen-ok select-dc-pen-returns-old
+gdi-pen-ok dc-pen-real-border
+gdi-pen-ok update-dc-pen-previous-color
+gdi-pen-ok other-window-pen-state-independent
+gdi-pen-ok brush-color-not-pen-color
+gdi-pen-ok hollow-brush-select
+gdi-pen-ok hollow-rectangle-draw
+gdi-pen-ok hollow-interior-preserved
+gdi-pen-ok hollow-border-colored
+gdi-pen-ok partially-clipped-stroke
+gdi-pen-ok clipping-does-not-invent-border
+gdi-pen-ok null-pen-select
+gdi-pen-ok null-pen-pure-fill
+gdi-pen-ok both-hollow-noop
+gdi-pen-ok fillrect-null-brush-noop
+gdi-pen-ok real-owned-pens
+gdi-pen-ok owned-pen-selection
+gdi-pen-ok owned-pen-cannot-delete-selected
+gdi-pen-ok owned-pen-uses-own-color
+gdi-pen-ok one-pixel-wide-rectangle
+gdi-pen-ok one-pixel-high-rectangle
+gdi-pen-ok pen-multiple-dcs-allowed
+gdi-pen-ok window-retains-owned-pen
+gdi-pen-ok unselected-owned-pen-deleted
+gdi-pen-ok stale-owned-pen-refused
+gdi-pen-ok unselected-second-pen-deleted
+gdi-pen-ok unsupported-wide-pen-fails
+gdi-pen-ok unsupported-dashed-pen-fails
+gdi-pen-ok invalid-dc-pen-state
+gdi-pen-ok invalid-dc-no-rectangle
+gdi-pen-ok other-object-classes-preserved
+gdi-pen-ok window-stroke-corner
+gdi-pen-result=PASS
+gdi-pen-ready-close
+gdi-pen-close
+gdi-pen-exit:0
+gdi-pen-done

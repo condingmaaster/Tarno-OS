@@ -1,0 +1,1 @@
+date API host UBSan: all valid days 1601..9999 against libc timegm/strftime; invalid days/month-length/leap centuries; locale names, year pictures, quotes, bounds, all low flags PASS; mocked NULL provider, no real clock claim

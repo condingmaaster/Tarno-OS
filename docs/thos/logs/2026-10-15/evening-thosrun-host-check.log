@@ -1,0 +1,4 @@
+PASS real native ELF, explicit execution permission, literal apostrophe/dollar path
+PASS invalid EXE rejected without chmod or shell fallback
+PASS 32bit.exe rejected without execution
+PASS Library.exe rejected without execution

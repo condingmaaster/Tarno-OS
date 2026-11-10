@@ -1,0 +1,27 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1749:17
+     |
+1749 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.45s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask wayland-input-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1109
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 980
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1110
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1111
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1111/32768 files (2.7% non-contiguous), 103784/524288 blocks

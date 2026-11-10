@@ -30,6 +30,13 @@ const GLYPH_W: usize = 8;
 const GLYPH_H: usize = 16;
 const FG: u32 = 0x00C8_C8C8;
 const BG: u32 = 0x0000_0000;
+/// The THOS look of the console once the splash is over: soft white on a deep slate.
+const THEME_FG: u32 = 0x00E0_E4EF;
+const THEME_BG: u32 = 0x000D_1017;
+/// The wordmark (Lato Bold, OFL): `u16 width, u16 height`, then one alpha byte per pixel.
+static LOGO: &[u8] = include_bytes!("../font/thos-logo.bin");
+/// Nothing is drawn while the splash screen is up (the log still goes to the serial port and /proc/dmesg).
+static QUIET: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 /// Scrollback depth, screen rows included.
 const MAX_LINES: usize = 2000;
 /// Widest console supported (text columns). 256 columns = 2048 px; wider
@@ -83,6 +90,13 @@ struct Con {
     /// UTF-8 decoder: code point so far and continuation bytes still expected.
     cp: u32,
     need: u8,
+    /// Pixel origin of the text grid and the colours (the login screen centres a narrow grid under the logo).
+    ox: usize,
+    oy: usize,
+    fg: u32,
+    bg: u32,
+    width: usize,
+    height: usize,
 }
 
 // The framebuffer pointer is only touched under the `CON` lock.
@@ -125,6 +139,12 @@ pub fn init(fb: &limine::framebuffer::Framebuffer) {
         nparam: 0,
         cp: 0,
         need: 0,
+        ox: 0,
+        oy: 0,
+        fg: FG,
+        bg: BG,
+        width: fb.width as usize,
+        height: fb.height as usize,
     };
     c.redraw_all();
     *CON.lock() = Some(c);
@@ -141,12 +161,42 @@ pub fn suspend() {
 pub fn resume() {
     if let Some(c) = CON.lock().as_mut() {
         c.active = true;
-        c.redraw_all(); // anything printed while suspended is in the model only
+        c.redraw_all(); // anything printed while suspended is in the model only (the logo and bar above the text stay on the screen)
+    }
+}
+
+/// While the login screen is up, kernel log lines (network bring-up and the like) stay off the screen; the login code itself lets its own lines through.
+static LOGIN_FILTER: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static LOGIN_ALLOW: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub fn login_allow(on: bool) {
+    LOGIN_ALLOW.store(on, core::sync::atomic::Ordering::Relaxed);
+}
+/// Kernel log text (as opposed to program or prompt output): hidden while the login screen is up.
+pub fn write_log(bytes: &[u8]) {
+    use core::sync::atomic::Ordering::Relaxed;
+    if LOGIN_FILTER.load(Relaxed) && !LOGIN_ALLOW.load(Relaxed) {
+        return;
+    }
+    write(bytes);
+}
+
+/// Put text on the screen without waiting for any lock (skipped when the console is busy): the lock-up detector's note.
+pub fn emergency(bytes: &[u8]) {
+    let Some(mut g) = CON.try_lock() else { return };
+    let Some(c) = g.as_mut() else { return };
+    if !c.active {
+        return;
+    }
+    for &b in bytes {
+        c.utf8(b);
     }
 }
 
 /// Feed output bytes (UTF-8) to the console.
 pub fn write(bytes: &[u8]) {
+    if QUIET.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     let mut g = CON.lock();
     let Some(c) = g.as_mut() else { return };
     // New output ends any selection and returns to the live screen.
@@ -328,12 +378,12 @@ impl Con {
 
     /// Draw glyph `ch` at text cell `(col, row)` of the *screen*.
     fn glyph(&mut self, col: usize, row: usize, ch: u8, inverted: bool) {
-        let (fg, bg) = if inverted { (BG, FG) } else { (FG, BG) };
+        let (fg, bg) = if inverted { (self.bg, self.fg) } else { (self.fg, self.bg) };
         let g = &FONT[4 + ch as usize * GLYPH_H..4 + (ch as usize + 1) * GLYPH_H];
         for (dy, bits) in g.iter().enumerate() {
             for dx in 0..GLYPH_W {
                 let on = bits & (0x80 >> dx) != 0;
-                self.px(col * GLYPH_W + dx, row * GLYPH_H + dy, if on { fg } else { bg });
+                self.px(self.ox + col * GLYPH_W + dx, self.oy + row * GLYPH_H + dy, if on { fg } else { bg });
             }
         }
     }
@@ -381,7 +431,7 @@ impl Con {
         if !self.active || self.voff != 0 {
             return;
         }
-        let (x0, y0) = (self.cx.min(self.cols - 1) * GLYPH_W, self.cy * GLYPH_H);
+        let (x0, y0) = (self.ox + self.cx.min(self.cols - 1) * GLYPH_W, self.oy + self.cy * GLYPH_H);
         for dy in 0..GLYPH_H {
             for dx in 0..GLYPH_W {
                 let p = unsafe { self.base.add((y0 + dy) * self.pitch + (x0 + dx) * 4) as *mut u32 };
@@ -424,7 +474,8 @@ impl Con {
         if self.active && self.voff == 0 {
             let row_bytes = self.pitch * GLYPH_H;
             unsafe {
-                core::ptr::copy(self.base.add(row_bytes), self.base, row_bytes * (self.rows - 1));
+                let top = self.base.add(self.oy * self.pitch);
+                core::ptr::copy(top.add(row_bytes), top, row_bytes * (self.rows - 1));
             }
             let last_row = self.rows - 1;
             for x in 0..self.cols {
@@ -586,4 +637,144 @@ fn fallback(cp: u32) -> u8 {
         0x20AC => 0xA4, // euro sign in Latin-15
         _ => b'?',
     }
+}
+
+
+// ---- boot splash and the themed console ----
+
+impl Con {
+    fn fill(&mut self, x0: usize, y0: usize, x1: usize, y1: usize, v: u32) {
+        for y in y0..y1.min(self.height) {
+            for x in x0..x1.min(self.width) {
+                self.px(x, y, v);
+            }
+        }
+    }
+    fn blend(a: u32, b: u32, t: u32) -> u32 {
+        let ch = |s: u32| ((a >> s & 255) * (255 - t) + (b >> s & 255) * t) / 255;
+        ch(16) << 16 | ch(8) << 8 | ch(0)
+    }
+    /// The wordmark with its top-left corner at (x0, y0), tinted from `top` to `bottom`.
+    fn draw_logo(&mut self, x0: usize, y0: usize, top: u32, bottom: u32, bg: u32) {
+        let (w, h) = (u16::from_le_bytes([LOGO[0], LOGO[1]]) as usize, u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize);
+        for y in 0..h {
+            let tint = Self::blend(top, bottom, (y * 255 / h.max(1)) as u32);
+            for x in 0..w {
+                let a = LOGO[4 + y * w + x] as u32;
+                if a != 0 {
+                    self.px(x0 + x, y0 + y, Self::blend(bg, tint, a));
+                }
+            }
+        }
+    }
+    /// Re-lay the text grid: `max_cols` columns centred (0 = the whole width), starting `oy` pixels from the top, with the THEME colours.
+    fn relayout(&mut self, max_cols: usize, oy: usize, logo: bool) {
+        let cols = if max_cols == 0 { (self.width / GLYPH_W).min(MAX_COLS) } else { (self.width / GLYPH_W).min(max_cols).min(MAX_COLS) };
+        let rows = (self.height - oy.min(self.height)) / GLYPH_H;
+        if cols == 0 || rows == 0 {
+            return;
+        }
+        self.fg = THEME_FG;
+        self.bg = THEME_BG;
+        self.cols = cols;
+        self.rows = rows;
+        self.ox = (self.width - cols * GLYPH_W) / 2;
+        self.oy = oy;
+        self.cells = unsafe { core::slice::from_raw_parts_mut(core::ptr::addr_of_mut!(CELLS) as *mut u8, MAX_LINES * cols) };
+        self.cells.fill(b' ');
+        self.start = 0;
+        self.len = rows;
+        self.dropped = 0;
+        self.cx = 0;
+        self.cy = 0;
+        self.voff = 0;
+        self.sel = None;
+        self.mark = false;
+        self.esc = Esc::None;
+        self.active = true;
+        let (w, h) = (self.width, self.height);
+        self.fill(0, 0, w, h, THEME_BG);
+        if logo {
+            let (lw, lh) = (u16::from_le_bytes([LOGO[0], LOGO[1]]) as usize, u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize);
+            let _ = lh;
+            self.draw_logo((w.saturating_sub(lw)) / 2, 36, 0x00F4_F7FF, 0x008F_B0F5, THEME_BG);
+        }
+        self.redraw_all();
+    }
+}
+
+/// The boot screen: the wordmark and a progress bar on top, the kernel log scrolling below them (like a Linux boot with a splash,
+/// but with the details visible). [`theme_login`] replaces it with the login screen.
+const BOOT_COLS: usize = 110;
+fn logo_h() -> usize {
+    u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize
+}
+fn boot_bar_y() -> usize {
+    36 + logo_h() + 18
+}
+static SPLASH_ON: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+pub fn splash_start() {
+    let mut g = CON.lock();
+    let Some(c) = g.as_mut() else { return };
+    c.relayout(BOOT_COLS, 36 + logo_h() + 44, true);
+    SPLASH_ON.store(true, core::sync::atomic::Ordering::Relaxed);
+    paint_progress(c, 0);
+}
+
+/// How far the progress bar is (so a redraw after a framebuffer remap restores it).
+static SPLASH_PCT: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+fn paint_progress(c: &mut Con, pct: u32) {
+    let (w, bw) = (c.width, 280usize);
+    let (bx, by) = (w / 2 - 140, boot_bar_y());
+    for x in 0..bw {
+        for dy in 0..3 {
+            c.px(bx + x, by + dy, 0x0030_3A55);
+        }
+    }
+    let fill = bw * pct.min(100) as usize / 100;
+    for x in 0..fill {
+        let col = Con::blend(0x007B_A3FF, 0x00B9_CDFF, (x * 255 / bw) as u32);
+        for dy in 0..3 {
+            c.px(bx + x, by + dy, col);
+        }
+    }
+}
+
+/// Advance the splash progress bar to `pct` percent.
+pub fn splash_progress(pct: u32) {
+    if !SPLASH_ON.load(core::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    SPLASH_PCT.store(pct, core::sync::atomic::Ordering::Relaxed);
+    let Some(mut g) = CON.try_lock() else { return };
+    let Some(c) = g.as_mut() else { return };
+    if c.active {
+        paint_progress(c, pct);
+    }
+}
+
+/// The login screen: the wordmark on top, a narrow centred text column below it, in the THOS colours.
+pub fn theme_login() {
+    SPLASH_ON.store(false, core::sync::atomic::Ordering::Relaxed);
+    QUIET.store(false, core::sync::atomic::Ordering::Relaxed);
+    LOGIN_FILTER.store(true, core::sync::atomic::Ordering::Relaxed);
+    if let Some(c) = CON.lock().as_mut() {
+        c.relayout(72, 36 + u16::from_le_bytes([LOGO[2], LOGO[3]]) as usize + 40, true);
+    }
+}
+
+/// The shell console after login: the whole screen, THOS colours, no logo.
+pub fn theme_shell() {
+    LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
+    QUIET.store(false, core::sync::atomic::Ordering::Relaxed);
+    if let Some(c) = CON.lock().as_mut() {
+        c.relayout(0, 0, false);
+    }
+}
+
+/// A failure while the splash is up: make the text visible again.
+pub fn reveal() {
+    LOGIN_FILTER.store(false, core::sync::atomic::Ordering::Relaxed);
+    SPLASH_ON.store(false, core::sync::atomic::Ordering::Relaxed);
 }

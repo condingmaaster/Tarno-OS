@@ -9,6 +9,7 @@ use x86_64::instructions::port::Port;
 
 const CONFIG_ADDR: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
+static CONFIG_LOCK: spin::Mutex<()> = spin::Mutex::new(());
 
 #[derive(Clone, Copy, Debug)]
 pub struct Location {
@@ -28,28 +29,32 @@ impl Location {
 }
 
 pub fn read32(loc: Location, offset: u8) -> u32 {
-    unsafe {
-        Port::new(CONFIG_ADDR).write(loc.addr(offset));
-        Port::<u32>::new(CONFIG_DATA).read()
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = CONFIG_LOCK.lock();
+        unsafe { Port::new(CONFIG_ADDR).write(loc.addr(offset)); Port::<u32>::new(CONFIG_DATA).read() }
+    })
 }
 
 pub fn write32(loc: Location, offset: u8, value: u32) {
-    unsafe {
-        Port::new(CONFIG_ADDR).write(loc.addr(offset));
-        Port::<u32>::new(CONFIG_DATA).write(value);
-    }
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = CONFIG_LOCK.lock();
+        unsafe { Port::new(CONFIG_ADDR).write(loc.addr(offset)); Port::<u32>::new(CONFIG_DATA).write(value); }
+    })
 }
 
 pub fn read16(loc: Location, offset: u8) -> u16 {
     (read32(loc, offset) >> ((offset as u32 & 2) * 8)) as u16
 }
 
-/// 16-bit config write (read-modify-write of the containing dword).
+/// A real 16-bit transaction: RMW would write back adjacent write-one-to-clear status.
 pub fn write16(loc: Location, offset: u8, value: u16) {
-    let shift = (offset as u32 & 2) * 8;
-    let d = read32(loc, offset & 0xFC);
-    write32(loc, offset & 0xFC, (d & !(0xFFFF << shift)) | ((value as u32) << shift));
+    x86_64::instructions::interrupts::without_interrupts(|| {
+        let _guard = CONFIG_LOCK.lock();
+        unsafe {
+            Port::new(CONFIG_ADDR).write(loc.addr(offset));
+            Port::<u16>::new(CONFIG_DATA + (offset & 2) as u16).write(value);
+        }
+    });
 }
 
 /// Config offset of the capability with `id` (0x05 = MSI, 0x11 = MSI-X), if any.
@@ -99,8 +104,9 @@ pub fn find_class(class: u8, subclass: u8, progif: u8) -> Option<Location> {
     None
 }
 
-/// Scan bus 0 for the first device with this vendor/device id.
-pub fn find_id(vendor: u16, device: u16) -> Option<Location> {
+/// Every device on bus 0 with the given (class, subclass, prog-if): the Acer has two EHCI controllers and the stick may be on either.
+pub fn find_class_all(class: u8, subclass: u8, progif: u8) -> alloc::vec::Vec<Location> {
+    let mut out = alloc::vec::Vec::new();
     for dev in 0..32u8 {
         for func in 0..8u8 {
             let loc = Location { bus: 0, dev, func };
@@ -110,8 +116,31 @@ pub fn find_id(vendor: u16, device: u16) -> Option<Location> {
                 }
                 continue;
             }
-            if read16(loc, 0x00) == vendor && read16(loc, 0x02) == device {
-                return Some(loc);
+            if class_code(loc) == (class, subclass, progif) {
+                out.push(loc);
+            }
+        }
+    }
+    out
+}
+
+/// Scan the first buses (bridges forward config cycles to the buses the BIOS numbered) for the first device
+/// with this vendor/device id. Bus 0 comes first, so integrated devices are found as before; the Acer's
+/// Ethernet chip sits behind a PCIe root port on bus 2.
+pub fn find_id(vendor: u16, device: u16) -> Option<Location> {
+    for bus in 0..8u8 {
+        for dev in 0..32u8 {
+            for func in 0..8u8 {
+                let loc = Location { bus, dev, func };
+                if read16(loc, 0x00) == 0xFFFF {
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                if read16(loc, 0x00) == vendor && read16(loc, 0x02) == device {
+                    return Some(loc);
+                }
             }
         }
     }
@@ -144,5 +173,5 @@ pub fn bar(loc: Location, index: u8) -> u64 {
 /// Set bus-master + memory-space enable in the command register.
 pub fn enable_bus_master(loc: Location) {
     let cmd = read16(loc, 0x04);
-    write32(loc, 0x04, (cmd | 0b110) as u32);
+    write16(loc, 0x04, cmd | 0b110);
 }

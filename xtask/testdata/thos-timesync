@@ -1,0 +1,11 @@
+# Boot service (started by the kernel as root): set the clock from the network once it is up, then again every six hours.
+# Disabled by creating /etc/thos/no-timesync.
+while :; do
+    n=0
+    until /thos-ntp; do
+        n=$((n + 1))
+        [ $n -ge 90 ] && break                      # about 15 minutes without success: try again in six hours
+        /busybox sleep 10
+    done
+    /busybox sleep 21600
+done

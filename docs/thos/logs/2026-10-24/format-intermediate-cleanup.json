@@ -1,0 +1,16 @@
+{
+  "removed": [
+    {
+      "path": "target/thos-time-qa-2026-10-24.img",
+      "sha256": "1baa5dc7450e9f41ae8e1e089f977df5e0d68379d6022c069f2030f56e6009d5",
+      "allocated_bytes": 611340288
+    },
+    {
+      "path": "target/thos-datetime-qa-2026-10-24.img",
+      "sha256": "e49426b90fa6ea688108f7484a34259147f45468e2921f4b519fe22e14d25c92",
+      "allocated_bytes": 611340288
+    }
+  ],
+  "allocated_removed": 1222680576,
+  "free_bytes": 214743252992
+}

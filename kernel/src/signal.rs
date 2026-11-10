@@ -137,7 +137,7 @@ fn default_action(sig: u32) -> Dfl {
 fn is_ignored(st: &SigState, sig: u32) -> bool {
     match st.actions[sig as usize].handler {
         SIG_IGN => true,
-        SIG_DFL => default_action(sig) != Dfl::Terminate,
+        SIG_DFL => default_action(sig) == Dfl::Ignore, // Stop and Terminate defaults both act
         _ => false,
     }
 }
@@ -183,8 +183,56 @@ pub fn send(task: &Arc<Task>, sig: u32) {
     if sig == 0 || sig > NSIG {
         return;
     }
-    task.sig.lock().pending |= bit(sig);
+    {
+        let mut st = task.sig.lock();
+        const STOPS: u64 = (1 << (SIGSTOP - 1)) | (1 << (SIGTSTP - 1)) | (1 << (SIGTTIN - 1)) | (1 << (SIGTTOU - 1));
+        if sig == SIGCONT {
+            st.pending &= !STOPS; // continuing discards stop signals that have not acted yet
+        } else if STOPS & bit(sig) != 0 {
+            st.pending &= !bit(SIGCONT);
+        }
+        st.pending |= bit(sig);
+    }
+    if sig == SIGCONT || sig == SIGKILL {
+        task.clear_stopped(); // resume (SIGKILL also wakes a stopped process so it can die)
+        CONT_WQ.wake_all();
+    }
     task.wake_all_threads();
+    SIGFD_WQ.wake_all(); // signalfd readers (and pollers)
+}
+
+/// Woken whenever any signal is queued: `signalfd` readers wait here.
+pub static SIGFD_WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+
+/// Is any signal of `mask` pending (not yet blocked-or-not distinction: a signalfd wants blocked ones)?
+pub fn pending_in(mask: u64) -> bool {
+    let Some(task) = sched::current().task() else { return false };
+    let p = task.sig.lock().pending & mask;
+    p != 0
+}
+
+/// Take the lowest pending signal of `mask` (for `signalfd`); `None` if there is none.
+pub fn take_pending(mask: u64) -> Option<u32> {
+    let task = sched::current().task()?;
+    let mut st = task.sig.lock();
+    let avail = st.pending & mask;
+    if avail == 0 {
+        return None;
+    }
+    let sig = avail.trailing_zeros() + 1;
+    st.pending &= !bit(sig);
+    Some(sig)
+}
+
+/// Woken when a stopped process is continued or killed.
+static CONT_WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+
+/// Job-control stop: park the calling thread until SIGCONT / SIGKILL / process end.
+fn stop_current(task: &Arc<Task>, sig: u32) {
+    task.set_stopped(sig);
+    while task.stop_sig() != 0 && !task.is_exited() {
+        CONT_WQ.wait_if(|| task.stop_sig() != 0 && !task.is_exited());
+    }
 }
 
 /// Send to the calling process (SIGPIPE).
@@ -387,14 +435,18 @@ pub fn sys_sigsuspend(mask: u64, size: u64) -> i64 {
 /// touching the already-recorded exit status.
 pub fn thread_die(task: &Arc<Task>) -> ! {
     process::thread_exit_cleanup();
-    task.thread_leaving();
+    if task.thread_leaving() {
+        // the process's other threads were already gone: this casualty is the last one out, so it gives the
+        // address space back (the exit status is already recorded)
+        process::free_address_space_at_exit();
+    }
     sched::exit()
 }
 
 /// End the process because of fatal signal `sig` (never returns).
 fn terminate(sig: u32) -> ! {
-    process::set_term_signal(sig);
     crate::syscall::note_user_exit();
+    process::set_term_signal(sig);
     sched::exit()
 }
 
@@ -454,7 +506,16 @@ pub fn deliver_at_syscall_exit(frame: &mut UserFrame, nr: u64, ret: &mut i64) {
         (sig, st.actions[sig as usize], old)
     };
     if act.handler == SIG_DFL {
-        terminate(sig); // (stop/ignore defaults were filtered out above)
+        if default_action(sig) == Dfl::Stop {
+            stop_current(&task, sig);
+            // a call the stop interrupted simply runs again once the process continues
+            if *ret == EINTR && nr != 15 {
+                frame.rip = frame.rip.wrapping_sub(2);
+                *ret = nr as i64;
+            }
+            return;
+        }
+        terminate(sig); // (ignore defaults were filtered out above)
     }
 
     // A call cut short by this signal restarts after the handler if SA_RESTART says so.

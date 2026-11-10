@@ -1,0 +1,798 @@
+{
+  "purpose": "Remove reproducible private QEMU scratch copies only. No source, QA seed, frozen version image, manifest, logs or screenshots removed.",
+  "files": [
+    {
+      "path": "target/asus-installer-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202919845396313,
+      "inode": 3842765
+    },
+    {
+      "path": "target/flock-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792171930416319435,
+      "inode": 3842748
+    },
+    {
+      "path": "target/gdi-alpha-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202785801391655,
+      "inode": 3843008
+    },
+    {
+      "path": "target/gdi-blit-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202758965390723,
+      "inode": 3842967
+    },
+    {
+      "path": "target/gdi-brush-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792199823613288720,
+      "inode": 3842950
+    },
+    {
+      "path": "target/gdi-dcbrush-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202838373393482,
+      "inode": 3842991
+    },
+    {
+      "path": "target/gdi-font-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202812189392572,
+      "inode": 3843027
+    },
+    {
+      "path": "target/gdi-lifetime-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792200358045307291,
+      "inode": 3842976
+    },
+    {
+      "path": "target/gdi-pen-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202729493389698,
+      "inode": 3843042
+    },
+    {
+      "path": "target/gtk-input-private-root.ext2",
+      "bytes": 1619001344,
+      "allocated_bytes": 685248512,
+      "mtime_ns": 1792182872348699665,
+      "inode": 3842583
+    },
+    {
+      "path": "target/jdk-lock-private-root.ext2",
+      "bytes": 1619001344,
+      "allocated_bytes": 685252608,
+      "mtime_ns": 1792172249048330507,
+      "inode": 3842812
+    },
+    {
+      "path": "target/pe-launch-race-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 117075968,
+      "mtime_ns": 1792183659120727006,
+      "inode": 3842909
+    },
+    {
+      "path": "target/posix-lock-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792171809864315246,
+      "inode": 3842729
+    },
+    {
+      "path": "target/priv-access-exec-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792091372964444355,
+      "inode": 3842284
+    },
+    {
+      "path": "target/priv-anonymous-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792110195857161687,
+      "inode": 3841205
+    },
+    {
+      "path": "target/priv-asus-installer-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168210432,
+      "mtime_ns": 1792202919869396314,
+      "inode": 3842321
+    },
+    {
+      "path": "target/priv-autostart-test.img",
+      "bytes": 630194176,
+      "allocated_bytes": 630198272,
+      "mtime_ns": 1792093086268509649,
+      "inode": 3839450
+    },
+    {
+      "path": "target/priv-curl-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791919339756913019,
+      "inode": 3841744
+    },
+    {
+      "path": "target/priv-desk-drag-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792022860740858156,
+      "inode": 3841168
+    },
+    {
+      "path": "target/priv-desk-menu-scroll-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792024401860916887,
+      "inode": 3841982
+    },
+    {
+      "path": "target/priv-desk-menu-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792012277508454833,
+      "inode": 3841463
+    },
+    {
+      "path": "target/priv-desk-minimize-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791713849894702610,
+      "inode": 3840936
+    },
+    {
+      "path": "target/priv-desk-native-resize-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168042496,
+      "mtime_ns": 1792182898728700582,
+      "inode": 3841429
+    },
+    {
+      "path": "target/priv-desk-panel-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791715302930757984,
+      "inode": 3841029
+    },
+    {
+      "path": "target/priv-desk-settings-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791733951051468656,
+      "inode": 3841356
+    },
+    {
+      "path": "target/priv-desk-tasklist-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168050688,
+      "mtime_ns": 1792184222432746581,
+      "inode": 3842868
+    },
+    {
+      "path": "target/priv-desk-term-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791734138691475806,
+      "inode": 3841457
+    },
+    {
+      "path": "target/priv-desk-win32-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792088756172344631,
+      "inode": 3841378
+    },
+    {
+      "path": "target/priv-desk-winfocus-panel-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168443904,
+      "mtime_ns": 1792201990445364017,
+      "inode": 3842512
+    },
+    {
+      "path": "target/priv-desk-winfocus-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792183853744733769,
+      "inode": 3842449
+    },
+    {
+      "path": "target/priv-desk-winfocus-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792184009644739186,
+      "inode": 3842849
+    },
+    {
+      "path": "target/priv-desk-wininput-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792089911184388648,
+      "inode": 3842033
+    },
+    {
+      "path": "target/priv-desk-winkey-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792183285268714014,
+      "inode": 3842855
+    },
+    {
+      "path": "target/priv-desk-winkey-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792184166616744641,
+      "inode": 3842852
+    },
+    {
+      "path": "target/priv-desk-winresize-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168210432,
+      "mtime_ns": 1792202864605394394,
+      "inode": 3842368
+    },
+    {
+      "path": "target/priv-disk-full-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791935045161511544,
+      "inode": 3842005
+    },
+    {
+      "path": "target/priv-downloads-large-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792038014769435669,
+      "inode": 3841940
+    },
+    {
+      "path": "target/priv-downloads-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791934906069506244,
+      "inode": 3841957
+    },
+    {
+      "path": "target/priv-e1000-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791715127854751312,
+      "inode": 3841709
+    },
+    {
+      "path": "target/priv-ehci-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792008870328324987,
+      "inode": 3842012
+    },
+    {
+      "path": "target/priv-files-browser-exe-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168034304,
+      "mtime_ns": 1792181745328660502,
+      "inode": 3842478
+    },
+    {
+      "path": "target/priv-files-launch-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791919673416925734,
+      "inode": 3841930
+    },
+    {
+      "path": "target/priv-firefox-downloads-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 716857344,
+      "mtime_ns": 1792183065036706361,
+      "inode": 3842341
+    },
+    {
+      "path": "target/priv-firefox-loader-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 1687162880,
+      "mtime_ns": 1791919607528923223,
+      "inode": 3841297
+    },
+    {
+      "path": "target/priv-firefox-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 1687162880,
+      "mtime_ns": 1792021147636792870,
+      "inode": 3841713
+    },
+    {
+      "path": "target/priv-flock-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792171930468319437,
+      "inode": 3842734
+    },
+    {
+      "path": "target/priv-gdi-alpha-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792202785861391657,
+      "inode": 3842990
+    },
+    {
+      "path": "target/priv-gdi-blit-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792202759029390725,
+      "inode": 3842949
+    },
+    {
+      "path": "target/priv-gdi-brush-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792184892920769880,
+      "inode": 3842881
+    },
+    {
+      "path": "target/priv-gdi-brush-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168374272,
+      "mtime_ns": 1792199823673288722,
+      "inode": 3842961
+    },
+    {
+      "path": "target/priv-gdi-dcbrush-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792202838433393484,
+      "inode": 3842560
+    },
+    {
+      "path": "target/priv-gdi-font-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792202812249392574,
+      "inode": 3843007
+    },
+    {
+      "path": "target/priv-gdi-lifetime-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168361984,
+      "mtime_ns": 1792200358101307293,
+      "inode": 3842929
+    },
+    {
+      "path": "target/priv-gdi-pen-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792202729549389700,
+      "inode": 3842579
+    },
+    {
+      "path": "target/priv-gsbase-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792007259604263603,
+      "inode": 3842261
+    },
+    {
+      "path": "target/priv-gtk-input-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 717185024,
+      "mtime_ns": 1792182872640699676,
+      "inode": 3842492
+    },
+    {
+      "path": "target/priv-heap-churn-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792110339413167158,
+      "inode": 3842444
+    },
+    {
+      "path": "target/priv-hw-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336592896,
+      "mtime_ns": 1791717637846846967,
+      "inode": 3841465
+    },
+    {
+      "path": "target/priv-io-stress-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791935025909510811,
+      "inode": 3841490
+    },
+    {
+      "path": "target/priv-java-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 1687162880,
+      "mtime_ns": 1792038360193448833,
+      "inode": 3841978
+    },
+    {
+      "path": "target/priv-jdk-lock-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 717176832,
+      "mtime_ns": 1792172249332330517,
+      "inode": 3842798
+    },
+    {
+      "path": "target/priv-jdk-ui-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 1687162880,
+      "mtime_ns": 1791919914996934941,
+      "inode": 3841921
+    },
+    {
+      "path": "target/priv-large-copy-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791914042260711133,
+      "inode": 3841409
+    },
+    {
+      "path": "target/priv-large-runtime-read-test.img",
+      "bytes": 1687158784,
+      "allocated_bytes": 1687162880,
+      "mtime_ns": 1791920055672940302,
+      "inode": 3841967
+    },
+    {
+      "path": "target/priv-large-write-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791934844677503904,
+      "inode": 3841988
+    },
+    {
+      "path": "target/priv-live-desktop-test.img",
+      "bytes": 630194176,
+      "allocated_bytes": 103063552,
+      "mtime_ns": 1792204339897445660,
+      "inode": 3842330
+    },
+    {
+      "path": "target/priv-memfd-freeze-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168042496,
+      "mtime_ns": 1792171949712320105,
+      "inode": 3842010
+    },
+    {
+      "path": "target/priv-net-settings-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791733748603460940,
+      "inode": 3841336
+    },
+    {
+      "path": "target/priv-pe-launch-race-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 169152512,
+      "mtime_ns": 1792183659180727008,
+      "inode": 3842865
+    },
+    {
+      "path": "target/priv-perf-test.img",
+      "bytes": 336592896,
+      "allocated_bytes": 336596992,
+      "mtime_ns": 1791713936302705903,
+      "inode": 3841203
+    },
+    {
+      "path": "target/priv-pkg-repo-ui-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792008167376298198,
+      "inode": 3840871
+    },
+    {
+      "path": "target/priv-posix-lock-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792171809924315248,
+      "inode": 3842582
+    },
+    {
+      "path": "target/priv-privilege-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792010888160401886,
+      "inode": 3841220
+    },
+    {
+      "path": "target/priv-privilege-ui-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792013283096493156,
+      "inode": 3842036
+    },
+    {
+      "path": "target/priv-readonly-file-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792171892000318100,
+      "inode": 3842526
+    },
+    {
+      "path": "target/priv-record-lock-churn-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792171866564317216,
+      "inode": 3842790
+    },
+    {
+      "path": "target/priv-seqpacket-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792008242992301080,
+      "inode": 3841934
+    },
+    {
+      "path": "target/priv-sqlite-lock-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 169938944,
+      "mtime_ns": 1792171838212316231,
+      "inode": 3842528
+    },
+    {
+      "path": "target/priv-thosrun-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792092755824497056,
+      "inode": 3841506
+    },
+    {
+      "path": "target/priv-thread-sched-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1791932944921431505,
+      "inode": 3841738
+    },
+    {
+      "path": "target/priv-timer-load-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792024622708925303,
+      "inode": 3842039
+    },
+    {
+      "path": "target/priv-wargv-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792225864898193651,
+      "inode": 3843041
+    },
+    {
+      "path": "target/priv-wayland-input-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792182697928693604,
+      "inode": 3842490
+    },
+    {
+      "path": "target/priv-wayland-keyboard-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168366080,
+      "mtime_ns": 1792183737340729724,
+      "inode": 3842749
+    },
+    {
+      "path": "target/priv-wayland-subsurface-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168370176,
+      "mtime_ns": 1792169878396248127,
+      "inode": 3842015
+    },
+    {
+      "path": "target/priv-wbig-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792107003629040033,
+      "inode": 3842454
+    },
+    {
+      "path": "target/priv-wide-main-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168468480,
+      "mtime_ns": 1792204036745435125,
+      "inode": 3843076
+    },
+    {
+      "path": "target/priv-winargs-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168034304,
+      "mtime_ns": 1792181643464656962,
+      "inode": 3842318
+    },
+    {
+      "path": "target/priv-winc-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168165376,
+      "mtime_ns": 1792204229809441834,
+      "inode": 3842298
+    },
+    {
+      "path": "target/priv-windows-lightgame-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792093816396537473,
+      "inode": 3842311
+    },
+    {
+      "path": "target/priv-windows-snake-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168730624,
+      "mtime_ns": 1792204249817442530,
+      "inode": 3842914
+    },
+    {
+      "path": "target/priv-winlife-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792089885532387670,
+      "inode": 3842271
+    },
+    {
+      "path": "target/priv-winlookup-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792094015860545075,
+      "inode": 3842462
+    },
+    {
+      "path": "target/priv-winlookup-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168165376,
+      "mtime_ns": 1792204214521441303,
+      "inode": 3842421
+    },
+    {
+      "path": "target/priv-winmodule-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 169414656,
+      "mtime_ns": 1792181448124650174,
+      "inode": 3842813
+    },
+    {
+      "path": "target/priv-winmodule-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 169517056,
+      "mtime_ns": 1792204190621440472,
+      "inode": 3842320
+    },
+    {
+      "path": "target/priv-winresize-life-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 613421056,
+      "mtime_ns": 1792089785944383875,
+      "inode": 3842255
+    },
+    {
+      "path": "target/priv-winunicode-probe.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168628224,
+      "mtime_ns": 1792184363012751466,
+      "inode": 3842557
+    },
+    {
+      "path": "target/priv-winunicode-test.img",
+      "bytes": 613416960,
+      "allocated_bytes": 168730624,
+      "mtime_ns": 1792204169289439731,
+      "inode": 3842874
+    },
+    {
+      "path": "target/readonly-file-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792171891944318098,
+      "inode": 3842784
+    },
+    {
+      "path": "target/record-lock-churn-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792171866508317214,
+      "inode": 3842797
+    },
+    {
+      "path": "target/sqlite-lock-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 117735424,
+      "mtime_ns": 1792171838152316229,
+      "inode": 3842783
+    },
+    {
+      "path": "target/subsurface-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792169878328248125,
+      "inode": 3842563
+    },
+    {
+      "path": "target/wargv-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792225864822193648,
+      "inode": 3843069
+    },
+    {
+      "path": "target/wayland-input-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792182697876693603,
+      "inode": 3842564
+    },
+    {
+      "path": "target/wayland-keyboard-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792183737284729722,
+      "inode": 3842485
+    },
+    {
+      "path": "target/wide-main-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792204036665435123,
+      "inode": 3843078
+    },
+    {
+      "path": "target/windows-snake-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116473856,
+      "mtime_ns": 1792204249757442527,
+      "inode": 3842915
+    },
+    {
+      "path": "target/winfocus-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792201990385364015,
+      "inode": 3842834
+    },
+    {
+      "path": "target/winkey-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792184166544744639,
+      "inode": 3842862
+    },
+    {
+      "path": "target/winmodule-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 117243904,
+      "mtime_ns": 1792204190557440470,
+      "inode": 3842853
+    },
+    {
+      "path": "target/winresize-fixture-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116396032,
+      "mtime_ns": 1792202864537394391,
+      "inode": 3842821
+    },
+    {
+      "path": "target/winunicode-private-root.ext2",
+      "bytes": 545259520,
+      "allocated_bytes": 116453376,
+      "mtime_ns": 1792204169221439729,
+      "inode": 3842869
+    }
+  ],
+  "allocated_bytes_before": 43101028352,
+  "status": "complete"
+}

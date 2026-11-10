@@ -1,0 +1,44 @@
+{
+  "before_free_bytes": 210808049664,
+  "after_free_bytes": 214160162816,
+  "observed_freed_bytes": 3352113152,
+  "removed": [
+    {
+      "path": "target/thos-snapshot-qa-2026-10-24.img",
+      "sha256": "7401216b0515e04ffde4c30b8d812d0ef20e3e6756300338e5b0ee3a5659634b",
+      "nominal_allocated_bytes": 611340288,
+      "reason": "Superseded private QA; corrected thread/resource candidate and verified Live retained; small frozen sources/binaries/logs remain"
+    },
+    {
+      "path": "target/thos-snapshot-thread-qa-2026-10-24.img",
+      "sha256": "cc27186eb9eb39f30c5eb804536573530df161a60254b49c807a6c9205e12c00",
+      "nominal_allocated_bytes": 611340288,
+      "reason": "Superseded private QA; corrected thread/resource candidate and verified Live retained; small frozen sources/binaries/logs remain"
+    },
+    {
+      "path": "target/thos-thread-object-qa-2026-10-24.img",
+      "sha256": "29400f0abc9f48bb3d45e399418ebd277d055195a3c610163231855b968b8b89",
+      "nominal_allocated_bytes": 611340288,
+      "reason": "Superseded private QA; corrected thread/resource candidate and verified Live retained; small frozen sources/binaries/logs remain"
+    },
+    {
+      "path": "target/thos-resource-qa-2026-10-25.img",
+      "sha256": "b5ae3641c2955febe6e51523d4079d2575605ebf6bb6f06ca2993951b8836489",
+      "nominal_allocated_bytes": 611323904,
+      "reason": "Superseded private QA; corrected thread/resource candidate and verified Live retained; small frozen sources/binaries/logs remain"
+    },
+    {
+      "path": "target/test-scratch/run-26906-1792824429608525558",
+      "reason": "Own interrupted/failed locale or compile scratch; relevant logs retained, no VM active"
+    },
+    {
+      "path": "target/test-scratch/run-30196-1792912643408120754",
+      "reason": "Own interrupted/failed locale or compile scratch; relevant logs retained, no VM active"
+    },
+    {
+      "path": "target/test-scratch/run-31733-1792913354331208662",
+      "reason": "Own interrupted/failed locale or compile scratch; relevant logs retained, no VM active"
+    }
+  ],
+  "retained": "Current verified thread Live33992563, format rollback9340e0ba, corrected thread-padding QA, final resource QA, frozen sources and small evidence; earlier preexisting backups untouched"
+}

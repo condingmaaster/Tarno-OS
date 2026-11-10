@@ -1,0 +1,629 @@
+   Compiling thos-kernel v0.0.0 (/home/router/Projekte/Tarno-OS/kernel)
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1261:62
+     |
+1261 |                 let h = unsafe { crate::usercopy::get::<u64>((a1 + (i * 8) as u64)) } as i32;
+     |                                                              ^                   ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+1261 -                 let h = unsafe { crate::usercopy::get::<u64>((a1 + (i * 8) as u64)) } as i32;
+1261 +                 let h = unsafe { crate::usercopy::get::<u64>(a1 + (i * 8) as u64) } as i32;
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1485:70
+     |
+1485 |             let rd = |off: u64| unsafe { crate::usercopy::get::<u64>((c + off)) };
+     |                                                                      ^       ^
+     |
+help: remove these parentheses
+     |
+1485 -             let rd = |off: u64| unsafe { crate::usercopy::get::<u64>((c + off)) };
+1485 +             let rd = |off: u64| unsafe { crate::usercopy::get::<u64>(c + off) };
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1506:62
+     |
+1506 |                 rflags: unsafe { crate::usercopy::get::<u32>((c + 0x44)) } as u64 | 0x2,
+     |                                                              ^        ^
+     |
+help: remove these parentheses
+     |
+1506 -                 rflags: unsafe { crate::usercopy::get::<u32>((c + 0x44)) } as u64 | 0x2,
+1506 +                 rflags: unsafe { crate::usercopy::get::<u32>(c + 0x44) } as u64 | 0x2,
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1871:37
+     |
+1871 |         crate::usercopy::put::<u64>((iosb + 8), (information) as u64);
+     |                                     ^        ^
+     |
+help: remove these parentheses
+     |
+1871 -         crate::usercopy::put::<u64>((iosb + 8), (information) as u64);
+1871 +         crate::usercopy::put::<u64>(iosb + 8, (information) as u64);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1913:44
+     |
+1913 |     let root = crate::usercopy::get::<u64>((oa + 0x08));
+     |                                            ^         ^
+     |
+help: remove these parentheses
+     |
+1913 -     let root = crate::usercopy::get::<u64>((oa + 0x08));
+1913 +     let root = crate::usercopy::get::<u64>(oa + 0x08);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1914:65
+     |
+1914 |     let name = unicode_string_ascii(crate::usercopy::get::<u64>((oa + 0x10)));
+     |                                                                 ^         ^
+     |
+help: remove these parentheses
+     |
+1914 -     let name = unicode_string_ascii(crate::usercopy::get::<u64>((oa + 0x10)));
+1914 +     let name = unicode_string_ascii(crate::usercopy::get::<u64>(oa + 0x10));
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1933:43
+     |
+1933 |     let buf = crate::usercopy::get::<u64>((us + 8));
+     |                                           ^      ^
+     |
+help: remove these parentheses
+     |
+1933 -     let buf = crate::usercopy::get::<u64>((us + 8));
+1933 +     let buf = crate::usercopy::get::<u64>(us + 8);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:1939:45
+     |
+1939 |         let c = crate::usercopy::get::<u16>((buf + (i * 2) as u64));
+     |                                             ^                    ^
+     |
+help: remove these parentheses
+     |
+1939 -         let c = crate::usercopy::get::<u16>((buf + (i * 2) as u64));
+1939 +         let c = crate::usercopy::get::<u16>(buf + (i * 2) as u64);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2088:49
+     |
+2088 |                     crate::usercopy::get::<u64>((peb + 0x10)) as i64
+     |                                                 ^          ^
+     |
+help: remove these parentheses
+     |
+2088 -                     crate::usercopy::get::<u64>((peb + 0x10)) as i64
+2088 +                     crate::usercopy::get::<u64>(peb + 0x10) as i64
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2269:54
+     |
+2269 | ...   unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+     |                                            ^                    ^
+     |
+help: remove these parentheses
+     |
+2269 -                 unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+2269 +                 unsafe { crate::usercopy::put::<u16>(dst + (k * 2) as u64, (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2269:106
+     |
+2269 | ...   unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+     |                                                                                                ^              ^
+     |
+help: remove these parentheses
+     |
+2269 -                 unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+2269 +                 unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>(src + k as u64) as u16) as u16); }
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2285:60
+     |
+2285 |                 while unsafe { crate::usercopy::get::<u16>((src + (n * 2) as u64)) } != 0 {
+     |                                                            ^                    ^
+     |
+help: remove these parentheses
+     |
+2285 -                 while unsafe { crate::usercopy::get::<u16>((src + (n * 2) as u64)) } != 0 {
+2285 +                 while unsafe { crate::usercopy::get::<u16>(src + (n * 2) as u64) } != 0 {
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2297:63
+     |
+2297 |                 let wc = unsafe { crate::usercopy::get::<u16>((src + (k * 2) as u64)) };
+     |                                                               ^                    ^
+     |
+help: remove these parentheses
+     |
+2297 -                 let wc = unsafe { crate::usercopy::get::<u16>((src + (k * 2) as u64)) };
+2297 +                 let wc = unsafe { crate::usercopy::get::<u16>(src + (k * 2) as u64) };
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2298:53
+     |
+2298 |                 unsafe { crate::usercopy::put::<u8>((dst + k as u64), (if wc < 0x100 { wc as u8 } else { b'?' }) as u8); }
+     |                                                     ^              ^
+     |
+help: remove these parentheses
+     |
+2298 -                 unsafe { crate::usercopy::put::<u8>((dst + k as u64), (if wc < 0x100 { wc as u8 } else { b'?' }) as u8); }
+2298 +                 unsafe { crate::usercopy::put::<u8>(dst + k as u64, (if wc < 0x100 { wc as u8 } else { b'?' }) as u8); }
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2520:42
+     |
+2520 |     unsafe { crate::usercopy::get::<i32>((file_ptr + 28)) }
+     |                                          ^             ^
+     |
+help: remove these parentheses
+     |
+2520 -     unsafe { crate::usercopy::get::<i32>((file_ptr + 28)) }
+2520 +     unsafe { crate::usercopy::get::<i32>(file_ptr + 28) }
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2548:56
+     |
+2548 |             while unsafe { crate::usercopy::get::<u16>((a0 + n * 2)) } != 0 {
+     |                                                        ^          ^
+     |
+help: remove these parentheses
+     |
+2548 -             while unsafe { crate::usercopy::get::<u16>((a0 + n * 2)) } != 0 {
+2548 +             while unsafe { crate::usercopy::get::<u16>(a0 + n * 2) } != 0 {
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2556:49
+     |
+2556 |                     (crate::usercopy::get::<u8>((a0 + k)) as i32, crate::usercopy::get::<u8>((a1 + k)) as i32)
+     |                                                 ^      ^
+     |
+help: remove these parentheses
+     |
+2556 -                     (crate::usercopy::get::<u8>((a0 + k)) as i32, crate::usercopy::get::<u8>((a1 + k)) as i32)
+2556 +                     (crate::usercopy::get::<u8>(a0 + k) as i32, crate::usercopy::get::<u8>((a1 + k)) as i32)
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2556:94
+     |
+2556 |                     (crate::usercopy::get::<u8>((a0 + k)) as i32, crate::usercopy::get::<u8>((a1 + k)) as i32)
+     |                                                                                              ^      ^
+     |
+help: remove these parentheses
+     |
+2556 -                     (crate::usercopy::get::<u8>((a0 + k)) as i32, crate::usercopy::get::<u8>((a1 + k)) as i32)
+2556 +                     (crate::usercopy::get::<u8>((a0 + k)) as i32, crate::usercopy::get::<u8>(a1 + k) as i32)
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2611:49
+     |
+2611 |                     crate::usercopy::put::<u64>((argv_base + argc * 8), (sp) as u64);
+     |                                                 ^                    ^
+     |
+help: remove these parentheses
+     |
+2611 -                     crate::usercopy::put::<u64>((argv_base + argc * 8), (sp) as u64);
+2611 +                     crate::usercopy::put::<u64>(argv_base + argc * 8, (sp) as u64);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2620:45
+     |
+2620 |                 crate::usercopy::put::<u64>((argv_base + argc * 8), (0) as u64); // argv[argc] = NULL
+     |                                             ^                    ^
+     |
+help: remove these parentheses
+     |
+2620 -                 crate::usercopy::put::<u64>((argv_base + argc * 8), (0) as u64); // argv[argc] = NULL
+2620 +                 crate::usercopy::put::<u64>(argv_base + argc * 8, (0) as u64); // argv[argc] = NULL
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2700:45
+     |
+2700 |         let c = crate::usercopy::get::<u16>((buf + (i * 2) as u64));
+     |                                             ^                    ^
+     |
+help: remove these parentheses
+     |
+2700 -         let c = crate::usercopy::get::<u16>((buf + (i * 2) as u64));
+2700 +         let c = crate::usercopy::get::<u16>(buf + (i * 2) as u64);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2717:47
+     |
+2717 |         let ldr = crate::usercopy::get::<u64>((peb + 0x18));
+     |                                               ^          ^
+     |
+help: remove these parentheses
+     |
+2717 -         let ldr = crate::usercopy::get::<u64>((peb + 0x18));
+2717 +         let ldr = crate::usercopy::get::<u64>(peb + 0x18);
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2728:51
+     |
+2728 |             let len = crate::usercopy::get::<u16>((cur + 0x58)) as usize; // BaseDllName.Length
+     |                                                   ^          ^
+     |
+help: remove these parentheses
+     |
+2728 -             let len = crate::usercopy::get::<u16>((cur + 0x58)) as usize; // BaseDllName.Length
+2728 +             let len = crate::usercopy::get::<u16>(cur + 0x58) as usize; // BaseDllName.Length
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2729:52
+     |
+2729 |             let bufp = crate::usercopy::get::<u64>((cur + 0x60)); // BaseDllName.Buffer
+     |                                                    ^          ^
+     |
+help: remove these parentheses
+     |
+2729 -             let bufp = crate::usercopy::get::<u64>((cur + 0x60)); // BaseDllName.Buffer
+2729 +             let bufp = crate::usercopy::get::<u64>(cur + 0x60); // BaseDllName.Buffer
+     |
+
+warning: unnecessary parentheses around function argument
+    --> kernel/src/nt.rs:2731:52
+     |
+2731 |                 return crate::usercopy::get::<u64>((cur + 0x30)); // DllBase
+     |                                                    ^          ^
+     |
+help: remove these parentheses
+     |
+2731 -                 return crate::usercopy::get::<u64>((cur + 0x30)); // DllBase
+2731 +                 return crate::usercopy::get::<u64>(cur + 0x30); // DllBase
+     |
+
+warning: use of deprecated method `core::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> kernel/src/file.rs:810:26
+    |
+810 |         let pos=self.pos.fetch_update(Ordering::AcqRel,Ordering::Relaxed,|p| {
+    |                          ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+help: replace the use of the deprecated method
+    |
+810 -         let pos=self.pos.fetch_update(Ordering::AcqRel,Ordering::Relaxed,|p| {
+810 +         let pos=self.pos.try_update(Ordering::AcqRel,Ordering::Relaxed,|p| {
+    |
+
+warning: use of deprecated method `core::sync::atomic::Atomic::<u64>::fetch_update`: renamed to `try_update` for consistency
+   --> kernel/src/process.rs:349:37
+    |
+349 | ...   match self.next_user_va.fetch_update(Ordering::Relaxed,Ordering::Relaxed,|v|v.checked_add(len+4096).filter(|&end|end<crate::u...
+    |                               ^^^^^^^^^^^^
+    |
+help: replace the use of the deprecated method
+    |
+349 -             match self.next_user_va.fetch_update(Ordering::Relaxed,Ordering::Relaxed,|v|v.checked_add(len+4096).filter(|&end|end<crate::usercopy::USER_TOP)) {
+349 +             match self.next_user_va.try_update(Ordering::Relaxed,Ordering::Relaxed,|v|v.checked_add(len+4096).filter(|&end|end<crate::usercopy::USER_TOP)) {
+    |
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1004:24
+     |
+1004 |             let size = unsafe { crate::usercopy::get::<u64>(size_pp) };
+     |                        ^^^^^^ unnecessary `unsafe` block
+     |
+     = note: `#[warn(unused_unsafe)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1009:13
+     |
+1009 |             unsafe {
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1032:24
+     |
+1032 |             let base = unsafe { crate::usercopy::get::<u64>(base_pp) };
+     |                        ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1033:24
+     |
+1033 |             let size = unsafe { crate::usercopy::get::<u64>(size_pp) };
+     |                        ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1044:25
+     |
+1044 |                         unsafe { crate::usercopy::put::<u32>(old_pp, (wx_to_win32_protect(old_w, old_x)) as u32); }
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1078:17
+     |
+1078 |                 unsafe { crate::usercopy::put::<u32>(ret_len, (0x30) as u32); } // ReturnLength is ULONG
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1111:17
+     |
+1111 |                 unsafe { crate::usercopy::put::<u64>(ret_len, (0x30) as u64); } // ReturnLength is SIZE_T
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1138:13
+     |
+1138 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1174:27
+     |
+1174 |             let timeout = unsafe { crate::usercopy::get::<i64>(a2) };
+     |                           ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1193:13
+     |
+1193 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1205:25
+     |
+1205 |                         unsafe { crate::usercopy::put::<u32>(a1, (prev) as u32); }
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1224:13
+     |
+1224 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1236:25
+     |
+1236 |                         unsafe { crate::usercopy::put::<u32>(a2, (prev as u32) as u32); }
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1261:25
+     |
+1261 |                 let h = unsafe { crate::usercopy::get::<u64>((a1 + (i * 8) as u64)) } as i32;
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1270:54
+     |
+1270 |             let timeout = if tptr == 0 { -1 } else { unsafe { crate::usercopy::get::<i64>(tptr) } };
+     |                                                      ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1314:52
+     |
+1314 |             let interval = if a1 == 0 { 0 } else { unsafe { crate::usercopy::get::<i64>(a1) } };
+     |                                                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1339:21
+     |
+1339 |                     unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |                     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1380:41
+     |
+1380 |                 let max = if a3 != 0 { (unsafe { crate::usercopy::get::<i64>(a3) }) as usize } else { 0 };
+     |                                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1391:13
+     |
+1391 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1409:44
+     |
+1409 |             let offset = if off_pp != 0 { (unsafe { crate::usercopy::get::<i64>(off_pp) }) as usize } else { 0 };
+     |                                            ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1413:44
+     |
+1413 |             let want = if vsize_pp != 0 { (unsafe { crate::usercopy::get::<u64>(vsize_pp) }) as usize } else { 0 };
+     |                                            ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1419:13
+     |
+1419 |             unsafe {
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1449:24
+     |
+1449 |             let base = unsafe { crate::usercopy::get::<u64>(a1) };
+     |                        ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1485:33
+     |
+1485 |             let rd = |off: u64| unsafe { crate::usercopy::get::<u64>((c + off)) };
+     |                                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1506:25
+     |
+1506 |                 rflags: unsafe { crate::usercopy::get::<u32>((c + 0x44)) } as u64 | 0x2,
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1569:17
+     |
+1569 |                 unsafe { crate::usercopy::put::<u32>(a1, (prev) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1596:13
+     |
+1596 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1599:17
+     |
+1599 |                 unsafe { crate::usercopy::put::<u32>(disp, (if existed { 2 } else { 1 }) as u32); } // OPENED_EXISTING / CREATED_NEW
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1616:13
+     |
+1616 |             unsafe { crate::usercopy::put::<u64>(a0, (h as u64) as u64); }
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1657:17
+     |
+1657 |                 unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1731:17
+     |
+1731 |                 unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1772:17
+     |
+1772 |                 unsafe { crate::usercopy::put::<u32>(ret_len, (need as u32) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1811:17
+     |
+1811 |                 unsafe { crate::usercopy::put::<u64>(a3, (addr as u64) as u64); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1824:17
+     |
+1824 |                 unsafe { crate::usercopy::put::<u64>(a3, (base) as u64); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1973:17
+     |
+1973 |                 unsafe { crate::usercopy::put::<u32>(a3, (n as u32) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:1986:17
+     |
+1986 |                 unsafe { crate::usercopy::put::<u32>(a3, (n as u32) as u32); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2179:25
+     |
+2179 |                         unsafe { crate::usercopy::put::<u32>(a3, (wx_to_win32_protect(old_w, old_x)) as u32); }
+     |                         ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2269:17
+     |
+2269 | ...   unsafe { crate::usercopy::put::<u16>((dst + (k * 2) as u64), (crate::usercopy::get::<u8>((src + k as u64)) as u16) as u16); }
+     |       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2285:23
+     |
+2285 |                 while unsafe { crate::usercopy::get::<u16>((src + (n * 2) as u64)) } != 0 {
+     |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2297:26
+     |
+2297 |                 let wc = unsafe { crate::usercopy::get::<u16>((src + (k * 2) as u64)) };
+     |                          ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2298:17
+     |
+2298 |                 unsafe { crate::usercopy::put::<u8>((dst + k as u64), (if wc < 0x100 { wc as u8 } else { b'?' }) as u8); }
+     |                 ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2355:23
+     |
+2355 |     let rb = |p: u64| unsafe { crate::usercopy::get::<u8>(p) };
+     |                       ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2520:5
+     |
+2520 |     unsafe { crate::usercopy::get::<i32>((file_ptr + 28)) }
+     |     ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2548:19
+     |
+2548 |             while unsafe { crate::usercopy::get::<u16>((a0 + n * 2)) } != 0 {
+     |                   ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2555:30
+     |
+2555 |                 let (x, y) = unsafe {
+     |                              ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+    --> kernel/src/nt.rs:2609:13
+     |
+2609 |             unsafe {
+     |             ^^^^^^ unnecessary `unsafe` block
+
+warning: variable does not need to be mutable
+   --> kernel/src/process.rs:711:13
+    |
+711 |         let mut flush = |out: &mut String, r: Option<(u64, u64, bool, bool)>| {
+    |             ----^^^^^
+    |             |
+    |             help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unnecessary `unsafe` block
+  --> kernel/src/procfs.rs:89:52
+   |
+89 |     let (vendor, brand, fam, model, step, flags) = unsafe {
+   |                                                    ^^^^^^ unnecessary `unsafe` block
+
+warning: unnecessary `unsafe` block
+   --> kernel/src/vmm.rs:362:5
+    |
+362 |     unsafe {
+    |     ^^^^^^ unnecessary `unsafe` block
+
+warning: `thos-kernel` (bin "thos-kernel") generated 76 warnings (run `cargo fix --bin "thos-kernel" -p thos-kernel` to apply 28 suggestions)
+    Finished `release` profile [optimized] target(s) in 43.26s

@@ -91,14 +91,37 @@ pub fn spawn(fs: &crate::ext2::Ext2) -> bool {
 /// this module's own doc comment for why that's real `EOF`, not a guess)
 /// and the caller must fall back to its own policy default.
 pub fn check_hash(hash: &[u8; 32]) -> Option<bool> {
-    let guard = CHANNEL.lock();
-    let ch = guard.as_ref()?;
-    if ch.req_write.write(hash) != 32 {
-        return None; // EPIPE (or a short write — treat either as gone)
+    // The request/response pair is a single channel, so only one check may use it at a time. That
+    // exclusion must be a *sleeping* one: the holder blocks on the service's answer, and a spinlock held
+    // across that wait deadlocks both CPUs as soon as two programs start at once (the service never gets a CPU).
+    static BUSY: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    static WQ: crate::wait::WaitQueue = crate::wait::WaitQueue::new();
+    use core::sync::atomic::Ordering;
+    loop {
+        if BUSY.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+            break;
+        }
+        WQ.wait_if(|| BUSY.load(Ordering::Acquire));
     }
-    let mut verdict = [0u8; 1];
-    if ch.resp_read.read(&mut verdict) != 1 {
-        return None; // EOF — the service is gone
-    }
-    Some(verdict[0] != 0)
+    let (req, resp) = match CHANNEL.lock().as_ref() {
+        Some(ch) => (ch.req_write.clone(), ch.resp_read.clone()),
+        None => {
+            BUSY.store(false, Ordering::Release);
+            WQ.wake_all();
+            return None;
+        }
+    };
+    let result = (|| {
+        if req.write(hash) != 32 {
+            return None; // EPIPE (or a short write — treat either as gone)
+        }
+        let mut verdict = [0u8; 1];
+        if resp.read(&mut verdict) != 1 {
+            return None; // EOF — the service is gone
+        }
+        Some(verdict[0] != 0)
+    })();
+    BUSY.store(false, Ordering::Release);
+    WQ.wake_all();
+    result
 }

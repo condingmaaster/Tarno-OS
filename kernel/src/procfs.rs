@@ -84,12 +84,82 @@ fn by_pid(pid: &str) -> Option<Arc<Task>> {
 }
 
 fn cpuinfo() -> String {
+    use core::arch::x86_64::__cpuid;
     let mut out = String::new();
+    let (vendor, brand, fam, model, step, flags) = unsafe {
+        let l0 = __cpuid(0);
+        let mut v = [0u8; 12];
+        v[0..4].copy_from_slice(&l0.ebx.to_le_bytes());
+        v[4..8].copy_from_slice(&l0.edx.to_le_bytes());
+        v[8..12].copy_from_slice(&l0.ecx.to_le_bytes());
+        let mut b = [0u8; 48];
+        if __cpuid(0x8000_0000).eax >= 0x8000_0004 {
+            for i in 0..3u32 {
+                let r = __cpuid(0x8000_0002 + i);
+                for (j, w) in [r.eax, r.ebx, r.ecx, r.edx].iter().enumerate() {
+                    b[(i as usize) * 16 + j * 4..][..4].copy_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
+        let l1 = __cpuid(1);
+        let fam = ((l1.eax >> 8) & 0xF) + if (l1.eax >> 8) & 0xF == 0xF { (l1.eax >> 20) & 0xFF } else { 0 };
+        let model = ((l1.eax >> 4) & 0xF) | if matches!((l1.eax >> 8) & 0xF, 6 | 0xF) { ((l1.eax >> 16) & 0xF) << 4 } else { 0 };
+        let mut f = String::from("fpu");
+        let edx: [(u32, &str); 10] = [(4, "tsc"), (5, "msr"), (6, "pae"), (9, "apic"), (15, "cmov"), (23, "mmx"), (24, "fxsr"), (25, "sse"), (26, "sse2"), (28, "ht")];
+        for (bit, n) in edx {
+            if l1.edx & (1 << bit) != 0 {
+                f.push(' ');
+                f.push_str(n);
+            }
+        }
+        let ecx: [(u32, &str); 9] = [(0, "pni"), (9, "ssse3"), (19, "sse4_1"), (20, "sse4_2"), (23, "popcnt"), (25, "aes"), (28, "avx"), (5, "vmx"), (26, "xsave")];
+        for (bit, n) in ecx {
+            if l1.ecx & (1 << bit) != 0 {
+                f.push(' ');
+                f.push_str(n);
+            }
+        }
+        if l0.eax >= 7 && __cpuid(7).ebx & (1 << 5) != 0 {
+            f.push_str(" avx2");
+        }
+        f.push_str(" syscall nx lm");
+        (String::from_utf8_lossy(&v).to_string(), String::from_utf8_lossy(&b).trim_matches(|c: char| c == '\0' || c == ' ').to_string(), fam, model, l1.eax & 0xF, f)
+    };
     for i in 0..crate::smp::cpu_count() {
         out.push_str(&format!(
-            "processor\t: {i}\nvendor_id\t: THOS\nmodel name\t: THOS virtual CPU\ncpu MHz\t\t: {}\nflags\t\t: fpu sse sse2 syscall nx lm\n\n",
+            "processor\t: {i}\nvendor_id\t: {vendor}\ncpu family\t: {fam}\nmodel\t\t: {model}\nmodel name\t: {brand}\nstepping\t: {step}\ncpu MHz\t\t: {}\nflags\t\t: {flags}\n\n",
             crate::timer::tsc_mhz()
         ));
+    }
+    out
+}
+
+/// `/proc/pci`: every function on the first buses, `bus:dev.fn vendor:device class:subclass:progif irq`.
+fn pci_list() -> String {
+    use crate::pci::{read16, read32, Location};
+    let mut out = String::new();
+    for bus in 0..8u8 {
+        for dev in 0..32u8 {
+            for func in 0..8u8 {
+                let loc = Location { bus, dev, func };
+                let vid = read16(loc, 0x00);
+                if vid == 0xFFFF {
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                let cls = read32(loc, 0x08);
+                out.push_str(&format!(
+                    "{bus:02x}:{dev:02x}.{func} {vid:04x}:{:04x} class {:02x}{:02x} progif {:02x} irq {}\n",
+                    read16(loc, 0x02),
+                    cls >> 24,
+                    (cls >> 16) & 0xFF,
+                    (cls >> 8) & 0xFF,
+                    read32(loc, 0x3C) & 0xFF
+                ));
+            }
+        }
     }
     out
 }
@@ -100,7 +170,7 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
     let parts: Vec<&str> = rel.split('/').filter(|s| !s.is_empty()).collect();
     match parts.as_slice() {
         [] => {
-            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "self"]
+            let mut names: Vec<(String, u8)> = ["meminfo", "uptime", "version", "cpuinfo", "loadavg", "stat", "mounts", "pci", "dmesg", "netinfo", "wlaninfo", "gpuinfo", "bootdisk", "screen", "power", "self"]
                 .iter()
                 .map(|n| (n.to_string(), if *n == "self" { DT_DIR } else { DT_REG }))
                 .collect();
@@ -123,6 +193,28 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         }
         ["version"] => file(path, "Linux version 6.1.0-thos (thos@thos) (rustc) #1 SMP THOS\n".to_string()),
         ["cpuinfo"] => file(path, cpuinfo()),
+        ["hang_test"] => {
+            // deliberately stuck in a kernel loop (interrupts on): proves the lock-up detector (lockup.rs) reports it; `lockup-test` uses this
+            loop {
+                core::hint::spin_loop();
+            }
+        }
+        ["screen"] => match crate::gdi::fb_geometry() {
+            Some((w, h, pitch, ..)) => file(path, format!("{w}x{h} pitch {pitch} bpp 32\n")),
+            None => file(path, String::from("none\n")),
+        },
+        ["bootdisk"] => file(path, format!("{}\n", if crate::blk::is_ram() { "ram" } else if crate::blk::is_usb() { "usb" } else { "sata" })),
+        ["netinfo"] => {
+            file(path, crate::net::info())
+        }
+        ["power"] => file(path, crate::acpi_aml::power_text()),
+        ["wlaninfo"] => file(path, crate::wlan::info()),
+        ["gpuinfo"] => file(path, crate::radeon::info()),
+        ["pci"] => file(path, pci_list()),
+        ["dmesg"] => {
+            let f: Arc<dyn FileOps> = Ext2File::new(path.to_string(), crate::serial::log_snapshot());
+            Some(f)
+        }
         ["loadavg"] => file(path, format!("0.00 0.00 0.00 1/{} {}\n", process::all_live_tasks().len(), process::current_pid())),
         ["stat"] => file(path, format!(
             "cpu  0 0 0 0 0 0 0 0 0 0\nbtime {}\nprocesses {}\nprocs_running 1\n",
@@ -132,8 +224,9 @@ pub fn open(path: &str) -> Option<Arc<dyn FileOps>> {
         ["mounts"] => file(path, "rootfs / ext2 rw 0 0\n".to_string()),
         [pid] => {
             by_pid(pid)?;
-            dir(&[("stat", DT_REG), ("status", DT_REG), ("cmdline", DT_REG), ("exe", DT_REG)])
+            dir(&[("stat", DT_REG), ("status", DT_REG), ("cmdline", DT_REG), ("exe", DT_REG), ("maps", DT_REG)])
         }
+        [pid, "maps"] => file(path, by_pid(pid)?.space().maps_text(None)),
         [pid, "stat"] => file(path, pid_stat(&*by_pid(pid)?)),
         [pid, "status"] => file(path, pid_status(&*by_pid(pid)?)),
         [pid, "cmdline"] => {
@@ -153,6 +246,9 @@ pub fn readlink(path: &str) -> Option<String> {
         return None;
     }
     let t = by_pid(pid)?;
+    if !t.exe().is_empty() {
+        return Some(t.exe());
+    }
     let cl = t.cmdline();
     let first = cl.split(|&b| b == 0).next().unwrap_or(&[]);
     let s = String::from_utf8_lossy(first).to_string();

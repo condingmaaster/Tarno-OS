@@ -1,0 +1,14 @@
+ffffffff800141a0 t thos_kernel::wait::wait_any_until::<thos_kernel::nt::dispatch_ntdll::{closure#5}>
+ffffffff80014c10 t core::slice::sort::stable::driftsort_main::<&thos_kernel::wait::WaitQueue, <[&thos_kernel::wait::WaitQueue]>::sort_by_key<usize, thos_kernel::wait::wait_any_until<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}::{closure#0}>::{closure#0}, alloc::vec::Vec<&thos_kernel::wait::WaitQueue>>
+ffffffff800156f0 t core::slice::sort::shared::pivot::median3_rec::<&thos_kernel::wait::WaitQueue, <[&thos_kernel::wait::WaitQueue]>::sort_by_key<usize, thos_kernel::wait::wait_any_until<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}::{closure#0}>::{closure#0}>
+ffffffff80015ea0 t core::slice::sort::shared::smallsort::sort8_stable::<&thos_kernel::wait::WaitQueue, <[&thos_kernel::wait::WaitQueue]>::sort_by_key<usize, thos_kernel::wait::wait_any_until<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}::{closure#0}>::{closure#0}>
+ffffffff8001a620 t core::slice::sort::stable::drift::sort::<&thos_kernel::wait::WaitQueue, <[&thos_kernel::wait::WaitQueue]>::sort_by_key<usize, thos_kernel::wait::wait_any_until<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}::{closure#0}>::{closure#0}>
+ffffffff8001d520 t core::slice::sort::stable::quicksort::quicksort::<&thos_kernel::wait::WaitQueue, <[&thos_kernel::wait::WaitQueue]>::sort_by_key<usize, thos_kernel::wait::wait_any_until<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}::{closure#0}>::{closure#0}>
+ffffffff80021270 t <core::slice::iter::Iter<thos_kernel::process::Waitable> as core::iter::traits::iterator::Iterator>::all::<thos_kernel::nt::dispatch_ntdll::{closure#2}>
+ffffffff80021460 t <core::ops::range::RangeInclusive<u64> as core::iter::range::RangeInclusiveIteratorImpl>::spec_try_fold::<(), core::iter::traits::iterator::Iterator::any::check<u64, thos_kernel::nt::dispatch_ntdll::{closure#6}>::{closure#0}, core::ops::control_flow::ControlFlow<()>>
+ffffffff80021550 t <alloc::string::String as core::iter::traits::collect::Extend<char>>::extend::<core::iter::adapters::map::Map<core::slice::iter::Iter<u8>, thos_kernel::nt::dispatch_ntdll::{closure#8}>>
+ffffffff80028010 t thos_kernel::wait::wait_any_until::<thos_kernel::nt::dispatch_ntdll::{closure#5}>::{closure#0}
+ffffffff80029bf0 t thos_kernel::nt::dispatch_ntdll::{closure#0}
+ffffffff80083860 t thos_kernel::nt::dispatch_ntdll
+ffffffff800dee60 t thos_kernel::registry::copy_key
+ffffffff800f3960 t <alloc::vec::Vec<&thos_kernel::wait::WaitQueue> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<&thos_kernel::wait::WaitQueue, core::iter::adapters::map::Map<core::slice::iter::Iter<thos_kernel::process::Waitable>, thos_kernel::nt::dispatch_ntdll::{closure#4}>>>::from_iter

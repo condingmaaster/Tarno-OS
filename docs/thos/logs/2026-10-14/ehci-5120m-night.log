@@ -1,0 +1,83 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             not available on this CPU
+THOS trap: #BP at 0xffffffff800bb185
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       5017 MiB in 1284042 frames
+THOS: largest region   2969 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   1284042 -> 1284041 -> 1284042 (phys 0x17ffff000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             2 (2 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 64012 counts/ms
+THOS: clock            TSC 2469 MHz; RTC 1792008879 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (0 hardware words, 512 jitter samples; no hardware RNG — jitter only)
+THOS: APIC timer ok    7 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 6 GiB HHDM + 4 GiB identity + W^X kernel (2 MiB: this CPU has no 1 GiB pages pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 1
+THOS: SMP              2/2 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: usb              1 EHCI controller(s) on PCI bus 0
+THOS: usb              EHCI at 00:05.0 BAR 0xfebf2000, 6 ports, port power control no
+THOS: usb              port 1: device 0627:0001 class 0
+THOS: usb              no storage yet (round 1), waiting 2 s and trying again
+THOS: usb              port 1: device 0627:0001 class 0
+THOS: usb              no storage yet (round 2), waiting 2 s and trying again
+THOS: usb              port 1: device 0627:0001 class 0
+THOS: ehci ok          USB keyboard attached (poll thread up)
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          e1000 52:54:00:12:34:56
+THOS: ps2              no i8042 controller
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thosTHOS: net dhcp         lease 10.0.2.15/24 via 10.0.2.2 dns [[10, 0, 2, 3]]
+THOS: net ok           ping 10.0.2.2 answered in 35 ms (ARP + ICMP over virtio-net + smoltcp)
+
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ echo ehci-after-$((11))
+ehci-after-11
+thos$ 

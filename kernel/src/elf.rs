@@ -137,7 +137,9 @@ fn interp_path(image: &[u8]) -> Option<alloc::string::String> {
 /// Map `image` (and, for a dynamically linked program, its interpreter) into `proc`.
 pub fn load(proc: &Process, image: &[u8]) -> Result<Image, &'static str> {
     validate(image)?;
-    let base = if u16le(&image[16..]) == 3 { PIE_BASE } else { 0 };
+    // ASLR: a PIE and its interpreter land at a random page-aligned offset (4 GiB / 256 MiB of range)
+    let base = if u16le(&image[16..]) == 3 { PIE_BASE + ((crate::random::u64() & 0xF_FFFF) << 12) } else { 0 };
+    let interp_base = INTERP_BASE - ((crate::random::u64() & 0xFFFF) << 12);
     let mut img = load_one(proc, image, base);
     img.prog_entry = img.entry;
     if let Some(path) = interp_path(image) {
@@ -149,8 +151,8 @@ pub fn load(proc: &Process, image: &[u8]) -> Result<Image, &'static str> {
         if u16le(&bytes[16..]) != 3 {
             return Err("interpreter is not ET_DYN");
         }
-        let interp = load_one(proc, &bytes, INTERP_BASE);
-        img.interp_base = INTERP_BASE;
+        let interp = load_one(proc, &bytes, interp_base);
+        img.interp_base = interp_base;
         img.entry = interp.entry;
     }
     Ok(img)

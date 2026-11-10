@@ -1,0 +1,10 @@
+
+running 5 tests
+test tests::malformed_headers_and_sequences_refused ... ok
+test tests::unicode_and_surrogate_pairs_roundtrip ... ok
+test tests::names_past_old_260_unit_limit_are_distinct ... ok
+test tests::maximum_counted_name_is_preserved ... ok
+test tests::all_scalar_values_roundtrip ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+

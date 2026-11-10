@@ -10,7 +10,16 @@ use alloc::vec::Vec;
 
 use crate::cred::{self, Cred, ADMIN_UID};
 use crate::ext2::Ext2;
-use crate::{console, kprintln, sched, serial};
+use crate::{console, sched, serial};
+
+/// Login screen output: like kprintln!, but not hidden by the log filter.
+macro_rules! kprintln {
+    ($($arg:tt)*) => {{
+        crate::fbcon::login_allow(true);
+        crate::kprintln!($($arg)*);
+        crate::fbcon::login_allow(false);
+    }};
+}
 
 /// A resolved session identity. Grows into the executive `Principal` / token.
 #[derive(Clone)]
@@ -20,6 +29,11 @@ pub struct Session {
 }
 
 /// Read one line from the keyboard console. `mask` hides it (password entry).
+/// One line from the keyboard (masked for passwords): also behind the THOS `readpass` syscall.
+pub fn read_line(label: &str, mask: bool) -> String {
+    prompt(label, mask)
+}
+
 fn prompt(label: &str, mask: bool) -> String {
     serial::write_bytes(label.as_bytes());
     console::set_echo(if mask { console::ECHO_MASKED } else { console::ECHO_NORMAL });
@@ -47,10 +61,10 @@ fn prompt(label: &str, mask: bool) -> String {
 /// First boot: force the operator to choose the admin name + password.
 pub fn first_run_setup(fs: &Ext2) -> Session {
     kprintln!("");
-    kprintln!("  ┌─ THOS first-run setup ─────────────────────────────");
-    kprintln!("  │  No account exists yet. Create the administrator.");
-    kprintln!("  │  (changeable later via settings + reboot)");
-    kprintln!("  └───────────────────────────────────────────────────");
+    kprintln!("  Welcome. THOS first-run setup");
+    kprintln!("  No account exists yet: create the administrator.");
+    kprintln!("  (It can be changed later via settings + reboot.)");
+    kprintln!("");
 
     let name = loop {
         let n = prompt("  admin username: ", false);
@@ -89,6 +103,8 @@ pub fn login(fs: &Ext2) -> Session {
         let password = prompt("password: ", true);
         if stored.verify(&name, &password) {
             kprintln!("  welcome, {name}.\n");
+            kprintln!("  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),");
+            kprintln!("       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.\n");
             return Session { name, uid: ADMIN_UID };
         }
         kprintln!("  login incorrect");
@@ -102,6 +118,23 @@ pub fn login(fs: &Ext2) -> Session {
 /// Resolve the session identity: run first-run setup if there is no store,
 /// then authenticate.
 pub fn establish(fs: &Ext2) -> Session {
+    crate::fbcon::theme_login();
+    // After an update pushed over SSH the machine restarts and the administrator is logged in again without a password, once:
+    // `thos-update` leaves /etc/thos/autologin-once, the marker is removed before the session starts.
+    if cred::exists(fs) && fs.path_lookup("/etc/thos/autologin-once").is_some() {
+        let _ = fs.unlink_path("/etc/thos/autologin-once");
+        if let Some(c) = cred::load(fs) {
+            crate::kprintln!("THOS: update           restarted after an update: logging {} in again", c.name);
+            return Session { name: c.name.clone(), uid: cred::ADMIN_UID };
+        }
+    }
+    // A system just installed from a stick carries the stick's account. /etc/thos/fresh-install (put into the release image) says: on the
+    // first start from the internal disk, forget that account and ask for a new one. The stick itself (USB) ignores the marker.
+    if !crate::blk::is_usb() && !crate::blk::is_ram() && fs.path_lookup("/etc/thos/fresh-install").is_some() {
+        let _ = fs.unlink_path(cred::STORE_PATH);
+        let _ = fs.unlink_path("/etc/thos/fresh-install");
+        crate::kprintln!("THOS: install          first start after installation: a new administrator account is created");
+    }
     if !cred::exists(fs) {
         first_run_setup(fs);
     }

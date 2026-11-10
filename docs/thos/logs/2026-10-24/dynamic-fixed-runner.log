@@ -1,0 +1,34 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1954:17
+     |
+1954 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask windyn-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1116
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1117
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1117/32768 files (3.0% non-contiguous), 103842/524288 blocks
+
+thread 'main' (5764) panicked at xtask/src/main.rs:877:105:
+runtime DLL probe did not complete
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

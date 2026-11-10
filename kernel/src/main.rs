@@ -29,7 +29,15 @@
 extern crate alloc;
 
 mod acpi;
+mod acpi_aml;
 mod ahci;
+mod blk;
+mod lockup;
+mod mtrr;
+mod pat;
+mod net_config;
+mod fb_cache_range;
+mod rawdisk;
 mod apc;
 mod apic;
 mod console;
@@ -37,12 +45,22 @@ mod cpu;
 #[cfg(feature = "interactive")]
 mod cred;
 mod device;
+mod e1000;
 mod elf;
 mod execgate;
 mod ext2;
+mod ext2_blocks;
+mod block_bitmap;
+mod sector_cache;
+mod io_mutex;
 mod fat;
 mod file;
+mod flock;
+mod record_locks;
 mod gdi;
+mod gdi_blit;
+mod gdi_font;
+mod gdi_memory;
 mod gdt;
 mod gpt;
 mod idt;
@@ -52,11 +70,26 @@ mod integrity;
 #[cfg(feature = "interactive")]
 mod login;
 mod mm;
+#[cfg(feature="small-block-heap")]
+mod small_heap;
 mod nt;
+mod nt_registry_name;
 mod object;
 mod pci;
+mod bcma_erom;
+mod bcma_core;
+mod brcm_firmware;
+mod firmware;
+mod wlan;
+mod radeon;
 mod pe;
 mod process;
+mod process_snapshot_layout;
+mod nt_toolhelp;
+mod nt_thread;
+mod thread_cpu_accounting;
+mod thread_cpu;
+mod pty;
 mod procfs;
 mod registry;
 mod sched;
@@ -64,24 +97,44 @@ mod secsvc;
 mod net;
 mod net_sock;
 mod seh;
+mod shm;
 mod sock_sys;
 mod signal;
 mod serial;
 mod smp;
 mod syscall;
+mod tg3;
 mod timer;
+mod unix;
 mod usercopy;
 mod virtio_net;
 mod vfs;
 mod vmm;
 mod window;
+mod window_frame;
+mod synth_layout;
+mod pe_export_bounds;
+mod pe_exports;
+mod pe_ldr_layout;
+mod pe_search;
+mod winclass;
+mod winargs;
+mod winunicode;
 mod fbcon;
 mod futex;
+mod futex_registry;
 mod power;
 mod mbr;
 mod ps2;
 mod random;
 mod rtc;
+mod ehci;
+mod ehci_layout;
+mod hid_mouse;
+mod dma_region;
+mod anon_regions;
+mod hda;
+mod eventpoll;
 mod xhci;
 mod wait;
 
@@ -124,6 +177,14 @@ static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
 
 #[used]
 #[link_section = ".requests"]
+static CMDLINE_REQUEST: limine::request::ExecutableCmdlineRequest = limine::request::ExecutableCmdlineRequest::new();
+
+#[used]
+#[link_section = ".requests"]
+static MODULES_REQUEST: limine::request::ModulesRequest = limine::request::ModulesRequest::new();
+
+#[used]
+#[link_section = ".requests"]
 static MP_REQUEST: MpRequest = MpRequest::new(0);
 
 #[used]
@@ -151,6 +212,8 @@ extern "C" fn kmain() -> ! {
                 paint_smoke_test(fb);
                 kprintln!("THOS: framebuffer painted");
                 fbcon::init(fb); // from here on, kprintln! also lands on screen
+                #[cfg(feature = "interactive")]
+                fbcon::splash_start(); // ... except in the product build: a splash screen covers the log until the login screen
             }
             None => kprintln!("THOS: no framebuffer in response"),
         },
@@ -170,13 +233,17 @@ extern "C" fn kmain() -> ! {
     acpi_apic_bringup();
     fbcon::suspend(); // the FB mapping changes under vmm_bringup
     vmm_bringup();
+    pat::init();
     gdi_bringup();
+    mtrr_bringup();
     fbcon::resume();
+    fbcon::splash_progress(30);
     #[cfg(feature = "selftest")]
     gdi_paint_check();
 
     let mp = MP_REQUEST.response().expect("Limine MP request unanswered");
     smp::init(mp);
+    fbcon::splash_progress(45);
 
     syscall::init_cpu(0);
 
@@ -201,10 +268,54 @@ extern "C" fn kmain() -> ! {
         // Milestone 2: first-run setup / login, then launch the shell off ext2
         // and hand it the keyboard. When the shell ends (`exit`, Ctrl+D) the
         // session is over: back to the login prompt, never a dead console.
+        // The AML interpreter in its own thread: a firmware method that hangs must not hold up the boot.
+        extern "C" fn aml_thread(_: usize) -> ! {
+            let rsdp = RSDP_REQUEST.response().map_or(core::ptr::null(), |r| r.address as *const u8);
+            if !rsdp.is_null() {
+                acpi_aml::run(rsdp, 2);
+            }
+            sched::exit()
+        }
+        if CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "nolockupreboot")) {
+            lockup::set_reset_on_lockup(false);
+        }
+        if !CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "noacpi")) {
+            sched::spawn("acpi-aml", aml_thread, 0);
+        }
+        // Services that run without anyone logged in: the SSH server (and with it the update channel) when the image has one (/etc/thos/ssh/enabled).
+        if let Ok(fs) = ext2::open() {
+            if fs.path_lookup("/etc/thos/ssh/enabled").is_some() {
+                if let Some(sh) = fs.read_path("/busybox") {
+                    process::spawn_init(
+                        &sh,
+                        &["sh", "/thos-sshd"],
+                        &["PATH=/bin:/:/usr/sbin:/usr/bin", "HOME=/root", "USER=root", "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"],
+                    );
+                    kprintln!("THOS: ssh              SSH server starts once the network is up (key login as root)");
+                }
+            }
+        }
+        // The clock is set from the network time servers once the network is up (the CMOS clock of a machine that ran another system is often hours off).
+        if let Ok(fs) = ext2::open() {
+            if fs.path_lookup("/thos-timesync").is_some() && fs.path_lookup("/etc/thos/no-timesync").is_none() {
+                if let Some(sh) = fs.read_path("/busybox") {
+                    process::spawn_init(&sh, &["sh", "/thos-timesync"], &["PATH=/bin:/:/usr/sbin:/usr/bin", "HOME=/root", "USER=root", "LD_LIBRARY_PATH=/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu"]);
+                    kprintln!("THOS: time             the clock is set from the network once it is up (thos-timesync)");
+                }
+            }
+        }
         loop {
             let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
-            let session = login::establish(&fs);
+            // boot menu entry "THOS Installer" (kernel command line `install`): no login, the installer runs as root on the console
+            let installer = CMDLINE_REQUEST.response().is_some_and(|r| r.cmdline().split_whitespace().any(|w| w == "install"));
+            let session = if installer {
+                fbcon::theme_login();
+                login::Session { name: alloc::string::String::from("installer"), uid: 0 }
+            } else {
+                login::establish(&fs)
+            };
             process::set_session(&session.name, session.uid);
+            fbcon::theme_shell();
             kprintln!("THOS: session          {} (uid {})", session.name, session.uid);
 
             // The interactive shell is stock BusyBox `sh` (ash).
@@ -212,10 +323,31 @@ extern "C" fn kmain() -> ! {
                 .read_path("/busybox")
                 .unwrap_or_else(|| fatal_boot("no login shell", "/busybox is missing from the root filesystem"));
             kprintln!("THOS: shell            /busybox sh = {} bytes", sh.len());
+            // the user's home folder (/home/<name> with the usual folders), created on first login; the name is reduced to safe characters
+            let safe: alloc::string::String = session.name.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').collect();
+            let home = alloc::format!("/home/{}", if safe.is_empty() { "user" } else { safe.as_str() });
+            let _ = fs.mkdir_path("/home");
+            let _ = fs.mkdir_path_owned(&home, session.uid, session.uid);
+            for d in ["Documents", "Downloads", "Pictures", "Desktop"] {
+                let _ = fs.mkdir_path_owned(&alloc::format!("{home}/{d}"), session.uid, session.uid);
+            }
+            let home_env = alloc::format!("HOME={home}");
+            let user_env = alloc::format!("USER={}", session.name);
+            let argv: &[&str] = if installer { &["sh", "-c", "/bin/thos-install --installer; exec /busybox sh"] } else { &["sh"] };
             let pid = process::spawn_init(
                 &sh,
-                &["sh"],
-                &["PATH=/bin:/", "HOME=/", "PWD=/", "TERM=dumb", "PS1=thos$ "],
+                argv,
+                &[
+                    home_env.as_str(),
+                    user_env.as_str(),
+                    "PATH=/bin:/:/opt/root/usr/bin:/opt/root/bin",
+                    "LD_LIBRARY_PATH=/opt/root/usr/lib/x86_64-linux-gnu:/opt/root/lib/x86_64-linux-gnu:/opt/root/usr/lib",
+                    "TERMINFO_DIRS=/usr/share/terminfo:/opt/root/lib/terminfo:/opt/root/usr/share/terminfo",
+                    "ENV=/shrc",
+                    "PWD=/",
+                    "TERM=dumb",
+                    "PS1=thos$ ",
+                ],
             );
 
             signal::FG_PGRP.store(pid, core::sync::atomic::Ordering::Relaxed);
@@ -361,14 +493,25 @@ fn vmm_bringup() {
     vmm::init(hhdm, memmap.entries(), ka.physical_base, ka.virtual_base);
 
     kprintln!(
-        "THOS: own page tables  PML4 switched; {} GiB HHDM + 4 GiB identity + W^X kernel",
-        vmm::hhdm_gib(memmap.entries())
+        "THOS: own page tables  PML4 switched; {} GiB HHDM + 4 GiB identity + W^X kernel ({} pages)",
+        vmm::hhdm_gib(memmap.entries()),
+        if vmm::has_1g_pages() { "1 GiB" } else { "2 MiB: this CPU has no 1 GiB pages" }
     );
 }
 
 /// Map the boot framebuffer into THOS's own tables — the GDI32/User32
 /// skeleton's one and only "device context". Must run after `vmm_bringup`
 /// (needs `vmm::map_mmio`, which needs the kernel PML4).
+/// Configure write-combining using actual RAM intervals, including RAM above 4GiB.
+fn mtrr_bringup() {
+    if pat::configured() { return; }
+    use limine::memmap::{MEMMAP_ACPI_NVS, MEMMAP_ACPI_RECLAIMABLE, MEMMAP_BOOTLOADER_RECLAIMABLE, MEMMAP_EXECUTABLE_AND_MODULES, MEMMAP_USABLE};
+    let (Some((phys, len)), Some(mm)) = (gdi::fb_phys(), MEMMAP_REQUEST.response()) else { return };
+    let entries = mm.entries();
+    let ram = entries.iter().filter(|e| matches!(e.type_, MEMMAP_USABLE | MEMMAP_ACPI_RECLAIMABLE | MEMMAP_ACPI_NVS | MEMMAP_BOOTLOADER_RECLAIMABLE | MEMMAP_EXECUTABLE_AND_MODULES)).map(|e| (e.base, e.length));
+    mtrr::prepare(phys, len, ram);
+}
+
 fn gdi_bringup() {
     let hhdm = HHDM_REQUEST.response().expect("HHDM request unanswered").offset;
     match FRAMEBUFFER_REQUEST.response().and_then(|r| r.framebuffers().first()) {
@@ -1281,10 +1424,10 @@ fn storage_milestone() {
     kprintln!("THOS: ahci cap ok      {} sectors; out-of-range read rejected", cap);
 
     // GPT + FAT: a self-contained GPT image (protective MBR, one ESP holding a
-    // FAT32 volume) is spliced in at LBA 51000, past the ext2 image (see xtask
+    // FAT32 volume) is spliced in at LBA 301000, past the ext2 image (see xtask
     // `disk_image`). Find the ESP by type GUID, mount it, read a known file —
     // the full "read the ESP" path: GPT → partition → BPB → FAT chain → 8.3.
-    match gpt::find_esp(51_000) {
+    match gpt::find_esp(301_000) {
         Some(esp_lba) => {
             kprintln!("THOS: gpt ok           ESP at LBA {}", esp_lba);
             match fat::Fat::open(esp_lba).and_then(|v| {
@@ -1297,7 +1440,7 @@ fn storage_milestone() {
                 Err(e) => kprintln!("THOS: fat FAIL         {}", e),
             }
         }
-        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 51000"),
+        None => kprintln!("THOS: gpt FAIL         no ESP found at LBA 301000"),
     }
 
     let fs = ext2::open().expect("mount ext2");
@@ -1453,14 +1596,14 @@ fn storage_milestone() {
     }
 
     // AHCI write: round-trip a known pattern through a scratch sector past the
-    // ext2 image (LBA 50000 = ~25 MiB; the fs is the first 16 MiB). The host
+    // ext2 image (LBA 300000 = ~146 MiB; the fs is the first 128 MiB). The host
     // side of `cargo xtask ahci-test` re-checks this landed in the disk file.
     // Fixed-LBA scratch writes are test-image-only: on a real MBR disk those
     // sectors lie inside the user's root partition.
     if ext2::on_partition() {
         kprintln!("THOS: ahci scratch skip real disk — destructive LBA tests not run");
     } else {
-        const SCRATCH_LBA: u64 = 50_000;
+        const SCRATCH_LBA: u64 = 300_000;
         let mut wbuf = [0u8; ahci::SECTOR];
         for (i, b) in wbuf.iter_mut().enumerate() {
             *b = (i as u8) ^ 0xA5;
@@ -1526,7 +1669,7 @@ fn storage_milestone() {
         // `cargo xtask ncq-error-test` runs QEMU with blkdebug poisoning one
         // read of this LBA. The read must fail *cleanly* (no hang, no panic),
         // recovery must run, and a retry must succeed on the restarted port.
-        const BAD_LBA: u64 = 41_000;
+        const BAD_LBA: u64 = 291_000;
         let mut b = [0u8; ahci::SECTOR];
         let r = ahci::read(BAD_LBA, &mut b);
         assert!(r.is_err(), "poisoned read did not surface an error: {r:?}");
@@ -1553,8 +1696,30 @@ fn start_input_devices() {
         }
         Err(e) => kprintln!("THOS: xhci             {}", e),
     }
+    if EHCI.lock().is_none() {
+        match ehci::init() {
+            Ok(e) => *EHCI.lock() = Some(e),
+            Err(e) => kprintln!("THOS: ehci             {}", e),
+        }
+    }
+    if EHCI.lock().is_some() {
+        sched::spawn("ehci-poll", ehci_poll_thread, 0);
+        kprintln!("THOS: ehci ok          controller input/hotplug worker ready");
+    }
 
-    // Network: virtio-net under QEMU (real NICs get their own drivers; none yet).
+    if ehci::has_aux_controllers() {
+        sched::spawn("ehci-aux-poll",ehci_aux_poll_thread,0);
+    }
+
+    match hda::init() {
+        Ok(()) => {}
+        Err(e) => kprintln!("THOS: hda              {}", e),
+    }
+
+    // Diagnostics for the Acer adapters; retain existing Ethernet and display paths.
+    wlan::init();
+    radeon::init();
+    // Network: virtio-net/e1000 in QEMU, tg3 on the Acer.
     match net::init() {
         Ok(()) => {
             sched::spawn("net", net::net_thread, 0);
@@ -1585,14 +1750,55 @@ fn start_input_devices() {
 /// filesystem, registry hives, the Security Service, input devices.
 #[cfg(not(feature = "selftest"))]
 fn boot_system() {
-    if let Err(e) = ahci::init() {
-        fatal_boot("no usable SATA disk (BIOS SATA mode must be AHCI)", e);
+    let ahci_ok = ahci::init().is_ok();
+    // A system disk image loaded into memory by the boot loader (module thos-disk.img / thos-root.ext2 on the boot partition: the live stick) always
+    // wins, even when the internal disk already carries a THOS: the stick must run (and install from) itself, not the installed system. The
+    // internal disk stays visible for the installer. A machine started from its own disk has no module and uses the SATA root.
+    let module = MODULES_REQUEST.response().and_then(|r| r.modules().iter().copied().find(|f| f.path().ends_with("thos-disk.img") || f.path().ends_with("thos-root.ext2")));
+    let mut have_root = false;
+    if let Some(f) = module {
+        let d = f.data();
+        kprintln!("THOS: boot             system disk image module: {} MiB loaded into memory by the boot loader", d.len() >> 20);
+        blk::use_ram(d.as_ptr() as u64, d.len() as u64);
+        ext2::reset_cache();
+        have_root = ext2::open().is_ok();
+        if !have_root {
+            kprintln!("THOS: boot             the module is not a THOSROOT file system");
+        }
+    } else {
+        have_root = ahci_ok && ext2::open().is_ok();
+        if !have_root {
+            kprintln!("THOS: boot             no THOSROOT filesystem on the SATA disk");
+        }
+    }
+    if !have_root {
+        kprintln!("THOS: boot             trying USB storage");
+        match ehci::init() {
+            Ok(e) => {
+                let found = e.has_msc();
+                let sectors = e.msc_sectors();
+                *EHCI.lock() = Some(e);
+                if found {
+                    blk::use_usb();
+                    ext2::reset_cache();
+                    kprintln!("THOS: usb msc ok       {} MiB mass-storage device", sectors / 2048);
+                    have_root = ext2::open().is_ok();
+                }
+            }
+            Err(e) => kprintln!("THOS: usb              {}", e),
+        }
+    }
+    if !have_root {
+        fatal_boot("no THOS root filesystem found", "need an ext2 volume labelled THOSROOT on the SATA disk or on a USB stick");
     }
     let fs = ext2::open().unwrap_or_else(|e| fatal_boot("cannot mount the root filesystem", e));
+    fbcon::splash_progress(70);
     let hives = registry::load_hives(&fs);
     kprintln!("THOS: registry ok      {}/3 hives loaded from disk", hives);
     secsvc::spawn(&fs); // logs and degrades gracefully if /secsvc is absent
+    fbcon::splash_progress(85);
     start_input_devices();
+    fbcon::splash_progress(100);
 }
 
 /// A boot failure the user can act on: say what is wrong, then stop. (This is
@@ -1600,6 +1806,7 @@ fn boot_system() {
 /// mirrors the kernel log — so it must not be a bare `expect` panic.)
 #[allow(dead_code)] // only the normal boot path and the interactive login use it
 fn fatal_boot(what: &str, why: &str) -> ! {
+    fbcon::reveal();
     kprintln!("");
     kprintln!("THOS: cannot continue — {what}");
     kprintln!("THOS:   {why}");
@@ -1612,7 +1819,7 @@ static NCQ_DONE: AtomicU64 = AtomicU64::new(0);
 static NCQ_BAD: AtomicU64 = AtomicU64::new(0);
 
 extern "C" fn ncq_io_worker(i: usize) -> ! {
-    let lba = 40_000 + i as u64; // a distinct scratch sector per worker, past the fs
+    let lba = 290_000 + i as u64; // a distinct scratch sector per worker, past the fs
     let mut w = [0u8; ahci::SECTOR];
     for (j, b) in w.iter_mut().enumerate() {
         *b = (j as u8).wrapping_add((i as u8).wrapping_mul(17));
@@ -1626,6 +1833,28 @@ extern "C" fn ncq_io_worker(i: usize) -> ! {
     }
     NCQ_DONE.fetch_add(1, Ordering::Relaxed);
     sched::exit()
+}
+
+// EHCI control/bulk transfers can sleep. Keyboard and disk users must park
+// on contention instead of spinning on another CPU with interrupts disabled.
+static EHCI: io_mutex::IoMutex<Option<ehci::Ehci>> = io_mutex::IoMutex::new(None);
+
+extern "C" fn ehci_poll_thread(_: usize) -> ! {
+    loop {
+        let (rep,mouse,active) = {
+            let mut controller=EHCI.lock();
+            if let Some(e)=controller.as_mut() {e.scan_connections();(e.poll_keyboard(),e.poll_mouse(),e.has_keyboard()||e.has_mouse())}else{(None,None,false)}
+        };
+        if let Some(r) = rep {
+            console::feed_report(&r);
+        }
+        if let Some((source,r))=mouse {ps2::usb_mouse_event(source,r.buttons,r.dx,r.dy,r.wheel);}
+        timer::sleep_ns(if active{4_000_000}else{50_000_000});
+    }
+}
+
+extern "C" fn ehci_aux_poll_thread(_:usize)->! {
+    loop {let active=ehci::poll_aux_input();timer::sleep_ns(if active{4_000_000}else{50_000_000});}
 }
 
 static XHCI: spin::Mutex<Option<xhci::Xhci>> = spin::Mutex::new(None);
@@ -1648,7 +1877,7 @@ extern "C" fn xhci_poll_thread(_: usize) -> ! {
         for r in &batch[..n] {
             console::feed_report(r);
         }
-        sched::yield_now();
+        if n == 0 { timer::sleep_ns(1_000_000); } else { sched::yield_now(); }
     }
 }
 
@@ -1711,6 +1940,9 @@ pub(crate) enum ExitCode {
 }
 
 pub(crate) fn exit_qemu(code: ExitCode) {
+    if matches!(code, ExitCode::Success) {
+        ext2::sync_all(); // the host checks the image afterwards
+    }
     unsafe {
         core::arch::asm!(
             "out dx, eax",
@@ -1723,6 +1955,7 @@ pub(crate) fn exit_qemu(code: ExitCode) {
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
+    fbcon::reveal();
     kprintln!("THOS PANIC: {}", info);
     exit_qemu(ExitCode::Failed);
     hcf();

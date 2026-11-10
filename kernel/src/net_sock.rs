@@ -261,7 +261,12 @@ impl SockFile {
                     if sock.is_active() {
                         return EISCONN;
                     }
-                    if sock.connect(iface.context(), (IpAddress::Ipv4(Ipv4Address::new(ip[0], ip[1], ip[2], ip[3])), port), local).is_err() {
+                    // a loopback destination needs the loopback source address (smoltcp would pick the first one)
+                    let local_ep = smoltcp::wire::IpListenEndpoint {
+                        addr: (ip[0] == 127).then(|| IpAddress::Ipv4(Ipv4Address::new(127, 0, 0, 1))),
+                        port: local,
+                    };
+                    if sock.connect(iface.context(), (IpAddress::Ipv4(Ipv4Address::new(ip[0], ip[1], ip[2], ip[3])), port), local_ep).is_err() {
                         return EINVAL;
                     }
                 }
@@ -293,9 +298,19 @@ impl SockFile {
         let remote = wait_until(self.is_nonblock(), None, |st| {
             let s = st.sockets.get_mut::<tcp::Socket>(handle);
             match s.state() {
-                tcp::State::Established => Some(Ok(s.remote_endpoint())),
-                tcp::State::Listen | tcp::State::SynReceived => None,
-                _ => Some(Err(ECONNREFUSED)),
+                tcp::State::Established
+                | tcp::State::CloseWait
+                | tcp::State::FinWait1
+                | tcp::State::FinWait2
+                | tcp::State::Closing
+                | tcp::State::LastAck => Some(Ok(s.remote_endpoint())),
+                tcp::State::Closed | tcp::State::TimeWait => {
+                    // the peer reset before we accepted: put the listener back instead of dying
+                    s.abort();
+                    let _ = s.listen(port);
+                    None
+                }
+                _ => None,
             }
         })?;
         let fresh = {
@@ -529,6 +544,9 @@ impl Drop for SockFile {
 }
 
 impl FileOps for SockFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         self.recv_from(buf).0
     }
@@ -563,7 +581,7 @@ impl FileOps for SockFile {
             Kind::Tcp => {
                 let s = st.sockets.get_mut::<tcp::Socket>(h);
                 if listening {
-                    if s.state() == tcp::State::Established {
+                    if matches!(s.state(), tcp::State::Established | tcp::State::CloseWait) {
                         r |= POLLIN;
                     }
                 } else {

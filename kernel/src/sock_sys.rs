@@ -23,7 +23,7 @@ const SOCK_CLOEXEC: u64 = 0o2000000;
 
 fn sock_of(fd: u64) -> Result<Arc<dyn FileOps>, i64> {
     let f = sched::current().task().and_then(|t| t.fd_get(fd as i32)).ok_or(EBADF)?;
-    if f.as_socket().is_none() {
+    if f.as_socket().is_none() && f.as_unix().is_none() {
         return Err(ENOTSOCK);
     }
     Ok(f)
@@ -62,7 +62,46 @@ fn write_sockaddr(ptr: u64, lenp: u64, addr: ([u8; 4], u16)) -> i64 {
     }
 }
 
+/// `socketpair(AF_UNIX, SOCK_STREAM, 0, sv)`.
+pub fn sys_socketpair(domain: u64, ty: u64, proto: u64, sv: u64) -> i64 {
+    if domain != 1 {
+        return EAFNOSUPPORT;
+    }
+    if proto != 0 {return EPROTONOSUPPORT;}
+    if ty & !(0xF|SOCK_NONBLOCK|SOCK_CLOEXEC) != 0 {return EINVAL;}
+    if ty & 0xF != SOCK_STREAM && ty & 0xF != 5 {
+        return ESOCKTNOSUPPORT;
+    }
+    if !usercopy::user_ok(sv, 8, true) {
+        return EFAULT;
+    }
+    let (a, b) = crate::unix::UnixSock::pair_kind(ty & 0xF == 5);
+    if ty & SOCK_NONBLOCK != 0 {
+        a.set_nonblock(true);
+        b.set_nonblock(true);
+    }
+    let Some(task) = sched::current().task() else { return EBADF };
+    let cx = ty & SOCK_CLOEXEC != 0;
+    let fa = task.fd_alloc_flags(a, cx);
+    if fa<0 {return fa as i64;}
+    let fb = task.fd_alloc_flags(b, cx);
+    if fb<0 {task.fd_close(fa);return fb as i64;}
+    if usercopy::write_u32(sv,fa as u32).is_err()||usercopy::write_u32(sv+4,fb as u32).is_err(){task.fd_close(fa);task.fd_close(fb);return EFAULT;}
+    0
+}
+
 pub fn sys_socket(domain: u64, ty: u64, proto: u64) -> i64 {
+    if domain == 1 {
+        if ty & 0xF != SOCK_STREAM {
+            return ESOCKTNOSUPPORT;
+        }
+        let s = crate::unix::UnixSock::new();
+        if ty & SOCK_NONBLOCK != 0 {
+            s.set_nonblock(true);
+        }
+        let Some(task) = sched::current().task() else { return EBADF };
+        return task.fd_alloc_flags(s, ty & SOCK_CLOEXEC != 0) as i64;
+    }
     if domain != AF_INET {
         return EAFNOSUPPORT;
     }
@@ -88,6 +127,9 @@ pub fn sys_socket(domain: u64, ty: u64, proto: u64) -> i64 {
 
 pub fn sys_bind(fd: u64, addr: u64, len: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match crate::unix::parse_addr(addr, len) { Ok(p) => u.bind(p), Err(e) => e };
+    }
     match read_sockaddr(addr, len) {
         Ok((_, port)) => f.as_socket().unwrap().bind(port),
         Err(e) => e,
@@ -96,13 +138,16 @@ pub fn sys_bind(fd: u64, addr: u64, len: u64) -> i64 {
 
 pub fn sys_listen(fd: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => f.as_socket().unwrap().listen(),
+        Ok(f) => match f.as_unix() { Some(u) => u.listen(), None => f.as_socket().unwrap().listen() },
         Err(e) => e,
     }
 }
 
 pub fn sys_connect(fd: u64, addr: u64, len: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match crate::unix::parse_addr(addr, len) { Ok(p) => u.connect(p), Err(e) => e };
+    }
     match read_sockaddr(addr, len) {
         Ok((ip, port)) => f.as_socket().unwrap().connect(ip, port),
         Err(e) => e,
@@ -111,6 +156,19 @@ pub fn sys_connect(fd: u64, addr: u64, len: u64) -> i64 {
 
 pub fn sys_accept(fd: u64, addr: u64, lenp: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        return match u.accept() {
+            Ok(conn) => {
+                if flags & SOCK_NONBLOCK != 0 {
+                    conn.set_nonblock(true);
+                }
+                let _ = crate::unix::write_addr(addr, lenp, None);
+                let Some(task) = sched::current().task() else { return EBADF };
+                task.fd_alloc_flags(conn, flags & SOCK_CLOEXEC != 0) as i64
+            }
+            Err(e) => e,
+        };
+    }
     match f.as_socket().unwrap().accept() {
         Ok((conn, peer)) => {
             let r = write_sockaddr(addr, lenp, peer);
@@ -129,6 +187,9 @@ pub fn sys_accept(fd: u64, addr: u64, lenp: u64, flags: u64) -> i64 {
 
 pub fn sys_sendto(fd: u64, buf: u64, len: u64, addr: u64, alen: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if f.as_unix().is_some() {
+        return match usercopy::slice(buf, len as usize) { Ok(d) => f.write(d), Err(e) => e };
+    }
     let to = if addr != 0 {
         match read_sockaddr(addr, alen) { Ok(a) => Some(a), Err(e) => return e }
     } else {
@@ -143,6 +204,9 @@ pub fn sys_sendto(fd: u64, buf: u64, len: u64, addr: u64, alen: u64) -> i64 {
 pub fn sys_recvfrom(fd: u64, buf: u64, len: u64, addr: u64, lenp: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     let out = match usercopy::slice_mut(buf, len as usize) { Ok(b) => b, Err(e) => return e };
+    if f.as_unix().is_some() {
+        return f.read(out);
+    }
     let (n, from) = f.as_socket().unwrap().recv_from(out);
     if n >= 0 {
         if let Some(a) = from {
@@ -157,20 +221,27 @@ pub fn sys_recvfrom(fd: u64, buf: u64, len: u64, addr: u64, lenp: u64) -> i64 {
 
 pub fn sys_shutdown(fd: u64, how: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => f.as_socket().unwrap().shutdown(how as u32),
+        Ok(f) => match f.as_unix() { Some(u) => u.shutdown(how as u32), None => f.as_socket().unwrap().shutdown(how as u32) },
         Err(e) => e,
     }
 }
 
 pub fn sys_getsockname(fd: u64, addr: u64, lenp: u64) -> i64 {
     match sock_of(fd) {
-        Ok(f) => write_sockaddr(addr, lenp, f.as_socket().unwrap().local_addr()),
+        Ok(f) => match f.as_unix() {
+            Some(u) => crate::unix::write_addr(addr, lenp, u.local_path().as_deref()),
+            None => write_sockaddr(addr, lenp, f.as_socket().unwrap().local_addr()),
+        },
         Err(e) => e,
     }
 }
 
 pub fn sys_getpeername(fd: u64, addr: u64, lenp: u64) -> i64 {
     match sock_of(fd) {
+        Ok(f) if f.as_unix().is_some() => match f.as_unix().unwrap().peer_path() {
+            Ok(p) => crate::unix::write_addr(addr, lenp, p.as_deref()),
+            Err(e) => e,
+        },
         Ok(f) => match f.as_socket().unwrap().peer_addr() {
             Some(p) => write_sockaddr(addr, lenp, p),
             None => -107, // ENOTCONN
@@ -179,31 +250,59 @@ pub fn sys_getpeername(fd: u64, addr: u64, lenp: u64) -> i64 {
     }
 }
 
-/// `setsockopt`: every option is accepted and ignored (REUSEADDR, NODELAY, KEEPALIVE, ...).
-pub fn sys_setsockopt(fd: u64) -> i64 {
+/// Socket options; Unix buffers currently have a fixed, enforced capacity.
+pub fn sys_setsockopt(fd: u64,level:u64,name:u64,val:u64,len:u64) -> i64 {
     match sock_of(fd) {
-        Ok(_) => 0,
+        Ok(f) => {
+            if let Some(u)=f.as_unix() {
+                if level==1&&matches!(name,7|8) {
+                    if len<4{return EINVAL;}
+                    if let Err(e)=usercopy::read_u32(val){return e;}
+                    return -95; // EOPNOTSUPP: no pretend buffer resizing.
+                }
+                if level==1&&name==16 {
+                    if len<4{return EINVAL;}
+                    return match usercopy::read_u32(val){Ok(v)=>u.set_pass_credentials(v!=0),Err(e)=>e};
+                }
+            }
+            0
+        },
         Err(e) => e,
     }
 }
 
-/// `getsockopt`: `SO_ERROR` / `SO_TYPE` are real; everything else reads as 0.
+/// Report actual Unix buffer limits as well as type, credentials and errors.
 pub fn sys_getsockopt(fd: u64, level: u64, name: u64, val: u64, lenp: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
-    let v: u32 = if level == 1 && name == 4 {
+    let is_unix = f.as_unix().is_some();
+    if let Some(u)=f.as_unix() {
+        if level==1&&name==17 {
+            let cap=match usercopy::read_u32(lenp){Ok(v)=>v as usize,Err(e)=>return e};
+            let mut data=[0u8;12];for(i,v)in u.peer_credentials().into_iter().enumerate(){data[i*4..i*4+4].copy_from_slice(&v.to_le_bytes());}
+            let b=match usercopy::slice_mut(val,cap.min(12)){Ok(b)=>b,Err(e)=>return e};b.copy_from_slice(&data[..cap.min(12)]);
+            return match usercopy::write_u32(lenp,12){Ok(())=>0,Err(e)=>e};
+        }
+    }
+    let v: u32 = if is_unix&&level==1&&matches!(name,7|8) {
+        f.as_unix().unwrap().buffer_capacity() // SO_SNDBUF / SO_RCVBUF
+    } else if is_unix && level == 1 && name == 3 {
+        f.as_unix().unwrap().socket_type()
+    } else if is_unix&&level==1&&name==16 {
+        f.as_unix().unwrap().pass_credentials() as u32
+    } else if is_unix {
+        0
+    } else if level == 1 && name == 4 {
         0 // SO_ERROR
     } else if level == 1 && name == 3 {
         if f.as_socket().unwrap().kind() == Kind::Tcp { 1 } else { 2 } // SO_TYPE
     } else {
         0
     };
-    if val == 0 || lenp == 0 {
-        return 0;
-    }
-    if let Err(e) = usercopy::write_u32(val, v) {
-        return e;
-    }
-    match usercopy::write_u32(lenp, 4) {
+    let cap=match usercopy::read_u32(lenp){Ok(v)=>v as usize,Err(e)=>return e};
+    let n=cap.min(4);
+    let out=match usercopy::slice_mut(val,n){Ok(b)=>b,Err(e)=>return e};
+    out.copy_from_slice(&v.to_le_bytes()[..n]);
+    match usercopy::write_u32(lenp, n as u32) {
         Ok(()) => 0,
         Err(e) => e,
     }
@@ -221,8 +320,11 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
     }
     let deadline = (timeout_ns >= 0).then(|| crate::timer::monotonic_ns().saturating_add(timeout_ns as u64));
     let task = match sched::current().task() { Some(t) => t, None => return EBADF };
+    let _listening = crate::wait::Pollers::enter();
     loop {
+        let gen = crate::wait::POLL_GEN.load(core::sync::atomic::Ordering::Acquire);
         let mut ready = 0i64;
+        let mut wake_at: Option<u64> = None;
         for i in 0..n {
             let base = fds + (i * 8) as u64;
             let Ok(fd) = usercopy::read_u32(base) else { return EFAULT };
@@ -232,7 +334,12 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
                 0
             } else {
                 match task.fd_get(fd as i32) {
-                    Some(f) => f.poll_mask(want | POLLIN * 0) & (want | POLLERR | crate::file::POLLHUP),
+                    Some(f) => {
+                        if let Some(t) = f.next_wake_ns() {
+                            wake_at = Some(wake_at.map_or(t, |w| w.min(t)));
+                        }
+                        f.poll_mask(want | POLLIN * 0) & (want | POLLERR | crate::file::POLLHUP)
+                    }
                     None => 0x20, // POLLNVAL
                 }
             };
@@ -251,7 +358,7 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
             Some(d) if crate::timer::monotonic_ns() >= d => return 0,
             _ => {}
         }
-        crate::timer::sleep_ns(2_000_000);
+        crate::eventpoll::poll_block(gen, deadline, wake_at);
     }
 }
 
@@ -262,9 +369,89 @@ pub fn sys_poll(fds: u64, nfds: u64, timeout_ns: i64) -> i64 {
 // ---------------------------------------------------------------------------
 
 const MSG_MAX: usize = 64 * 1024;
+const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
+const MSG_CTRUNC: u32 = 8;
+const MSG_DONTWAIT: u64 = 0x40;
+
+/// The descriptors named by `SCM_RIGHTS` control messages of a msghdr, as open files of the caller.
+fn read_scm_rights(msg: u64) -> Result<alloc::vec::Vec<Arc<dyn FileOps>>, i64> {
+    let ctl = usercopy::read_u64(msg + 32)?;
+    let len = usercopy::read_u64(msg + 40)?;
+    let mut out = alloc::vec::Vec::new();
+    if ctl == 0 || len < 16 {
+        return Ok(out);
+    }
+    let task = sched::current().task().ok_or(EBADF)?;
+    let mut off = 0u64;
+    while off + 16 <= len {
+        let clen = usercopy::read_u64(ctl + off)?;
+        let level = usercopy::read_u32(ctl + off + 8)?;
+        let ty = usercopy::read_u32(ctl + off + 12)?;
+        if clen < 16 || off + clen > len {
+            break;
+        }
+        if level == 1 && ty == 1 {
+            for i in 0..(clen - 16) / 4 {
+                let fd = usercopy::read_u32(ctl + off + 16 + 4 * i)? as i32;
+                out.push(task.fd_get(fd).ok_or(EBADF)?);
+                if out.len() > 253 {
+                    return Err(EINVAL);
+                }
+            }
+        }
+        off += (clen + 7) & !7;
+    }
+    Ok(out)
+}
+
+/// Install received descriptors and describe them in the msghdr's control buffer (one `SCM_RIGHTS`
+/// message). Returns the msg_flags to report (`MSG_CTRUNC` when the buffer was too small).
+fn write_scm_rights(msg: u64, files: alloc::vec::Vec<Arc<dyn FileOps>>, cloexec: bool) -> u32 {
+    let (Ok(ctl), Ok(space)) = (usercopy::read_u64(msg + 32), usercopy::read_u64(msg + 40)) else { return 0 };
+    let Some(task) = sched::current().task() else { return 0 };
+    if ctl == 0 || space < 20 {
+        let _=usercopy::write_u64(msg+40,0);
+        return MSG_CTRUNC; // no room: the descriptors are dropped (closed)
+    }
+    let fit = (((space - 16) / 4) as usize).min(files.len());
+    let mut flags = if fit < files.len() { MSG_CTRUNC } else { 0 };
+    let clen = 16 + 4 * fit as u64;
+    let _ = usercopy::write_u64(ctl, clen);
+    let _ = usercopy::write_u32(ctl + 8, 1); // SOL_SOCKET
+    let _ = usercopy::write_u32(ctl + 12, 1); // SCM_RIGHTS
+    let mut received=0;
+    for f in files.into_iter().take(fit) {
+        let fd = task.fd_alloc_flags(f, cloexec);
+        if fd<0 {flags|=MSG_CTRUNC;continue;}
+        if usercopy::write_u32(ctl + 16 + 4 * received as u64, fd as u32).is_err() {
+            task.fd_close(fd);
+            flags |= MSG_CTRUNC;
+        } else {received+=1;}
+    }
+    let clen=16+4*received as u64;
+    let _ = usercopy::write_u64(ctl,clen);
+    let _ = usercopy::write_u64(msg + 40, ((clen + 7) & !7).min(space));
+    flags
+}
+
+/// Kernel-captured sender credentials followed by independently bounded rights.
+fn write_packet_control(msg:u64,files:alloc::vec::Vec<Arc<dyn FileOps>>,cred:[u32;3],cloexec:bool)->u32 {
+    let (Ok(ctl),Ok(cap))=(usercopy::read_u64(msg+32),usercopy::read_u64(msg+40)) else{return MSG_CTRUNC};
+    if ctl==0||cap<28||!usercopy::user_ok(ctl,cap as usize,true) {let _=usercopy::write_u64(msg+40,0);return MSG_CTRUNC;}
+    let _=usercopy::write_u64(ctl,28);let _=usercopy::write_u32(ctl+8,1);let _=usercopy::write_u32(ctl+12,2);
+    for(i,v)in cred.into_iter().enumerate(){let _=usercopy::write_u32(ctl+16+4*i as u64,v);}
+    let used=cap.min(32);let mut flags=0;let mut tail=0;
+    if !files.is_empty() {
+        let _=usercopy::write_u64(msg+32,ctl+used);let _=usercopy::write_u64(msg+40,cap-used);
+        flags=write_scm_rights(msg,files,cloexec);
+        tail=usercopy::read_u64(msg+40).unwrap_or(0).min(cap-used);
+        let _=usercopy::write_u64(msg+32,ctl);
+    }
+    let _=usercopy::write_u64(msg+40,(used+tail).min(cap));flags
+}
 
 /// Gather the iovec array of a msghdr into one buffer.
-fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
+fn gather_iov(msg: u64,limit:usize,partial:bool) -> Result<alloc::vec::Vec<u8>, i64> {
     let iov = usercopy::read_u64(msg + 16)?;
     let n = usercopy::read_u64(msg + 24)?;
     if n > 1024 {
@@ -274,16 +461,23 @@ fn gather_iov(msg: u64) -> Result<alloc::vec::Vec<u8>, i64> {
     for i in 0..n {
         let base = usercopy::read_u64(iov + 16 * i)?;
         let len = usercopy::read_u64(iov + 16 * i + 8)? as usize;
-        if out.len() + len > MSG_MAX {
+        if !partial && len>limit-out.len() {
             return Err(-90); // EMSGSIZE
         }
-        out.extend_from_slice(usercopy::slice(base, len)?);
+        let take=len.min(limit-out.len());
+        out.extend_from_slice(usercopy::slice(base,take)?);
+        if partial&&out.len()==limit {break;}
     }
     Ok(out)
 }
 
-pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
+pub fn sys_sendmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
+    if let Some(u) = f.as_unix() {
+        let fds = match read_scm_rights(msg) { Ok(v) => v, Err(e) => return e };
+        let packet=u.socket_type()==5;
+        return match gather_iov(msg,if packet {u.buffer_capacity() as usize}else{MSG_MAX},!packet) { Ok(d) => u.send_fds(&d, if fds.is_empty() { None } else { Some(fds) }, flags & MSG_DONTWAIT != 0), Err(e) => e };
+    }
     let name = usercopy::read_u64(msg).unwrap_or(0);
     let namelen = usercopy::read_u32(msg + 8).unwrap_or(0) as u64;
     let to = if name != 0 {
@@ -291,13 +485,13 @@ pub fn sys_sendmsg(fd: u64, msg: u64) -> i64 {
     } else {
         None
     };
-    match gather_iov(msg) {
+    match gather_iov(msg,MSG_MAX,f.as_socket().unwrap().kind()==Kind::Tcp) {
         Ok(data) => f.as_socket().unwrap().send_to(&data, to),
         Err(e) => e,
     }
 }
 
-pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
+pub fn sys_recvmsg(fd: u64, msg: u64, flags: u64) -> i64 {
     let f = match sock_of(fd) { Ok(f) => f, Err(e) => return e };
     let iov = match usercopy::read_u64(msg + 16) { Ok(v) => v, Err(e) => return e };
     let n = match usercopy::read_u64(msg + 24) { Ok(v) => v, Err(e) => return e };
@@ -307,12 +501,21 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
     let mut total = 0usize;
     for i in 0..n {
         match usercopy::read_u64(iov + 16 * i + 8) {
-            Ok(l) => total += l as usize,
+            Ok(l) => match total.checked_add(l as usize) {Some(v)=>total=v,None=>return EINVAL},
             Err(e) => return e,
         }
     }
-    let mut buf = alloc::vec![0u8; total.min(MSG_MAX)];
-    let (got, from) = f.as_socket().unwrap().recv_from(&mut buf);
+    let limit=f.as_unix().filter(|u|u.socket_type()==5).map_or(MSG_MAX,|u|u.buffer_capacity() as usize);
+    let mut buf = alloc::vec![0u8; total.min(limit)];
+    let mut rights = alloc::vec::Vec::new();
+    let mut credentials=None;let mut out_flags=0;
+    let (got, from) = if let Some(u) = f.as_unix() {
+        let (g,r,c,fl)=u.recv_status(&mut buf,flags);
+        rights=r;credentials=c;out_flags=fl;
+        (g, None)
+    } else {
+        f.as_socket().unwrap().recv_from(&mut buf)
+    };
     if got < 0 {
         return got;
     }
@@ -323,7 +526,7 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
             break;
         }
         let (Ok(base), Ok(len)) = (usercopy::read_u64(iov + 16 * i), usercopy::read_u64(iov + 16 * i + 8)) else { return EFAULT };
-        let take = (len as usize).min(got as usize - off);
+        let take = (len as usize).min((got as usize).min(buf.len()).saturating_sub(off));
         match usercopy::slice_mut(base, take) {
             Ok(b) => b.copy_from_slice(&buf[off..off + take]),
             Err(e) => return e,
@@ -340,8 +543,14 @@ pub fn sys_recvmsg(fd: u64, msg: u64) -> i64 {
             }
         }
     }
-    let _ = usercopy::write_u64(msg + 40, 0); // no control data
-    let _ = usercopy::write_u32(msg + 48, 0); // msg_flags
+    if let Some(cred)=credentials {
+        out_flags|=write_packet_control(msg,rights,cred,flags&MSG_CMSG_CLOEXEC!=0);
+    } else if rights.is_empty() {
+        let _ = usercopy::write_u64(msg + 40, 0); // no control data
+    } else {
+        out_flags |= write_scm_rights(msg, rights, flags & MSG_CMSG_CLOEXEC != 0);
+    }
+    let _ = usercopy::write_u32(msg + 48, out_flags); // msg_flags
     got
 }
 
@@ -349,7 +558,7 @@ pub fn sys_sendmmsg(fd: u64, vec: u64, vlen: u64) -> i64 {
     let mut sent = 0i64;
     for i in 0..vlen.min(1024) {
         let m = vec + 64 * i;
-        let r = sys_sendmsg(fd, m);
+        let r = sys_sendmsg(fd, m, 0);
         if r < 0 {
             return if sent > 0 { sent } else { r };
         }
@@ -370,7 +579,7 @@ pub fn sys_recvmmsg(fd: u64, vec: u64, vlen: u64) -> i64 {
             break;
         }
         let m = vec + 64 * i;
-        let r = sys_recvmsg(fd, m);
+        let r = sys_recvmsg(fd, m, 0);
         if r < 0 {
             return if got > 0 { got } else { r };
         }
@@ -401,7 +610,10 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
     };
     let task = match sched::current().task() { Some(t) => t, None => return EBADF };
     let deadline = (timeout_ns >= 0).then(|| crate::timer::monotonic_ns().saturating_add(timeout_ns as u64));
+    let _listening = crate::wait::Pollers::enter();
     loop {
+        let gen = crate::wait::POLL_GEN.load(core::sync::atomic::Ordering::Acquire);
+        let mut wake_at: Option<u64> = None;
         let mut got_r = alloc::vec![0u64; words];
         let mut got_w = alloc::vec![0u64; words];
         let mut ready = 0i64;
@@ -412,6 +624,9 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
                 continue;
             }
             let Some(f) = task.fd_get(fd as i32) else { return EBADF };
+            if let Some(t) = f.next_wake_ns() {
+                wake_at = Some(wake_at.map_or(t, |w| w.min(t)));
+            }
             let ev = f.poll_mask((if r_on { POLLIN } else { 0 }) | (if w_on { POLLOUT } else { 0 }));
             if r_on && ev & (POLLIN | crate::file::POLLHUP | POLLERR) != 0 {
                 got_r[w] |= b;
@@ -439,7 +654,7 @@ pub fn sys_select(nfds: u64, rd: u64, wr: u64, ex: u64, timeout_ns: i64) -> i64 
         if signal::interrupted() {
             return -4;
         }
-        crate::timer::sleep_ns(2_000_000);
+        crate::eventpoll::poll_block(gen, deadline, wake_at);
     }
 }
 

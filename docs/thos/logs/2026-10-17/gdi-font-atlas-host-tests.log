@@ -1,0 +1,8 @@
+
+running 3 tests
+test tests::requested_faces_metrics_and_unicode_fallback ... ok
+test tests::truncated_or_corrupt_metadata_never_indexes_outside_asset ... ok
+test tests::complete_asset_has_valid_ordered_glyphs ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+

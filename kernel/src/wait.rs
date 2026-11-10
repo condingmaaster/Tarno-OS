@@ -19,6 +19,43 @@ pub struct WaitQueue {
     waiters: Mutex<VecDeque<Arc<Thread>>>,
 }
 
+/// `poll`/`select`/`epoll_wait` sleep on this queue instead of rescanning every few milliseconds: every
+/// `wake_*` of any other queue bumps [`POLL_GEN`] and wakes the pollers, who then re-check their descriptors.
+/// (A waker that changes readiness without waking a queue is covered by the callers' short timeout.)
+pub static POLL_WQ: WaitQueue = WaitQueue::new();
+pub static POLL_GEN: AtomicU64 = AtomicU64::new(0);
+static POLLERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Something that a poller may be waiting for might have happened.
+pub fn poll_notify() {
+    POLL_GEN.fetch_add(1, Ordering::AcqRel);
+    if POLLERS.load(Ordering::Acquire) > 0 {
+        let drained: VecDeque<Arc<Thread>> = core::mem::take(&mut *POLL_WQ.waiters.lock());
+        for t in drained {
+            sched::unblock(t);
+        }
+    }
+}
+
+/// Sleep until [`poll_notify`] has been called since `gen` was read, or `deadline` (a timer tick) passes.
+pub fn poll_sleep(gen: u64, deadline: u64) {
+    POLL_WQ.wait_if_until(deadline, || POLL_GEN.load(Ordering::Acquire) == gen);
+}
+
+/// Bracket a polling loop so wakers know somebody is listening.
+pub struct Pollers;
+impl Pollers {
+    pub fn enter() -> Self {
+        POLLERS.fetch_add(1, Ordering::AcqRel);
+        Pollers
+    }
+}
+impl Drop for Pollers {
+    fn drop(&mut self) {
+        POLLERS.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 #[allow(dead_code)] // full primitive surface; personalities consume the rest
 impl WaitQueue {
     pub const fn new() -> Self {
@@ -135,13 +172,17 @@ impl WaitQueue {
 
     /// Wake one blocked thread, if any. Returns whether one was woken.
     pub fn wake_one(&self) -> bool {
-        match self.waiters.lock().pop_front() {
+        let woke = match self.waiters.lock().pop_front() {
             Some(t) => {
                 sched::unblock(t);
                 true
             }
             None => false,
+        };
+        if woke && !core::ptr::eq(self, &POLL_WQ) {
+            poll_notify();
         }
+        woke
     }
 
     /// Wake exactly one blocked thread; if none is blocked, run `f` (both under
@@ -154,21 +195,40 @@ impl WaitQueue {
             Some(t) => {
                 drop(w);
                 sched::unblock(t);
+                poll_notify();
                 true
             }
             None => {
                 f();
+                drop(w);
+                poll_notify();
                 false
             }
         }
     }
 
     /// Wake every blocked thread. Returns how many.
+    /// Internal locks change lock ownership, not descriptor readiness. Avoid
+    /// waking every poller on each filesystem unlock; serialize with wait_if
+    /// even when no waiter was visible to the releasing CPU.
+    pub fn wake_all_no_poll(&self) -> usize {
+        interrupts::without_interrupts(|| {
+            let drained: VecDeque<Arc<Thread>> = core::mem::take(&mut *self.waiters.lock());
+            let n = drained.len();
+            for t in drained { sched::unblock(t); }
+            n
+        })
+    }
+
     pub fn wake_all(&self) -> usize {
         let drained: VecDeque<Arc<Thread>> = core::mem::take(&mut *self.waiters.lock());
         let n = drained.len();
         for t in drained {
             sched::unblock(t);
+        }
+        // Readiness of some object may have changed even if nobody was blocked on it (a poller is).
+        if !core::ptr::eq(self, &POLL_WQ) {
+            poll_notify();
         }
         n
     }

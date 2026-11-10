@@ -1,0 +1,60 @@
+{
+  "before_free_bytes": 205797670912,
+  "after_free_bytes": 208697073664,
+  "observed_freed_bytes": 2899402752,
+  "removed": [
+    {
+      "path": "target/thos-live-nls-2026-10-24.img",
+      "sha256": "9c4ed07d1350586d7e013c011c96c718ec6259c7b976a6b9135e44866c82adcf",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/live-root-nls-2026-10-24.ext2",
+      "sha256": "fcb5b0375659526af4a5f7c393913228028e983fb147290cb32610d1686d6918",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/thos-live-format-2026-10-24.img",
+      "sha256": "9340e0ba3e8da8c01f8885b3fc1a5c4ab51099efc6ca1e72443016c636bcd100",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/live-root-format-2026-10-24.ext2",
+      "sha256": "e24b1796996a629ae34f12da366335f324ca594fc655e31ac72e68d88c182eae",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/thos-live-thread-2026-10-25.img",
+      "sha256": "339925635a2301eb403cd65fe28091039acb684326475535b3319a248d992880",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/live-root-thread-2026-10-25.ext2",
+      "sha256": "fffb2460d12d464511d007bff73df3887bb71d90d2513fbf7e881862c024dc7b",
+      "reason": "Own historical checkpoint surpassed by current verified profile Live and retained resource fallback; small evidence kept"
+    },
+    {
+      "path": "target/thos-thread-padding-qa-2026-10-25.img",
+      "sha256": "8724b0af200ad3901d9059dda02015afa2cce2168b1bcddf4a7b99f975dfb305",
+      "reason": "Own intermediate QA; final profile baseline and private CPU QA retained"
+    },
+    {
+      "path": "target/thos-profile-qa-2026-10-25.img",
+      "sha256": "f10636f0ee29f7e503ff89510bb23400186f7e2f75b941ba8b49abcb63a25edd",
+      "reason": "Own intermediate QA; final profile baseline and private CPU QA retained"
+    },
+    {
+      "path": "target/test-scratch/run-991-1792914285556701193",
+      "reason": "Own failed profile fixture scratch; serial/compiler and actual INI readback already retained"
+    },
+    {
+      "path": "target/test-scratch/run-1297-1792914340988294980",
+      "reason": "Own failed profile fixture scratch; serial/compiler and actual INI readback already retained"
+    },
+    {
+      "path": "target/test-scratch/run-1630-1792914561460310330",
+      "reason": "Own failed profile fixture scratch; serial/compiler and actual INI readback already retained"
+    }
+  ],
+  "retained": "Current verified profile Live57b00eeb and root, resource rollback90f0d0cb and root, profile-final QA baseline and thread-times private QA; earlier preexisting23Oct rollback/browser caches untouched; small sources/binaries/logs/screenshots retained"
+}

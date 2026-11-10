@@ -1,0 +1,4 @@
+registry-host actual persisted hive reload PASS
+registry-host oversized loaded hive stays readable; no-op create without IO; mutation refused before clone PASS
+registry-host max value/hive/key budgets, empty/UTF8/max-u32 fields, no false resource notification and retry PASS
+registry-host reported IO rollback/create/delete/notify, old readers during IO, 8 writers/256 updates, one creator, uid policy, nonregular hive and actual reload PASS

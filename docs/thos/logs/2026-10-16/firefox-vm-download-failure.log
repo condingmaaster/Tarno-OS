@@ -1,0 +1,17 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1716:17
+     |
+1716 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.19s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask firefox-downloads-test`
+
+thread 'main' (30608) panicked at xtask/src/main.rs:556:13:
+real Firefox download, complete bytes or explicit Files launch failed
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+/bin/bash: line 1: 30608 Aborted                 THOS_PREBUILT_IMG=target/thos-browser-vm-qa-2026-10-16.img THOS_MEM=4096M THOS_SMP=4 cargo xtask firefox-downloads-test

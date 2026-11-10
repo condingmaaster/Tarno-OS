@@ -1,0 +1,8 @@
+label: dos
+label-id: 0x12ef633f
+device: /dev/disk/by-id/usb-Mass_Storage_Device_121220160204-0:0
+unit: sectors
+sector-size: 512
+
+/dev/disk/by-id/usb-Mass_Storage_Device_121220160204-0:0-part1 : start=       16384, size=     1048576, type=c
+/dev/disk/by-id/usb-Mass_Storage_Device_121220160204-0:0-part2 : start=     1064960, size=    60002304, type=83

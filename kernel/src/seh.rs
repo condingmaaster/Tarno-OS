@@ -17,6 +17,8 @@ const STATUS_ILLEGAL_INSTRUCTION: u32 = 0xC000_001D;
 const STATUS_INTEGER_DIVIDE_BY_ZERO: u32 = 0xC000_0094;
 const STATUS_ACCESS_VIOLATION: u32 = 0xC000_0005;
 
+/// The last user fault delivered to a PE process (rip, cr2, error code): named in the log when that process dies of an exception.
+pub static LAST_FAULT: [core::sync::atomic::AtomicU64; 3] = [core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0)];
 const NT_STUB_BASE: u64 = 0x0000_7FF0_0000_0000;
 /// Per-process vectored-handler slot (one `PVOID`); [`crate::pe`] maps it rw.
 pub const PE_EXC_ADDR: u64 = NT_STUB_BASE + 0x9000;
@@ -128,9 +130,10 @@ thos_fault_common:
     mov  rsi, rax                  // vector
     mov  rdx, [rbx + 16]           // error code
     mov  rcx, cr2                  // faulting address (only meaningful for #PF)
-    sub  rsp, 8                    // 16-align
+    mov  rbx, rsp                  // real rbx is already saved in ExcFrame
+    and  rsp, -16                  // SysV alignment independent of entry stack
     call thos_fault_dispatch       // returns only to resume
-    add  rsp, 8
+    mov  rsp, rbx                  // callee-saved across blocking fault handling
     mov  rdi, rsp
     jmp  thos_exc_resume
 
@@ -138,6 +141,8 @@ thos_fault_common:
 .globl thos_exc_resume
 thos_exc_resume:
     mov  r15, rdi
+    and  rsp, -16
+    call thos_cpu_enter_user
     push qword ptr [r15 + 19*8]    // ss
     push qword ptr [r15 + 17*8]    // rsp
     push qword ptr [r15 + 16*8]    // rflags
@@ -176,7 +181,22 @@ extern "C" {
 /// fatal / killed.
 #[no_mangle]
 extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code: u64, cr2: u64) {
+    if frame.cs&3==3{crate::thread_cpu::thos_cpu_enter_kernel();}
     let from_user = frame.cs & 3 == 3;
+    // Demand-grown main stack: a not-present access just below the mapped part is fixed up and retried.
+    if from_user && vector == 14 && error_code & 1 == 0 {
+        if let Some(t) = sched::current().task() {
+            if t.space().grow_stack(cr2) || t.space().fault_lazy(cr2) {
+                return;
+            }
+            #[cfg(feature="vm-diagnostics")]
+            {
+                let anonymous=t.space().anonymous_residency(cr2);
+                let free=crate::mm::FRAME_ALLOC.lock().free_frames();
+                crate::kprintln!("THOS: vm fault pid={} addr={:#x} anonymous={:?} free={}",t.pid,cr2,anonymous,free);
+            }
+        }
+    }
     // `PE_EXC_ADDR` is only ever mapped for a *PE* process (`pe.rs`'s
     // loader) — a plain ELF one never gets that page, so reading it
     // unconditionally for every user fault (the bug this comment replaces)
@@ -200,12 +220,16 @@ extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code:
     // thread). Kill that process — never the machine.
     if !from_user && vector == 14 && cr2 < crate::usercopy::USER_TOP && crate::process::current_pid() != 0 {
         kprintln!("THOS trap: kernel #PF on user address {:#x} rip={:#x} — process killed", cr2, frame.rip);
-        crate::process::set_term_signal(11);
         crate::syscall::note_user_exit();
+        crate::process::set_term_signal(11);
         sched::exit();
     }
 
     if from_user && handler != 0 {
+        use core::sync::atomic::Ordering::Relaxed;
+        LAST_FAULT[0].store(frame.rip, Relaxed);
+        LAST_FAULT[1].store(cr2, Relaxed);
+        LAST_FAULT[2].store(error_code, Relaxed);
         let pf = (vector == 14).then_some((error_code, cr2));
         if deliver(frame, code, pf) {
             return;
@@ -231,8 +255,13 @@ extern "C" fn thos_fault_dispatch(frame: &mut ExcFrame, vector: u64, error_code:
         );
     }
     if from_user {
-        crate::process::set_exit_status(sig);
         crate::syscall::note_user_exit();
+        if crate::process::current_is_pe() {
+            crate::process::set_exit_status(sig);
+        } else {
+            // An ELF CPU fault is signal termination, not a normal exit(139).
+            crate::process::set_term_signal(match vector {0=>8,6=>4,_=>11});
+        }
         sched::exit();
     }
     crate::exit_qemu(crate::ExitCode::Failed);

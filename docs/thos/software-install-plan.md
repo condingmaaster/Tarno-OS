@@ -1,6 +1,6 @@
 # THOS – Installing software (plan)
 
-*Opened 2026-10-02 (user request). Planning only. Goal: a THOS user can install and
+*Opened 2026-10-02 (user request). Planning; **status 2026-10-06 below**. Goal: a THOS user can install and
 run software from **both worlds** — Windows `.exe` / `.msi` installers and Linux
 packages — through one coherent, secure, customisable mechanism.*
 
@@ -147,3 +147,21 @@ audited code path, and makes every install reversible.
 package db, launcher entries, integrity baseline and that removal leaves the
 filesystem identical (e2fsck clean + file-tree diff). Later: a `.deb` and an `.msi`
 fixture installed in QEMU.
+
+
+## Status 2026-10-06 (what exists now)
+
+- **`thos-pkg`** (shell script, `/bin/thos-pkg`): install `.deb`, `.rpm`, `.zip`, `.tar.gz/.xz/.bz2`, `.exe` from a file or URL into `/opt/<name>`, with Start-menu entries;
+  **Debian archive installs with dependency resolution** (`update`, `search`, `install <name>`, SHA-256 checked against the index, shared prefix `/opt/root`, `LD_LIBRARY_PATH`/`PATH` set for every session).
+  Verified against the real archive (`pkg-repo-test`). The package index is **verified**: `InRelease` is checked with `gpgv` against the Debian archive keyring shipped in the image, then Packages.xz and every `.deb` against the signed SHA-256 chain. Open: TLS certificate checks (`ssl_client` does not verify), maintainer scripts, recorded-sandbox transactions, `.msi`.
+- **Linux side:** dynamic glibc programs run (bash, git, gcc, node, java, GTK/NetSurf/foot…), `#!` scripts, `vfork`, `/proc/self/exe`. Debian packages with a few small dependencies work; big GUI stacks need a larger root FS.
+- **Windows side:** 64-bit PE only. Real Rust programs built for `x86_64-pc-windows-gnu` run (std heap, files, environment, threads, channels, panics with `catch_unwind`),
+  Winsock over loopback works; the runtime is a set of freestanding C DLLs (`xtask/msvcrtx/`: `msvcrtx`, `kernel32x`, `ntdllx`, `ws2_32`, `api-ms-win-core-synch…`, `bcryptprimitives`, `userenv`) in `C:\Windows\System32`,
+  with x64 SEH unwinding (`unwind.h`). Also `CreateProcess` (PE and ELF children), anonymous pipes (so Rust's `Command::output()` works) and panics that unwind. Open: **32-bit PE (WOW64)** — most installers are 32-bit; **`.msi`**; `user32`/`gdi32` beyond a handful of calls (GUI programs); COM/registry front ends.
+- **Desktop integration:** the file manager installs packages on double-click; installed programs with a `.desktop` file appear in the Start menu.
+
+### Real downloaded Windows programs (2026-10-06)
+- **ripgrep 14.1.1 (`rg.exe`, MSVC build, static CRT) runs unmodified** (`cargo xtask winrg-test`; the release zip is fetched once into `target/rg-win/`). It needs only kernel32/ntdll and the small DLLs above.
+- Import analysis of two more popular downloads shows what is missing next: **`fd.exe`** (Rust, MSVC) and **`jq.exe`** (C, MSVC) import the **UCRT** (`api-ms-win-crt-*.dll`, ~150 functions: `__stdio_common_vfprintf`, `_initialize_narrow_environment`, `_configure_narrow_argv`, math, time, locale …),
+  `vcruntime140.dll` (`memcpy`…, `_CxxThrowException`, `__CxxFrameHandler3` for C++ exceptions), SRW locks (`AcquireSRWLockExclusive` …), `advapi32` (token/SID calls, `SystemFunction036`), `bcrypt!BCryptGenRandom`, `shell32!SHGetKnownFolderPath`, `ole32!CoTaskMemFree`, `shlwapi!PathIsRelativeA`.
+  The next step is a `ucrtbase.dll` (most functions already exist in `msvcrtx.c`) plus a name mapping of `api-ms-win-crt-*` to it, SRW locks (futex based), and the advapi32/bcrypt stubs.

@@ -1,0 +1,62 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1900:17
+     |
+1900 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.04s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winwide-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (3.0% non-contiguous), 103817/524288 blocks
+winwide-ok wide-extended-real-atom
+winwide-ok duplicate-keeps-original-class
+winwide-ok plain-wide-distinct-atom
+winwide-ok ansi-extended-distinct-atom
+winwide-ok bad-class-size
+winwide-ok bad-class-user-pointer
+winwide-ok unsupported-extra-memory
+winwide-ok invalid-utf16-class
+winwide-ok bounded-class-name
+winwide-ok same-frame-geometry
+winwide-ok wide-name-window
+winwide-ok wide-client-size
+winwide-ok wide-text-callback
+winwide-ok wide-title-length-counts-utf16
+winwide-ok wide-title-roundtrip
+winwide-ok wide-title-empty-capacity
+winwide-ok wide-title-terminator-only
+winwide-ok wide-title-short-buffer
+winwide-ok bad-title-output-pointer
+winwide-ok invalid-title-retains-old-text
+winwide-ok cross-encoding-callback-explicit-failure
+winwide-ok high-alias-is-not-window
+winwide-ok wide-atom-window
+winwide-ok ansi-atom-window
+winwide-ok wide-window-from-ansi-class-not-pretended
+winwide-ok class-module-is-not-ignored
+winwide-ok unknown-atom
+winwide-ok create-validates-title-before-window
+winwide-ok actual-wide-callback-stack-argument
+winwide-ok post-wide-message
+winwide-ok getmessage-bad-output-no-consumption
+winwide-ok getmessage-filter-explicit-failure
+winwide-ok wide-message-preserves-64bit-parameters
+winwide-ok dispatch-wide-real-procedure
+winwide-ok wide-backing-last-pixel
+winwide-ok wide-client-clipping
+winwide-result=PASS
+winwide-ready-close
+winwide-exit:0
+winwide-done

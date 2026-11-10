@@ -20,14 +20,20 @@ use spin::Mutex;
 use crate::sched::{self, Thread};
 
 /// Matches `apic`'s periodic-timer rate.
-pub const TICK_HZ: u64 = 100;
+pub const TICK_HZ: u64 = 1000;
 const NS_PER_TICK: u64 = 1_000_000_000 / TICK_HZ;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
-/// Ticks since boot (≈ 10 ms each).
+/// Millisecond deadlines use elapsed time, not the number of delivered IRQs.
+/// A long syscall with IF=0 may coalesce many periodic interrupts; counting
+/// those interrupts would stretch every sleeper's timeout under load.
 pub fn now() -> u64 {
-    TICKS.load(Ordering::Acquire)
+    if TSC_PER_MS.load(Ordering::Acquire) != 0 {
+        monotonic_ns() / NS_PER_TICK
+    } else {
+        TICKS.load(Ordering::Acquire)
+    }
 }
 
 /// Deadline tick for a relative NT timeout (`rel` in negative 100 ns units, the
@@ -47,7 +53,8 @@ pub fn tick() {
     if !sched::is_started() || crate::smp::this_cpu() != 0 {
         return; // one clock, driven by CPU 0 only
     }
-    let now = TICKS.fetch_add(1, Ordering::AcqRel) + 1;
+    TICKS.fetch_add(1, Ordering::AcqRel);
+    let now = self::now();
     let mut wheel = WHEEL.lock();
     let mut i = 0;
     while i < wheel.len() {
@@ -145,6 +152,11 @@ pub fn monotonic_ns() -> u64 {
 /// Wall-clock time, nanoseconds since the Unix epoch (UTC).
 pub fn realtime_ns() -> u64 {
     BOOT_UNIX_NS.load(Ordering::Relaxed).saturating_add(monotonic_ns())
+}
+
+/// Set the wall clock (root, via `clock_settime` / `settimeofday`): the offset to the monotonic clock changes, nothing else.
+pub fn set_realtime_ns(ns: u64) {
+    BOOT_UNIX_NS.store(ns.saturating_sub(monotonic_ns()), Ordering::Relaxed);
 }
 
 /// Wall-clock time in whole seconds.

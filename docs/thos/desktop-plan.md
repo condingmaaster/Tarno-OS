@@ -102,6 +102,14 @@ and clean shutdown (flush, stop other CPUs, B14). (The default boot is now just
 > from the host with a QEMU `screendump`. `mmap` of `/dev/fb0` works too (device pages carry a software PTE flag so
 > teardown, `munmap` and `fork` never free or copy device frames). Still open for Stage 2: a real display service that owns scanout and a console hand-off.
 
+> **Status 2026-10-04:** Stage 3 exists in a first form, entirely in userspace: `thosdesk` (compositor: z-order, damage rectangles,
+> raise/focus on click, titlebar drag, close button, software cursor, titles, undecorated panel surfaces), the protocol `thoswl.h`
+> (AF_UNIX + SysV shm, Wayland-shaped, own wire format — **D1 decided for now: own protocol**), clients `thoswin`, `thostext`,
+> `thosterm` (a VT100/ANSI terminal around a pty with BusyBox ash) and `thospanel` (launcher). Kernel side: AF_UNIX, shm/memfd,
+> pty, raw key events (`/dev/input/kbd`), console yields the screen while `/dev/fb0` is open. Tests: `desk-test`, `desk-kbd-test`,
+> `desk-term-test`, `desk-panel-test`. Still open for Stage 3: Win32 windows as surfaces (D4), resize/minimise, keyboard layouts
+> beyond ASCII, clipboard, damage-aware clients, fd passing (`SCM_RIGHTS`).
+
 **Stage 1 — Input foundation.** PS/2 **mouse/touchpad** (the 5742G uses a PS/2
 Synaptics-class pad: start with plain relative mode, gestures later), a kernel
 input queue with timestamps, EHCI (USB 2) for external mice/keyboards, a

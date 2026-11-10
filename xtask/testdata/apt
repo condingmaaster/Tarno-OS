@@ -1,0 +1,33 @@
+#!/busybox sh
+# apt / apt-get: the familiar commands on top of thos-pkg (the Debian archive, checksum-checked, installed into /opt/root).
+#   apt update | search <words> | install <names...> | remove <names...> | list [--installed] | show <name>
+# Normally run through sudo (`sudo apt install tree`); the options -y/-q/--no-install-recommends are accepted and ignored.
+B=/busybox
+P="$B sh /bin/thos-pkg"
+[ -x /bin/thos-pkg ] || P="$B sh /thos-pkg"
+usage() { echo "usage: apt update | search <words> | install <names...> | remove <names...> | list [--installed] | show <name>"; exit 1; }
+[ $# -ge 1 ] || usage
+cmd=$1; shift
+args=""
+for a in "$@"; do
+    case "$a" in -*) ;; *) args="$args $a" ;; esac
+done
+set -- $args
+case "$cmd" in
+    update) $P update ;;
+    search) [ $# -ge 1 ] || usage; $P search "$*" ;;
+    install|reinstall)
+        [ $# -ge 1 ] || usage
+        rc=0
+        for n in "$@"; do $P install "$n" || rc=1; done
+        exit $rc ;;
+    remove|purge|autoremove)
+        [ $# -ge 1 ] || { [ "$cmd" = autoremove ] && exit 0; usage; }
+        rc=0
+        for n in "$@"; do $P remove "$n" || rc=1; done
+        exit $rc ;;
+    list) $P installed ;;
+    show) [ $# -ge 1 ] || usage; $P search "$1" ;;
+    upgrade|full-upgrade|dist-upgrade) $P upgrade ;;
+    *) usage ;;
+esac

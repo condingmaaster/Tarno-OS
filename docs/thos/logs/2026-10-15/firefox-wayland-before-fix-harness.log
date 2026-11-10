@@ -1,0 +1,765 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1586:17
+     |
+1586 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.38s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask firefox-test`
+THOS trap: #BP at 0xffffffff800c0685
+THOS: traps ok (returned from #BP)
+THOS: bootstrap heap   98304 KiB
+thos$ THOS_FIREFOX_WAIT=300 LD_DEBUG=files WAYLAND_DEBUG=1 /busybox sh /firefox.sh
+         6:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	initialize program: /usr/lib/firefox-esr/firefox-esr
+         6:	transferring control: /usr/lib/firefox-esr/firefox-esr
+THOS: unhandled syscall 435
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  generating link map
+         6:	file=libnspr4.so [0];  needed by /usr/lib/firefox-esr/libmozsandbox.so [0]
+         6:	calling init: /usr/lib/firefox-esr/libmozsandbox.so
+         6:	opening file=/usr/lib/firefox-esr/libmozsandbox.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libgkcodecs.so
+         6:	opening file=/usr/lib/firefox-esr/libgkcodecs.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/liblgpllibs.so
+         6:	opening file=/usr/lib/firefox-esr/liblgpllibs.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  generating link map
+         6:	file=libplds4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+         6:	file=libplc4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+         6:	calling init: /usr/lib/firefox-esr/libnssutil3.so
+         6:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libnss3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libnss3.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libnss3.so
+         6:	opening file=/usr/lib/firefox-esr/libnss3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libsmime3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libsmime3.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libsmime3.so
+         6:	opening file=/usr/lib/firefox-esr/libsmime3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libmozsqlite3.so
+         6:	opening file=/usr/lib/firefox-esr/libmozsqlite3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libssl3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libssl3.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libssl3.so
+         6:	opening file=/usr/lib/firefox-esr/libssl3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  generating link map
+         6:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+         6:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+         6:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  needed by /lib/x86_64-linux-gnu/libcairo.so.2 [0] (relocation dependency)
+         6:	calling init: /usr/lib/firefox-esr/libmozgtk.so
+         6:	opening file=/usr/lib/firefox-esr/libmozgtk.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  generating link map
+         6:	calling init: /usr/lib/firefox-esr/libmozwayland.so
+         6:	opening file=/usr/lib/firefox-esr/libmozwayland.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+         6:	file=/usr/lib/firefox-esr/libxul.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+         6:	file=/usr/lib/firefox-esr/libxul.so [0];  generating link map
+         6:	file=libasound.so.2 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+         6:	file=libevent-2.1.so.7 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+         6:	file=libvpx.so.9 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+         6:	file=libX11-xcb.so.1 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+         6:	calling init: /usr/lib/firefox-esr/libxul.so
+         6:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: nspr_use_zone_allocator (fatal)
+         6:	opening file=/usr/lib/firefox-esr/libxul.so [0]; direct_opencount=1
+Mozilla Firefox 153.4.0esr
+         6:	calling fini: /usr/lib/firefox-esr/libxul.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libmozwayland.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libmozgtk.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libssl3.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libmozsqlite3.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libsmime3.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libnss3.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libnssutil3.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/liblgpllibs.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libgkcodecs.so [0]
+         6:	calling fini: /usr/lib/firefox-esr/libmozsandbox.so [0]
+        10:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	initialize program: /usr/lib/firefox-esr/firefox-esr
+        10:	transferring control: /usr/lib/firefox-esr/firefox-esr
+THOS: unhandled syscall 435
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  generating link map
+        10:	file=libnspr4.so [0];  needed by /usr/lib/firefox-esr/libmozsandbox.so [0]
+        10:	calling init: /usr/lib/firefox-esr/libmozsandbox.so
+        10:	opening file=/usr/lib/firefox-esr/libmozsandbox.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libgkcodecs.so
+        10:	opening file=/usr/lib/firefox-esr/libgkcodecs.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/liblgpllibs.so
+        10:	opening file=/usr/lib/firefox-esr/liblgpllibs.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  generating link map
+        10:	file=libplds4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        10:	file=libplc4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        10:	calling init: /usr/lib/firefox-esr/libnssutil3.so
+        10:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libnss3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libnss3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libnss3.so
+        10:	opening file=/usr/lib/firefox-esr/libnss3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libsmime3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libsmime3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libsmime3.so
+        10:	opening file=/usr/lib/firefox-esr/libsmime3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libmozsqlite3.so
+        10:	opening file=/usr/lib/firefox-esr/libmozsqlite3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libssl3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libssl3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libssl3.so
+        10:	opening file=/usr/lib/firefox-esr/libssl3.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  generating link map
+        10:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+        10:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+        10:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  needed by /lib/x86_64-linux-gnu/libcairo.so.2 [0] (relocation dependency)
+        10:	calling init: /usr/lib/firefox-esr/libmozgtk.so
+        10:	opening file=/usr/lib/firefox-esr/libmozgtk.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libmozwayland.so
+        10:	opening file=/usr/lib/firefox-esr/libmozwayland.so [0]; direct_opencount=1
+THOS: unhandled syscall 187
+        10:	file=/usr/lib/firefox-esr/libxul.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        10:	file=/usr/lib/firefox-esr/libxul.so [0];  generating link map
+        10:	file=libasound.so.2 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        10:	file=libevent-2.1.so.7 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        10:	file=libvpx.so.9 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        10:	file=libX11-xcb.so.1 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        10:	calling init: /usr/lib/firefox-esr/libxul.so
+        10:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: nspr_use_zone_allocator (fatal)
+        10:	opening file=/usr/lib/firefox-esr/libxul.so [0]; direct_opencount=1
+THOS: unhandled syscall 435
+        14:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/crashhelper [0]
+        14:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/crashhelper [0]
+        14:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/crashhelper [0]
+        14:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/crashhelper [0]
+        14:	initialize program: /usr/lib/firefox-esr/crashhelper
+        14:	transferring control: /usr/lib/firefox-esr/crashhelper
+THOS: unhandled syscall 435
+        10:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+THOS: unhandled syscall 435
+        21:	file=libX11.so.6 [0];  needed by /usr/lib/firefox-esr/glxtest [0]
+        21:	file=libXrandr.so.2 [0];  needed by /usr/lib/firefox-esr/glxtest [0]
+        21:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/glxtest [0]
+        21:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/glxtest [0]
+        21:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/glxtest [0]
+        21:	initialize program: /usr/lib/firefox-esr/glxtest
+        21:	transferring control: /usr/lib/firefox-esr/glxtest
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        48:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	initialize program: /usr/lib/firefox-esr/firefox-esr
+        48:	transferring control: /usr/lib/firefox-esr/firefox-esr
+THOS: unhandled syscall 435
+        48:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  generating link map
+        48:	file=libnspr4.so [0];  needed by /usr/lib/firefox-esr/libmozsandbox.so [0]
+        48:	calling init: /usr/lib/firefox-esr/libmozsandbox.so
+        48:	opening file=/usr/lib/firefox-esr/libmozsandbox.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+        48:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libgkcodecs.so
+        48:	opening file=/usr/lib/firefox-esr/libgkcodecs.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/liblgpllibs.so
+        48:	opening file=/usr/lib/firefox-esr/liblgpllibs.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  generating link map
+        48:	file=libplds4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        48:	file=libplc4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        48:	calling init: /usr/lib/firefox-esr/libnssutil3.so
+        48:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libnss3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libnss3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libnss3.so
+        48:	opening file=/usr/lib/firefox-esr/libnss3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libsmime3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libsmime3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libsmime3.so
+        48:	opening file=/usr/lib/firefox-esr/libsmime3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libmozsqlite3.so
+        48:	opening file=/usr/lib/firefox-esr/libmozsqlite3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libssl3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libssl3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libssl3.so
+        48:	opening file=/usr/lib/firefox-esr/libssl3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  generating link map
+        48:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+THOS: unhandled syscall 140
+        10:	file=libpulse.so.0 [0];  dynamically loaded by /usr/lib/firefox-esr/libxul.so [0]
+        48:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        10:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+        10:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+        10:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+00007005b5cc3998        10:	  base: 0xfile=00007005b5c2e000/usr/lib/firefox-esr/libfreeblpriv3.so   size: 0x [00000000000960100];  dynamically loaded by 
+        10:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+        10:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+        10:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+        10:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+        48:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  needed by /lib/x86_64-linux-gnu/libcairo.so.2 [0] (relocation dependency)
+        48:	calling init: /usr/lib/firefox-esr/libmozgtk.so
+        48:	opening file=/usr/lib/firefox-esr/libmozgtk.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        48:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libmozwayland.so
+        48:	opening file=/usr/lib/firefox-esr/libmozwayland.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libxul.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        10:	file=/usr/lib/firefox-esr/libnssckbi.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        48:	file=/usr/lib/firefox-esr/libxul.so [0];  generating link map
+THOS: unhandled syscall 140
+        70:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	initialize program: /usr/lib/firefox-esr/firefox-esr
+        70:	transferring control: /usr/lib/firefox-esr/firefox-esr
+        70:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  generating link map
+        70:	file=libnspr4.so [0];  needed by /usr/lib/firefox-esr/libmozsandbox.so [0]
+        70:	calling init: /usr/lib/firefox-esr/libmozsandbox.so
+        70:	opening file=/usr/lib/firefox-esr/libmozsandbox.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  generating link map
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+** (firefox-esr:10): [1;33mWARNING[0m **: [34m23:17:44.167[0m: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+        70:	calling init: /usr/lib/firefox-esr/libgkcodecs.so
+        70:	opening file=/usr/lib/firefox-esr/libgkcodecs.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  generating link map
+        70:	calling init: /usr/lib/firefox-esr/liblgpllibs.so
+        70:	opening file=/usr/lib/firefox-esr/liblgpllibs.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  generating link map
+        70:	file=libplds4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        70:	file=libplc4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+        70:	calling init: /usr/lib/firefox-esr/libnssutil3.so
+        70:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libnss3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libnss3.so [0];  generating link map
+        70:	calling init: /usr/lib/firefox-esr/libnss3.so
+        70:	opening file=/usr/lib/firefox-esr/libnss3.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libsmime3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libsmime3.so [0];  generating link map
+        70:	calling init: /usr/lib/firefox-esr/libsmime3.so
+        70:	opening file=/usr/lib/firefox-esr/libsmime3.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  generating link map
+THOS: unhandled syscall 140
+        70:	calling init: /usr/lib/firefox-esr/libmozsqlite3.so
+        70:	opening file=/usr/lib/firefox-esr/libmozsqlite3.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libssl3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libssl3.so [0];  generating link map
+        70:	calling init: /usr/lib/firefox-esr/libssl3.so
+        70:	opening file=/usr/lib/firefox-esr/libssl3.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  generating link map
+        70:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        70:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        70:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  needed by /lib/x86_64-linux-gnu/libcairo.so.2 [0] (relocation dependency)
+        70:	calling init: /usr/lib/firefox-esr/libmozgtk.so
+        70:	opening file=/usr/lib/firefox-esr/libmozgtk.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+        70:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  generating link map
+        70:	calling init: /usr/lib/firefox-esr/libmozwayland.so
+        70:	opening file=/usr/lib/firefox-esr/libmozwayland.so [0]; direct_opencount=1
+        70:	file=/usr/lib/firefox-esr/libxul.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        70:	file=/usr/lib/firefox-esr/libxul.so [0];  generating link map
+THOS: unhandled syscall 140
+        48:	file=libasound.so.2 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        48:	file=libevent-2.1.so.7 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        48:	file=libvpx.so.9 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        48:	file=libX11-xcb.so.1 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        48:	calling init: /usr/lib/firefox-esr/libxul.so
+        48:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: nspr_use_zone_allocator (fatal)
+        48:	opening file=/usr/lib/firefox-esr/libxul.so [0]; direct_opencount=1
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+        48:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+        48:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+        48:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+        48:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+        48:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+        48:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+        48:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+        48:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+        70:	file=libasound.so.2 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        70:	file=libevent-2.1.so.7 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        70:	file=libvpx.so.9 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        70:	file=libX11-xcb.so.1 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+        70:	calling init: /usr/lib/firefox-esr/libxul.so
+        70:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: nspr_use_zone_allocator (fatal)
+        70:	opening file=/usr/lib/firefox-esr/libxul.so [0]; direct_opencount=1
+THOS: unhandled syscall 435
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 435
+       113:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       119:	file=/usr/lib/firefox-esr/libmozavutil.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       119:	file=/usr/lib/firefox-esr/libmozavutil.so [0];  generating link map
+       119:	calling init: /usr/lib/firefox-esr/libmozavutil.so
+       119:	opening file=/usr/lib/firefox-esr/libmozavutil.so [0]; direct_opencount=1
+       119:	file=/usr/lib/firefox-esr/libmozavcodec.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       119:	file=/usr/lib/firefox-esr/libmozavcodec.so [0];  generating link map
+       119:	calling init: /usr/lib/firefox-esr/libmozavcodec.so
+       119:	opening file=/usr/lib/firefox-esr/libmozavcodec.so [0]; direct_opencount=1
+       119:	/usr/lib/firefox-esr/libmozavcodec.so: error: symbol lookup error: undefined symbol: avcodec_get_supported_config (fatal)
+       119:	/usr/lib/firefox-esr/libmozavutil.so: error: symbol lookup error: undefined symbol: av_hwdevice_ctx_create (fatal)
+       119:	/usr/lib/firefox-esr/libmozavutil.so: error: symbol lookup error: undefined symbol: av_hwframe_map (fatal)
+       119:	/usr/lib/firefox-esr/libmozavcodec.so: error: symbol lookup error: undefined symbol: avcodec_get_hw_frames_parameters (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 435
+       159:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+[ 653047.926] {Default Queue}  -> xdg_toplevel#28.set_title("Mozilla Firefox")
+[ 653048.622] {Default Queue}  -> xdg_toplevel#28.set_app_id("firefox-esr")
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 435
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       197:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       159:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       159:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+       159:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+       159:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+       159:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       159:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+       159:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+       159:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+       159:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+[ 782957.752] {Default Queue}  -> xdg_toplevel#28.set_title("THOS Firefox verification — Mozilla Firefox")
+THOS: unhandled syscall 435
+       236:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       197:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       197:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+THOS: unhandled syscall 140
+       197:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+       197:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+       197:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       197:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+       197:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+       197:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+       197:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       269:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+       197:	/usr/lib/firefox-esr/libfreeblpriv3.so: error: symbol lookup error: undefined symbol: FT_Face_GetCharVariantIndex (fatal)
+       197:	/usr/lib/firefox-esr/libsoftokn3.so: error: symbol lookup error: undefined symbol: FT_Face_GetCharVariantIndex (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       236:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       236:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+       236:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+       236:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+       236:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       236:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+       236:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+       236:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+       236:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+       269:	file=libpango-1.0.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+       269:	file=libgdk_pixbuf-2.0.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+       269:	file=libgio-2.0.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+THOS: unhandled syscall 435
+THOS: unhandled syscall 140
+       298:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+       269:	file=libgobject-2.0.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+THOS: unhandled syscall 140
+       269:	file=libglib-2.0.so.0 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+       269:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+       269:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       269:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/crashreporter [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 435
+        10:	/usr/lib/firefox-esr/libxul.so: error: symbol lookup error: undefined symbol: gdk_wayland_window_get_xdg_toplevel (fatal)
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       269:	initialize program: /usr/lib/firefox-esr/crashreporter
+       269:	transferring control: /usr/lib/firefox-esr/crashreporter
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 435
+THOS: unhandled syscall 140
+       298:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       298:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+       298:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+       298:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+       298:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       298:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+       298:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       298:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+THOS trap: #PF page fault [user] rip=0x700237343afa cr2=0x0 err=0x6
+       324:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: gtk_progress_get_type (fatal)
+       298:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+       298:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+       298:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+THOS: unhandled syscall 140
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 70 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	file=libstdc++.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	file=libm.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=libgcc_s.so.1 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=libc.so.6 [0];  needed by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	initialize program: /usr/lib/firefox-esr/firefox-esr
+       332:	transferring control: /usr/lib/firefox-esr/firefox-esr
+       332:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libmozsandbox.so [0];  generating link map
+       332:	file=libnspr4.so [0];  needed by /usr/lib/firefox-esr/libmozsandbox.so [0]
+       332:	calling init: /usr/lib/firefox-esr/libmozsandbox.so
+       332:	opening file=/usr/lib/firefox-esr/libmozsandbox.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 252
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	file=/usr/lib/firefox-esr/libgkcodecs.so [0];  generating link map
+THOS: unhandled syscall 140
+       324:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       324:	file=/usr/lib/firefox-esr/libsoftokn3.so [0];  generating link map
+       324:	calling init: /usr/lib/firefox-esr/libsoftokn3.so
+       324:	opening file=/usr/lib/firefox-esr/libsoftokn3.so [0]; direct_opencount=1
+       324:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  dynamically loaded by /lib/x86_64-linux-gnu/libnspr4.so [0]
+       324:	file=/usr/lib/firefox-esr/libfreeblpriv3.so [0];  generating link map
+       324:	calling init: /usr/lib/firefox-esr/libfreeblpriv3.so
+       324:	opening file=/usr/lib/firefox-esr/libfreeblpriv3.so [0]; direct_opencount=1
+       324:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=2
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	calling init: /usr/lib/firefox-esr/libgkcodecs.so
+       332:	opening file=/usr/lib/firefox-esr/libgkcodecs.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/liblgpllibs.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/liblgpllibs.so
+       332:	opening file=/usr/lib/firefox-esr/liblgpllibs.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libnssutil3.so [0];  generating link map
+       332:	file=libplds4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+       332:	file=libplc4.so [0];  needed by /usr/lib/firefox-esr/libnssutil3.so [0]
+       332:	calling init: /usr/lib/firefox-esr/libnssutil3.so
+       332:	opening file=/usr/lib/firefox-esr/libnssutil3.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libnss3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libnss3.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/libnss3.so
+       332:	opening file=/usr/lib/firefox-esr/libnss3.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libsmime3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+THOS: unhandled syscall 140
+       332:	file=/usr/lib/firefox-esr/libsmime3.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/libsmime3.so
+       332:	opening file=/usr/lib/firefox-esr/libsmime3.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libmozsqlite3.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/libmozsqlite3.so
+       332:	opening file=/usr/lib/firefox-esr/libmozsqlite3.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libssl3.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libssl3.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/libssl3.so
+       332:	opening file=/usr/lib/firefox-esr/libssl3.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  generating link map
+       332:	file=libgtk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+THOS: unhandled syscall 73
+       332:	file=libgdk-3.so.0 [0];  needed by /usr/lib/firefox-esr/libmozgtk.so [0]
+       332:	file=/usr/lib/firefox-esr/libmozgtk.so [0];  needed by /lib/x86_64-linux-gnu/libcairo.so.2 [0] (relocation dependency)
+       332:	calling init: /usr/lib/firefox-esr/libmozgtk.so
+       332:	opening file=/usr/lib/firefox-esr/libmozgtk.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libmozwayland.so [0];  generating link map
+       332:	calling init: /usr/lib/firefox-esr/libmozwayland.so
+       332:	opening file=/usr/lib/firefox-esr/libmozwayland.so [0]; direct_opencount=1
+       332:	file=/usr/lib/firefox-esr/libxul.so [0];  dynamically loaded by /usr/lib/firefox-esr/firefox-esr [0]
+       332:	file=/usr/lib/firefox-esr/libxul.so [0];  generating link map
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+       332:	file=libasound.so.2 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+       332:	file=libevent-2.1.so.7 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+       332:	file=libvpx.so.9 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+       332:	file=libX11-xcb.so.1 [0];  needed by /usr/lib/firefox-esr/libxul.so [0]
+       332:	calling init: /usr/lib/firefox-esr/libxul.so
+       332:	/usr/lib/firefox-esr/firefox-esr: error: symbol lookup error: undefined symbol: nspr_use_zone_allocator (fatal)
+       332:	opening file=/usr/lib/firefox-esr/libxul.so [0]; direct_opencount=1
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 324 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 298 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140
+THOS: unhandled syscall 140

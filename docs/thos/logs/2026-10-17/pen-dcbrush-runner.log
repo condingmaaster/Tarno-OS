@@ -1,0 +1,85 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1859:17
+     |
+1859 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.03s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask gdi-dcbrush-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (2.9% non-contiguous), 103812/524288 blocks
+gdi-dcbrush-ok default-first
+gdi-dcbrush-ok default-second
+gdi-dcbrush-ok valid-first-rectangle
+gdi-dcbrush-ok valid-second-rectangle
+gdi-dcbrush-ok isolated-first
+gdi-dcbrush-ok isolated-second
+gdi-dcbrush-ok null-brush-refused
+gdi-dcbrush-ok null-brush-keeps-color
+gdi-dcbrush-ok unknown-dc-select
+gdi-dcbrush-ok stale-dc-select
+gdi-dcbrush-ok invalid-window-getdc
+gdi-dcbrush-ok invalid-dc-read
+gdi-dcbrush-ok invalid-dc-write
+gdi-dcbrush-ok desktop-pixel-preserved
+gdi-dcbrush-ok invalid-dc-rectangle
+gdi-dcbrush-ok desktop-rectangle-preserved
+gdi-dcbrush-ok invalid-dc-read
+gdi-dcbrush-ok invalid-dc-write
+gdi-dcbrush-ok desktop-pixel-preserved
+gdi-dcbrush-ok invalid-dc-rectangle
+gdi-dcbrush-ok desktop-rectangle-preserved
+gdi-dcbrush-ok invalid-dc-read
+gdi-dcbrush-ok invalid-dc-write
+gdi-dcbrush-ok desktop-pixel-preserved
+gdi-dcbrush-ok invalid-dc-rectangle
+gdi-dcbrush-ok desktop-rectangle-preserved
+gdi-dcbrush-ok high-alias-read
+gdi-dcbrush-ok high-alias-write
+gdi-dcbrush-ok valid-window-preserved
+gdi-dcbrush-ok dc-brush-distinct-token
+gdi-dcbrush-ok stock-gray-tones
+gdi-dcbrush-ok unsupported-stock-not-white-brush
+gdi-dcbrush-ok initial-dc-color-white
+gdi-dcbrush-ok select-dc-brush-returns-solid
+gdi-dcbrush-ok set-dc-color-returns-old
+gdi-dcbrush-ok dc-brush-rasterized
+gdi-dcbrush-ok solid-selection-returns-dc-token
+gdi-dcbrush-ok dc-color-persists-independent-of-selection
+gdi-dcbrush-ok solid-not-recolored
+gdi-dcbrush-ok reselect-dc-preserves-color
+gdi-dcbrush-ok dc-new-color-used
+gdi-dcbrush-ok other-window-color-independent
+gdi-dcbrush-ok fillrect-explicit-solid
+gdi-dcbrush-ok fillrect-excludes-right-bottom
+gdi-dcbrush-ok fillrect-preserves-selection
+gdi-dcbrush-ok fillrect-preserves-dc-color
+gdi-dcbrush-ok fillrect-negative-clipped
+gdi-dcbrush-ok fillrect-explicit-dc-brush
+gdi-dcbrush-ok invalid-brush-no-paint
+gdi-dcbrush-ok invalid-dc-brush-color
+gdi-dcbrush-ok bad-pointer-fillrect
+gdi-dcbrush-ok memory-default-dc-color
+gdi-dcbrush-ok memory-dc-color-independent
+gdi-dcbrush-ok memory-explicit-dc-brush
+gdi-dcbrush-ok memory-fill-preserves-selected-white
+gdi-dcbrush-ok memory-selected-dc-color
+gdi-dcbrush-ok rectangle-default-pen-black
+gdi-dcbrush-ok screen-color-independent
+gdi-dcbrush-result=PASS
+gdi-dcbrush-ready-close
+gdi-dcbrush-close
+gdi-dcbrush-exit:0
+gdi-dcbrush-done

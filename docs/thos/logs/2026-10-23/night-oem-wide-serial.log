@@ -1,0 +1,126 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800eade5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       1940 MiB in 496275 frames
+THOS: largest region   1939 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   496275 -> 496274 -> 496275 (phys 0x794d6000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62531 counts/ms
+THOS: clock            TSC 2491 MHz; RTC 1792792138 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 4 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 1
+THOS: AP 2 online     lapic 2
+THOS: AP 3 online     lapic 3
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 1198080 sectors (585 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (520 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net              no network device
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thos
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ /busybox sh /desk-winwide.sh
+desk: ready 1280x800
+winwide-ok wide-extended-real-atom
+winwide-ok duplicate-keeps-original-class
+winwide-ok plain-wide-distinct-atom
+winwide-ok ansi-extended-distinct-atom
+winwide-ok bad-class-size
+winwide-ok bad-class-user-pointer
+winwide-ok unsupported-extra-memory
+winwide-ok invalid-utf16-class
+winwide-ok bounded-class-name
+winwide-ok same-frame-geometry
+winwide-ok wide-name-window
+desk: win32 window 1 created 400x240 at 100,80
+winwide-ok wide-client-size
+winwide-ok wide-text-callback
+winwide-ok wide-title-length-counts-utf16
+winwide-ok wide-title-roundtrip
+winwide-ok wide-title-empty-capacity
+winwide-ok wide-title-terminator-only
+winwide-ok wide-title-short-buffer
+winwide-ok bad-title-output-pointer
+winwide-ok invalid-title-retains-old-text
+winwide-ok cross-encoding-callback-explicit-failure
+winwide-ok high-alias-is-not-window
+winwide-ok wide-atom-window
+desk: win32 window 2 created 16x16 at 180,140
+winwide-ok ansi-atom-window
+desk: win32 window 3 created 16x16 at 260,200
+winwide-ok wide-window-from-ansi-class-not-pretended
+winwide-ok class-module-is-not-ignored
+winwide-ok unknown-atom
+winwide-ok create-validates-title-before-window
+winwide-ok actual-wide-callback-stack-argument
+winwide-ok post-wide-message
+winwide-ok getmessage-bad-output-no-consumption
+winwide-ok getmessage-filter-explicit-failure
+winwide-ok wide-message-preserves-64bit-parameters
+winwide-ok dispatch-wide-real-procedure
+winwide-ok wide-backing-last-pixel
+winwide-ok wide-client-clipping
+winwide-result=PASS
+winwide-ready-close
+winwide-exit:0
+desk: win32 window 1 closed
+desk: win32 window 2 closed
+desk: win32 window 3 closed
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 0 window(s) at exit
+winwide-done
+thos$ 

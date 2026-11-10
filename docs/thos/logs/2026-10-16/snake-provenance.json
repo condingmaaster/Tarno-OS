@@ -1,0 +1,76 @@
+{
+  "repository": "https://github.com/Zcytxcbyz/Snake",
+  "commit": "b28f387a8f16442bd12078c7ce1ed8a21cc501da",
+  "downloaded_at": "2026-10-16T20:31:42.524995+00:00",
+  "bytes": 40439,
+  "files": [
+    {
+      "path": "target/vendor-tests/snake/LICENSE",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/LICENSE",
+      "bytes": 1066,
+      "sha256": "513490b9bdb900dcf6c9694e3d58dde8335b13c9ac4af95d18666aa7e2fa8ff2"
+    },
+    {
+      "path": "target/vendor-tests/snake/README.md",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/README.md",
+      "bytes": 3286,
+      "sha256": "dfd5ad79a4d8859b8f741f718e54f4d627ccb27ca6e1ecf1733c9fc9a4347269"
+    },
+    {
+      "path": "target/vendor-tests/snake/CMakeLists.txt",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/CMakeLists.txt",
+      "bytes": 847,
+      "sha256": "d5e4d32c9701b9d738948200cda9bed393a6468310ace56de47dd5d55933a65b"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/main.c",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/main.c",
+      "bytes": 5598,
+      "sha256": "f09fa5e751e845a40bf9a88b30e796f675f4a697aebc9ce98d43ad5c01a7d6f9"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/config.c",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/config.c",
+      "bytes": 3252,
+      "sha256": "29a224eb3f39a46f70ad09cb3c865c0cb8bfc6a481ed69c9375ce55ead3a2abe"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/config.h",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/config.h",
+      "bytes": 2951,
+      "sha256": "7917c6a6203812994cf8d5e6c10e4a71adfb6cfdcccaa4072e141bae0eded4f5"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/game.c",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/game.c",
+      "bytes": 10420,
+      "sha256": "a8d301e03cf87aed90f8ebb6d31e3a518ac3e438974fb49ec1247bb95ae8d638"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/game.h",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/game.h",
+      "bytes": 2329,
+      "sha256": "2dfb69310fa3c6a5fcfa5b388eef1748ff2df19786a36b25ddfc1e54d6a6e835"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/render.c",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/render.c",
+      "bytes": 10166,
+      "sha256": "1f4457041a3e67f39b5e901b44452bd1853f8b5f212c5b4a866c72cb33fe8ace"
+    },
+    {
+      "path": "target/vendor-tests/snake/src/render.h",
+      "url": "https://raw.githubusercontent.com/Zcytxcbyz/Snake/b28f387a8f16442bd12078c7ce1ed8a21cc501da/src/render.h",
+      "bytes": 524,
+      "sha256": "0a0977fc5fda6304ee1c8aa347be3b45f9206f1cf8267e5384698fd880517935"
+    }
+  ],
+  "execution": "not executed; inspection only before isolated guest test",
+  "binary": {
+    "path": "target/vendor-tests/snake/snake64.exe",
+    "bytes": 266218,
+    "sha256": "542301c2cea7a031ead1c57074781ca2f05733f627fc7e0a9f35913dbb6209d3",
+    "kind": "local x64 MinGW cross-build of unchanged pinned upstream C sources, not an upstream release binary",
+    "command": "x86_64-w64-mingw32-gcc -O1 -municode -mwindows -DUNICODE -D_UNICODE -DWIN32_LEAN_AND_MEAN -DNOMINMAX -o snake64.exe src/{main,config,game,render}.c -luser32 -lgdi32 -lmsimg32"
+  }
+}

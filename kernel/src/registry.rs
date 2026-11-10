@@ -9,9 +9,10 @@
 //! Each top-level root in [`HIVES`] is a **hive**: its own backing file under
 //! `/etc/thos/registry/`, loaded once at boot ([`load_hives`]) and rewritten
 //! on every mutation under it ([`create`] / [`set_value`] / [`delete_key`]) —
-//! durable by default, no explicit flush needed (the tradeoff: every write is
-//! an ext2 write; fine for a registry, which isn't a hot path). Not yet
-//! transactional (a crash mid-write can still lose that one write).
+//! serialized staged hive replacement: reported filesystem failures leave the
+//! live tree and notifications unchanged. Every mutation writes its affected
+//! hive; no periodic worker. This is not a journal, a physical-drive flush
+//! guarantee or recovery from lower layers that fail without reporting it.
 //!
 //! **Change-notify** (real, not a stub): [`watch`] registers a one-shot
 //! signal on an already-created `Event` object, fired the next time a given
@@ -35,7 +36,6 @@
 //! ownership data and the policy predicate ([`write_ok`]).
 
 use alloc::collections::BTreeMap;
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -47,11 +47,13 @@ use crate::ext2::Ext2;
 use crate::wait::Event;
 
 /// One stored value: an `REG_*` type tag plus its raw bytes.
+#[derive(Clone)]
 pub struct Value {
     pub ty: u32,
     pub data: Vec<u8>,
 }
 
+#[derive(Clone)]
 struct Key {
     subkeys: BTreeMap<String, Key>,
     values: BTreeMap<String, Value>,
@@ -77,6 +79,11 @@ fn write_ok(owner_uid: u32, uid: u32) -> bool {
     uid == 0 || uid == owner_uid
 }
 
+/// Writers stage one private hive; readers see the old committed tree until
+/// the filesystem accepts the replacement. Contenders sleep across device IO.
+static WRITER:crate::io_mutex::IoMutex<()> = crate::io_mutex::IoMutex::new(());
+#[derive(Clone,Copy,Debug,PartialEq,Eq)]
+pub enum Error {NotFound,Denied,Io,Unsupported,Resources}
 static ROOT: Mutex<Key> = Mutex::new(Key::new());
 static SEEDED: AtomicBool = AtomicBool::new(false);
 
@@ -95,6 +102,7 @@ static WATCHES: Mutex<Vec<WatchEntry>> = Mutex::new(Vec::new());
 /// real NT requires an open handle to the key, which already implies it
 /// exists).
 pub fn watch(path: &str, watch_tree: bool, event: Arc<Event>) -> bool {
+    let _writer=WRITER.lock();
     let comps = components(path);
     if !run(|root| find(root, &comps).is_some()) {
         return false;
@@ -195,24 +203,24 @@ pub fn create(path: &str) -> bool {
 
 /// Create `path` (and any missing ancestors) — newly created keys along the
 /// way are owned by `uid`; an already-existing key keeps its owner
-/// unchanged (same "overwrite never changes the owner" rule
-/// `ext2::write_path_owned` follows). `false` only for an empty path.
+/// unchanged. Returns false on unsupported paths or reported persistence
+/// failures, without publishing a staged mutation.
 pub fn create_owned(path: &str, uid: u32) -> bool {
-    let comps = components(path);
-    if comps.is_empty() {
-        return false;
-    }
-    // Only a genuine new key is a change — re-"creating" an existing one
-    // (`NtCreateKey`'s open-if-present behavior) must not fire a watch.
-    let existed = run(|root| find(root, &comps).is_some());
-    run(|root| {
-        make(root, &comps, uid);
-    });
-    persist(&comps);
-    if !existed {
-        fire(&comps);
-    }
-    true
+    create_inner(path,uid,false).is_ok()
+}
+/// Caller permissions are checked inside the same serialized transaction as
+/// the mutation, so delete/recreate cannot race a detached permission check.
+pub fn create_for_user(path:&str,uid:u32)->Result<bool,Error>{create_inner(path,uid,true)}
+fn create_inner(path:&str,uid:u32,enforce:bool)->Result<bool,Error>{
+    change(path,Change::Create,|root,relative|{
+        if find(root,relative).is_some(){return Ok(false);}
+        if enforce{
+            let mut ancestor=relative;
+            while find(root,ancestor).is_none(){ancestor=&ancestor[..ancestor.len()-1];}
+            if !write_ok(find(root,ancestor).unwrap().owner_uid,uid){return Err(Error::Denied);}
+        }
+        make(root,relative,uid);Ok(true)
+    })
 }
 
 /// The owner uid of `path`'s key, if it exists.
@@ -273,21 +281,18 @@ pub fn enumerate_value(path: &str, index: usize) -> Option<(String, u32, usize)>
 }
 
 /// Set (or replace) a value on an existing key. `false` if the key is missing.
-pub fn set_value(path: &str, name: &str, ty: u32, data: &[u8]) -> bool {
-    let comps = components(path);
-    let ok = run(|root| match find_mut(root, &comps) {
-        Some(k) => {
-            k.values
-                .insert(name.to_ascii_lowercase(), Value { ty, data: data.to_vec() });
-            true
-        }
-        None => false,
-    });
-    if ok {
-        persist(&comps);
-        fire(&comps);
-    }
-    ok
+pub fn set_value(path:&str,name:&str,ty:u32,data:&[u8])->bool {
+    set_value_for_user(path,name,ty,data,0).is_ok()
+}
+pub fn set_value_for_user(path:&str,name:&str,ty:u32,data:&[u8],uid:u32)->Result<(),Error>{
+    if data.len()>MAX_VALUE_BYTES{return Err(Error::Resources);}
+    change(path,Change::Value,|root,relative|{
+        let key=find_mut(root,relative).ok_or(Error::NotFound)?;
+        if !write_ok(key.owner_uid,uid){return Err(Error::Denied);}
+        let mut name=copy_string(name)?;name.make_ascii_lowercase();
+        let mut bytes=Vec::new();bytes.try_reserve_exact(data.len()).map_err(|_|Error::Resources)?;bytes.extend_from_slice(data);
+        key.values.insert(name,Value{ty,data:bytes});Ok(true)
+    }).map(|_|())
 }
 
 /// Read a value back as `(type, bytes)`.
@@ -303,26 +308,15 @@ pub fn query_value(path: &str, name: &str) -> Option<(u32, Vec<u8>)> {
 
 /// Remove a leaf key from its parent. `false` if the path is empty, the parent
 /// is missing, or the key does not exist.
-pub fn delete_key(path: &str) -> bool {
-    let comps = components(path);
-    if comps.is_empty() {
-        return false;
-    }
-    let (parent, leaf) = comps.split_at(comps.len() - 1);
-    let ok = run(|root| match find_mut(root, parent) {
-        Some(p) => p.subkeys.remove(&leaf[0]).is_some(),
-        None => false,
-    });
-    if ok {
-        persist(&comps);
-        // The change is on the *parent* — a subkey disappeared from its
-        // list, same as `create_owned`'s "a subkey appeared" fires the
-        // parent, not (today) a dedicated "the watched key itself was
-        // deleted" notification on `comps` — a real, scoped-out gap
-        // relative to full NT semantics.
-        fire(parent);
-    }
-    ok
+pub fn delete_key(path:&str)->bool {delete_key_for_user(path,0).is_ok()}
+pub fn delete_key_for_user(path:&str,uid:u32)->Result<(),Error>{
+    change(path,Change::Delete,|root,relative|{
+        let key=find(root,relative).ok_or(Error::NotFound)?;
+        if !write_ok(key.owner_uid,uid)||relative.is_empty(){return Err(Error::Denied);}
+        let(parent,leaf)=relative.split_at(relative.len()-1);
+        find_mut(root,parent).ok_or(Error::NotFound)?.subkeys.remove(&leaf[0]).ok_or(Error::NotFound)?;
+        Ok(true)
+    }).map(|_|())
 }
 
 // --- hives: persistence to ext2 ---------------------------------------
@@ -340,22 +334,39 @@ fn under_hive(comps: &[String], root: &[&str]) -> bool {
     comps.len() >= root.len() && comps.iter().zip(root.iter()).all(|(a, b)| a == b)
 }
 
-/// Rewrite whichever hive (if any) `comps` falls under. Best-effort: a
-/// mid-boot ext2 hiccup must not make the in-memory registry unusable, so
-/// failures are silently swallowed — the change still lives in RAM.
-fn persist(comps: &[String]) {
-    let Some((root, path)) = HIVES.iter().find(|(root, _)| under_hive(comps, root)) else {
-        return;
-    };
-    let Ok(fs) = crate::ext2::open() else { return };
-    let root_comps: Vec<String> = root.iter().map(|s| s.to_string()).collect();
-    let Some(bytes) = run(|r| find(r, &root_comps).map(serialize_hive)) else {
-        return;
-    };
-    let _ = fs.mkdir_path("/etc");
-    let _ = fs.mkdir_path("/etc/thos");
-    let _ = fs.mkdir_path("/etc/thos/registry");
-    let _ = fs.write_path(path, &bytes);
+/// Stage only the affected hive while holding a sleepable writer lock. No
+/// live mutation/notification is published on a reported filesystem failure;
+/// concurrent readers keep seeing the previous committed tree during IO.
+/// This is operational error rollback, NOT a journal or power-loss guarantee.
+#[derive(Clone,Copy)]enum Change {Create,Value,Delete}
+fn change(path:&str,kind:Change,operation:impl FnOnce(&mut Key,&[String])->Result<bool,Error>)->Result<bool,Error>{
+    let comps=components(path);
+    let _writer=WRITER.lock();
+    let(hive,file)=HIVES.iter().find(|(root,_)|under_hive(&comps,root)).ok_or(Error::Unsupported)?;
+    let root_comps:Vec<String>=hive.iter().map(|s|s.to_string()).collect();
+    if matches!(kind,Change::Create)&&run(|r|find(r,&comps).is_some()){return Ok(false);}
+    // Reject before constructing a deep staged tree (including its recursive
+    // drop), not only later while serializing that temporary tree.
+    if comps.len()-hive.len()>MAX_DEPTH{return Err(Error::Resources);}
+    let mut staged=run(|r|find(r,&root_comps).map(|h|{measure(h)?;copy_key(h)})).ok_or(Error::NotFound)??;
+    if !operation(&mut staged,&comps[hive.len()..])?{return Ok(false);}
+    let bytes=serialize_hive(&staged)?;
+    persist_hive(file,&bytes)?;
+    run(|root|*find_mut(root,&root_comps).expect("seeded hive under serialized writer")=staged);
+    fire(if matches!(kind,Change::Delete){&comps[..comps.len()-1]}else{&comps});
+    Ok(true)
+}
+fn persist_hive(path:&str,bytes:&[u8])->Result<(),Error>{
+    let fs=crate::ext2::open().map_err(|_|Error::Io)?;
+    for directory in ["/etc","/etc/thos","/etc/thos/registry"]{
+        if let Some(ino)=fs.path_lookup_nofollow(directory){
+            if fs.read_inode(ino).mode&0xf000!=0x4000{return Err(Error::Io);}
+        }else{fs.mkdir_path(directory).map_err(|_|Error::Io)?;}
+    }
+    if let Some(ino)=fs.path_lookup_nofollow(path){
+        if fs.read_inode(ino).mode&0xf000!=0x8000{return Err(Error::Io);}
+    }
+    fs.write_path(path,bytes).map_err(|_|Error::Io)
 }
 
 /// Load every hive's backing file (if present — first boot has none) into the
@@ -394,30 +405,102 @@ pub fn load_hives(fs: &Ext2) -> usize {
 /// `O` records are new (per-key security) — an old hive with none loads
 /// every key as uid `0`, exactly its prior behavior, so this is backward
 /// compatible without a format-version bump.
-fn serialize_hive(base: &Key) -> Vec<u8> {
-    let mut out = String::from("thos-hive v1\n");
-    fn walk(k: &Key, prefix: &str, out: &mut String) {
-        if k.owner_uid != 0 {
-            let _ = writeln!(out, "O {} {}", hex(prefix.as_bytes()), k.owner_uid);
-        }
-        for (name, v) in &k.values {
-            let _ = writeln!(
-                out,
-                "V {} {} {} {}",
-                hex(prefix.as_bytes()),
-                hex(name.as_bytes()),
-                v.ty,
-                hex(&v.data)
-            );
-        }
-        for (name, sub) in &k.subkeys {
-            let child = if prefix.is_empty() { name.clone() } else { format!("{prefix}\\{name}") };
-            let _ = writeln!(out, "K {}", hex(child.as_bytes()));
-            walk(sub, &child, out);
+// A bounded prototype hive profile. Existing larger hives are still readable;
+// mutations fail with resources rather than cloning/serializing without bound.
+pub const MAX_VALUE_BYTES:usize=1024*1024;
+pub const MAX_HIVE_BYTES:usize=4*1024*1024;
+const MAX_KEYS:usize=4096;
+const MAX_VALUES:usize=16384;
+// Recursive tree copying/formatting shares a16KiB kernel stack.
+const MAX_DEPTH:usize=32;
+fn copy_string(s:&str)->Result<String,Error>{let mut out=String::new();out.try_reserve_exact(s.len()).map_err(|_|Error::Resources)?;out.push_str(s);Ok(out)}
+/// Postorder copy with an explicit, fallibly allocated work stack. Recursive
+/// copies used about448 bytes per hierarchy level in the optimized kernel;
+/// a32-level tree exhausted the16KiB syscall stack before its next allocation.
+fn copy_key(key:&Key)->Result<Key,Error>{
+    struct Frame<'a>{
+        children:alloc::collections::btree_map::Iter<'a,String,Key>,
+        out:Key,
+        name:Option<String>,
+    }
+    impl<'a> Frame<'a>{
+        fn new(key:&'a Key,name:Option<String>)->Result<Self,Error>{
+            let mut out=Key::owned(key.owner_uid);
+            for(name,value)in &key.values{
+                let mut data=Vec::new();
+                data.try_reserve_exact(value.data.len()).map_err(|_|Error::Resources)?;
+                data.extend_from_slice(&value.data);
+                out.values.insert(copy_string(name)?,Value{ty:value.ty,data});
+            }
+            Ok(Self{children:key.subkeys.iter(),out,name})
         }
     }
-    walk(base, "", &mut out);
-    out.into_bytes()
+    let mut stack=Vec::new();
+    stack.try_reserve_exact(MAX_DEPTH+1).map_err(|_|Error::Resources)?;
+    stack.push(Frame::new(key,None)?);
+    loop{
+        let child=stack.last_mut().unwrap().children.next();
+        if let Some((name,key))=child{
+            if stack.len()>=MAX_DEPTH+1{return Err(Error::Resources);}
+            stack.push(Frame::new(key,Some(copy_string(name)?))?);
+        }else{
+            let Frame{out,name,..}=stack.pop().unwrap();
+            if let Some(parent)=stack.last_mut(){parent.out.subkeys.insert(name.unwrap(),out);}
+            else{return Ok(out);}
+        }
+    }
+}
+struct Budget{bytes:usize,keys:usize,values:usize}
+impl Budget{fn add(&mut self,n:usize)->Result<(),Error>{self.bytes=self.bytes.checked_add(n).filter(|n|*n<=MAX_HIVE_BYTES).ok_or(Error::Resources)?;Ok(())}}
+fn hex_length(n:usize)->Result<usize,Error>{n.checked_mul(2).map(|n|n.max(1)).ok_or(Error::Resources)}
+fn digits(mut n:u32)->usize{let mut count=1;while n>=10{n/=10;count+=1;}count}
+fn measure(base:&Key)->Result<Budget,Error>{
+    fn walk(k:&Key,prefix:usize,depth:usize,out:&mut Budget)->Result<(),Error>{
+        out.keys+=1;if depth>MAX_DEPTH||out.keys>MAX_KEYS{return Err(Error::Resources);}
+        if k.owner_uid!=0{out.add(4+hex_length(prefix)?+digits(k.owner_uid))?;}
+        for(name,value)in &k.values{
+            out.values+=1;if out.values>MAX_VALUES||value.data.len()>MAX_VALUE_BYTES{return Err(Error::Resources);}
+            out.add(6+hex_length(prefix)?+hex_length(name.len())?+digits(value.ty)+hex_length(value.data.len())?)?;
+        }
+        for(name,child)in &k.subkeys{
+            let length=prefix.checked_add(usize::from(prefix!=0)).and_then(|n|n.checked_add(name.len())).ok_or(Error::Resources)?;
+            out.add(3+hex_length(length)?)?;walk(child,length,depth+1,out)?;
+        }
+        Ok(())
+    }
+    let mut out=Budget{bytes:"thos-hive v1\n".len(),keys:0,values:0};walk(base,0,0,&mut out)?;Ok(out)
+}
+struct HiveOutput{out:String}
+impl core::fmt::Write for HiveOutput{
+    fn write_str(&mut self,s:&str)->core::fmt::Result{
+        if self.out.len().checked_add(s.len()).filter(|n|*n<=MAX_HIVE_BYTES).is_none(){return Err(core::fmt::Error);}
+        self.out.try_reserve(s.len()).map_err(|_|core::fmt::Error)?;self.out.push_str(s);Ok(())
+    }
+}
+struct Hex<'a>(&'a[u8]);
+impl core::fmt::Display for Hex<'_>{
+    fn fmt(&self,f:&mut core::fmt::Formatter<'_>)->core::fmt::Result{
+        const TABLE:&[u8;16]=b"0123456789abcdef";
+        if self.0.is_empty(){return f.write_str("-");}
+        for chunk in self.0.chunks(64){let mut text=[0u8;128];for(i,&b)in chunk.iter().enumerate(){text[i*2]=TABLE[(b>>4)as usize];text[i*2+1]=TABLE[(b&15)as usize];}f.write_str(core::str::from_utf8(&text[..chunk.len()*2]).unwrap())?;}
+        Ok(())
+    }
+}
+fn serialize_hive(base:&Key)->Result<Vec<u8>,Error>{
+    fn walk(k:&Key,prefix:&str,out:&mut HiveOutput)->Result<(),Error>{
+        if k.owner_uid!=0{writeln!(out,"O {} {}",Hex(prefix.as_bytes()),k.owner_uid).map_err(|_|Error::Resources)?;}
+        for(name,value)in &k.values{writeln!(out,"V {} {} {} {}",Hex(prefix.as_bytes()),Hex(name.as_bytes()),value.ty,Hex(&value.data)).map_err(|_|Error::Resources)?;}
+        for(name,child)in &k.subkeys{
+            let n=prefix.len()+usize::from(!prefix.is_empty())+name.len();let mut path=String::new();path.try_reserve_exact(n).map_err(|_|Error::Resources)?;
+            path.push_str(prefix);if !prefix.is_empty(){path.push('\\');}path.push_str(name);
+            writeln!(out,"K {}",Hex(path.as_bytes())).map_err(|_|Error::Resources)?;walk(child,&path,out)?;
+        }
+        Ok(())
+    }
+    let budget=measure(base)?;let mut out=HiveOutput{out:String::new()};out.out.try_reserve_exact(budget.bytes).map_err(|_|Error::Resources)?;
+    out.write_str("thos-hive v1\n").map_err(|_|Error::Resources)?;walk(base,"",&mut out)?;
+    if out.out.len()!=budget.bytes{return Err(Error::Resources);}
+    Ok(out.out.into_bytes())
 }
 
 fn deserialize_hive(base: &mut Key, bytes: &[u8]) {
@@ -455,18 +538,6 @@ fn deserialize_hive(base: &mut Key, bytes: &[u8]) {
             _ => {} // blank line, the "thos-hive v1" header, or garbage — skip
         }
     }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for &b in bytes {
-        s.push(char::from_digit((b >> 4) as u32, 16).unwrap());
-        s.push(char::from_digit((b & 0xF) as u32, 16).unwrap());
-    }
-    if s.is_empty() {
-        s.push('-'); // a would-be-empty field, so `split(' ')` still sees a token
-    }
-    s
 }
 
 fn unhex_bytes(s: &str) -> Option<Vec<u8>> {

@@ -1,0 +1,17 @@
+#!/busybox sh
+# thos-sshd: the SSH server. Started by the kernel at boot when /etc/thos/ssh/enabled exists; waits for the network, then runs Dropbear.
+#   key login only (no passwords), as root with the keys in /etc/thos/ssh/authorized_keys.
+B=/busybox
+LOG=/var/log/sshd.log
+say() { echo "sshd: $*" >> $LOG; echo "sshd: $*" > /dev/kmsg 2>/dev/null; }          # the file and the kernel log (netconsole shows it)
+: > $LOG
+say "waiting for the network"
+n=0
+while [ "$($B sed -n 1p /proc/netinfo 2>/dev/null)" != "link up" ]; do
+    n=$((n+1)); [ $n -gt 600 ] && break
+    $B sleep 1
+done
+say "network is $($B sed -n 1p /proc/netinfo), starting dropbear"
+say "files: $($B ls /usr/sbin/dropbear /etc/thos/ssh /etc/passwd 2>&1 | $B tr '\n' ' ')"
+/usr/sbin/dropbear -F -E -s -R -D /etc/thos/ssh -p 22 2>&1 | while read l; do say "dropbear: $l"; done
+say "dropbear ended"

@@ -1,0 +1,398 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1975:17
+     |
+1975 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winldr-long-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1115
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1116
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1117
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1118
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1119
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1120
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1121
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1122
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1123
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1124
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1125
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1126
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1127
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1128
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1129
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1130
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1131
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1132
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1133
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1134
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1135
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1136
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1137
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1138
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1139
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1140
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1141
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1142
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1143
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1144
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1145
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1146
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1147
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1148
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1149
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1150
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1151
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1152
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1153
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1154
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1155
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1156
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1157
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1158
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1159
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1160
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1161
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1162
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1163
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1164
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1165
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1166
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1167
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1168
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1169
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1170
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1171
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1172
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1173
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1174
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1174/32768 files (2.9% non-contiguous), 104266/524288 blocks
+winldr-ok real-import-code-0
+winldr-ok real-import-code-1
+winldr-ok real-import-code-2
+winldr-ok real-import-code-3
+winldr-ok real-import-code-4
+winldr-ok real-import-code-5
+winldr-ok real-import-code-6
+winldr-ok real-import-code-7
+winldr-ok real-import-code-8
+winldr-ok real-import-code-9
+winldr-ok real-import-code-10
+winldr-ok real-import-code-11
+winldr-ok real-import-code-12
+winldr-ok real-import-code-13
+winldr-ok real-import-code-14
+winldr-ok real-import-code-15
+winldr-ok real-import-code-16
+winldr-ok real-import-code-17
+winldr-ok real-import-code-18
+winldr-ok real-import-code-19
+winldr-ok real-import-code-20
+winldr-ok real-import-code-21
+winldr-ok real-import-code-22
+winldr-ok real-import-code-23
+winldr-ok real-import-code-24
+winldr-ok real-import-code-25
+winldr-ok real-import-code-26
+winldr-ok real-import-code-27
+winldr-ok real-import-code-28
+winldr-ok real-import-code-29
+winldr-ok real-import-code-30
+winldr-ok real-import-code-31
+winldr-ok real-import-code-32
+winldr-ok real-import-code-33
+winldr-ok real-import-code-34
+winldr-ok real-import-code-35
+winldr-ok real-import-code-36
+winldr-ok real-import-code-37
+winldr-ok real-import-code-38
+winldr-ok real-import-code-39
+winldr-ok real-import-code-40
+winldr-ok real-import-code-41
+winldr-ok real-import-code-42
+winldr-ok real-import-code-43
+winldr-ok real-import-code-44
+winldr-ok real-import-code-45
+winldr-ok real-import-code-46
+winldr-ok real-import-code-47
+winldr-ok real-import-code-48
+winldr-ok real-import-code-49
+winldr-ok real-import-code-50
+winldr-ok real-import-code-51
+winldr-ok real-import-code-52
+winldr-ok real-import-code-53
+winldr-ok real-import-code-54
+winldr-ok real-import-code-55
+winldr-ok real-import-code-56
+winldr-ok real-import-code-57
+winldr-ok real-import-code-58
+winldr-ok real-import-code-59
+winldr-ok real-import-code-60
+winldr-ok real-import-code-61
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok every-static-import-discoverable
+winldr-ok loadlibrary-finds-already-loaded
+winldr-ok full-module-path
+winldr-ok all-three-rings-complete
+winldr-ok all-three-rings-complete
+winldr-ok all-three-rings-complete
+winldr-ok executable-and-system-modules-retained
+winldr-result=PASS
+winldr-done

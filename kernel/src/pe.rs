@@ -90,14 +90,14 @@ const ANSI_CMDLINE_OFF: u64 = 0x400; // ANSI command line
 const ENV_OFF: u64 = 0x500; // environment block (empty)
 const MOD2_OFF: u64 = 0x600; // LDR_DATA_TABLE_ENTRY (synthetic kernel32)
 const MOD3_OFF: u64 = 0x700; // LDR_DATA_TABLE_ENTRY (synthetic ntdll)
+const EXTRA_SYNTH_OFF: u64 = 0x800; // msvcrt/user32/gdi32 entries, stride 0x80
+const EXTRA_SYNTH_NAMES: usize = 0x980;
 
-/// A dedicated page for the `LDR_DATA_TABLE_ENTRY`s of DLLs loaded from disk
-/// (the params page is full). Entries grow up from 0; their UTF-16 names live
-/// in the back half. Enough for a first cut; a multi-page region comes later.
-const PE_LDRDATA_ADDR: u64 = NT_STUB_BASE + 0x6000;
+/// Bounded multi-page file-module metadata, separate from process parameters.
+/// Fixed entry slots precede append-only UTF-16 strings.
+const PE_LDRDATA_ADDR: u64 = NT_STUB_BASE + 0x30000;
 const LDR_ENTRY_STRIDE: u64 = 0x80;
-const LDRDATA_STR_OFF: usize = 0x800;
-const MAX_FILE_LDR_MODS: usize = 12;
+
 
 /// A ring-3 process-bootstrap page. When any file DLL has an entry point, the
 /// PE thread starts here instead of at the exe entry: it calls each
@@ -160,9 +160,12 @@ const PE_THREAD_STACK_ADDR: u64 = NT_STUB_BASE + 0x0010_0000;
 const PE_THREAD_STACK_BYTES: u64 = 0x8000; // 32 KiB
 const SYNTH_STUBS_OFF: u64 = 0x180; // trampoline table within a synth DLL page
 const SYNTH_EXPDIR_OFF: u64 = 0x400; // IMAGE_EXPORT_DIRECTORY within the page
+// Launch metadata is passed explicitly to each load; concurrent launches never
+// share a global next-command-line slot.
+const PE_LAUNCH_ADDR: u64 = NT_STUB_BASE + 0x14000;
 /// `GetCommandLineA` returns this.
 pub const PE_ANSI_CMDLINE_ADDR: u64 = PE_PARAMS_ADDR + ANSI_CMDLINE_OFF;
-const ANSI_CMDLINE: &[u8] = b"PE argv0 pe-hello.exe\n\0";
+pub const PE_ANSI_CMDLINE_CAP:usize=(ENV_OFF-ANSI_CMDLINE_OFF) as usize;
 
 /// Reduce a raw import DLL name to its lowercase base name with a `.dll`
 /// extension (`"..\\KERNEL32"` → `"kernel32.dll"`).
@@ -179,12 +182,7 @@ fn normalize_dll_name(raw: &str) -> String {
     s
 }
 
-/// One `AddressOfFunctions` slot of a module's export table.
-enum Export {
-    Empty,
-    Addr(u64),       // resolved absolute VA
-    Forward(String), // "TargetDll.TargetFunc" or "TargetDll.#123"
-}
+use crate::pe_exports::{Export,parse as parse_export_table};
 
 /// A module already resolved for the process: a synthetic system DLL or a real
 /// file loaded from System32. `eat` holds each export indexed by
@@ -231,6 +229,18 @@ struct Loader<'a> {
     depth: u32,
     tls: TlsBuild,
     tls_cbs: Vec<(u64, u64)>, // (module base, callback VA) run at process start
+    ext_tried: Vec<String>,   // extension DLLs that have been looked for
+}
+
+/// Named system exports prefer their THOS extension in both static and runtime lookup.
+/// Ordinals keep the ABI of the requested module, never the extension's numbering.
+pub(crate) fn system_extension(name: &str) -> Option<&'static str> {
+    match name {
+        "msvcrt.dll" => Some("msvcrtx.dll"),
+        "kernel32.dll" => Some("kernel32x.dll"),
+        "ntdll.dll" => Some("ntdllx.dll"),
+        _ => None,
+    }
 }
 
 impl<'a> Loader<'a> {
@@ -277,6 +287,7 @@ impl<'a> Loader<'a> {
             depth: 0,
             tls: TlsBuild { frame_phys: 0, n_mods: 0, blk_next: TLS_BLOCKS_OFF },
             tls_cbs: Vec::new(),
+            ext_tried: Vec::new(),
         }
     }
 
@@ -379,6 +390,7 @@ impl<'a> Loader<'a> {
 
     /// Stage, register, recursively bind, and map one on-disk DLL.
     fn load_dll(&mut self, name: &str, bytes: &[u8]) -> Result<usize, &'static str> {
+        if self.mods.iter().filter(|m|m.is_file).count()>=crate::pe_ldr_layout::MAX_MODULES{return Err("PE: too many loader entries");}
         let base = self.arena_alloc(peek_size_of_image(bytes)?)?;
         let mut staged = stage_image(bytes, Some(base))?;
         let (eat, ord_base, names) =
@@ -470,6 +482,34 @@ impl<'a> Loader<'a> {
         }
     }
 
+    /// `name` from `msvcrtx.dll` (THOS's C runtime extension), loading it on first use; `None` when
+    /// the DLL is absent or does not export `name`.
+    fn ext_export(&mut self, dll: &str, name: &str) -> Option<u64> {
+        let idx = match self.mods.iter().position(|m| m.name == dll) {
+            Some(i) => i,
+            None => {
+                if self.ext_tried.iter().any(|d| d == dll) {
+                    return None;
+                }
+                self.ext_tried.push(String::from(dll));
+                match self.resolve_module(dll) {
+                    Ok(i) => i,
+                    Err(e) => {
+                        if e != "PE: DLL not found in System32" {
+                            crate::kprintln!("THOS: pe {dll}      not usable: {e}");
+                        }
+                        return None;
+                    }
+                }
+            }
+        };
+        let i = *self.mods[idx].names.get(name)?;
+        match self.mods[idx].eat.get(i)? {
+            Export::Addr(a) => Some(*a),
+            _ => None,
+        }
+    }
+
     /// Absolute VA of `mods[midx]`'s export `name`, following forwarders.
     fn resolve_export_name(
         &mut self,
@@ -477,6 +517,10 @@ impl<'a> Loader<'a> {
         name: &str,
         depth: u32,
     ) -> Result<u64, &'static str> {
+        if depth>8 {return Err("PE: forwarder chain too deep");}
+        if let Some(extension)=system_extension(&self.mods[midx].name) {
+            if let Some(addr)=self.ext_export(extension,name) {return Ok(addr);}
+        }
         let idx = *self.mods[midx].names.get(name).ok_or("PE: name not exported")?;
         self.resolve_export_idx(midx, idx, depth)
     }
@@ -541,48 +585,6 @@ fn peek_size_of_image(file: &[u8]) -> Result<u64, &'static str> {
 /// inside the export directory, or [`Export::Empty`]); `names` maps an export
 /// name to its `eat` index.
 #[allow(clippy::type_complexity)]
-fn parse_export_table(
-    img: &[u8],
-    base: u64,
-    export_rva: u32,
-    export_size: u32,
-) -> Result<(Vec<Export>, u32, BTreeMap<String, usize>), &'static str> {
-    let mut names = BTreeMap::new();
-    if export_rva == 0 {
-        return Ok((Vec::new(), 1, names));
-    }
-    let ed = export_rva as usize;
-    let ord_base = rd_u32(img, ed + 0x10)?;
-    let n_funcs = rd_u32(img, ed + 0x14)? as usize;
-    let n_names = rd_u32(img, ed + 0x18)? as usize;
-    let eat_rva = rd_u32(img, ed + 0x1C)? as usize;
-    let enpt_rva = rd_u32(img, ed + 0x20)? as usize;
-    let ords_rva = rd_u32(img, ed + 0x24)? as usize;
-    if n_funcs > 64 * 1024 {
-        return Err("PE: absurd export count");
-    }
-
-    let mut eat = Vec::with_capacity(n_funcs);
-    for i in 0..n_funcs {
-        let frva = rd_u32(img, eat_rva + i * 4)? as u64;
-        eat.push(if frva == 0 {
-            Export::Empty
-        } else if frva >= export_rva as u64 && frva < export_rva as u64 + export_size as u64 {
-            Export::Forward(String::from(cstr_at(img, frva)?))
-        } else {
-            Export::Addr(base + frva)
-        });
-    }
-    for i in 0..n_names {
-        let name = String::from(cstr_at(img, rd_u32(img, enpt_rva + i * 4)? as u64)?);
-        let idx = rd_u16(img, ords_rva + i * 2)? as usize;
-        if idx < eat.len() {
-            names.insert(name, idx);
-        }
-    }
-    Ok((eat, ord_base, names))
-}
-
 fn rd_u16(img: &[u8], off: usize) -> Result<u16, &'static str> {
     img.get(off..off + 2)
         .map(|b| u16::from_le_bytes([b[0], b[1]]))
@@ -678,7 +680,9 @@ fn stage_image(file: &[u8], want_base: Option<u64>) -> Result<StagedImage, &'sta
     let (reloc_rva, reloc_size) = dir(5)?;
 
     // --- materialise the full image at RVA 0, then relocate, then map ---
-    let mut img: Vec<u8> = vec![0u8; size_of_image as usize];
+    let mut img: Vec<u8> = Vec::new();
+    img.try_reserve_exact(size_of_image as usize).map_err(|_|"PE: image allocation failed")?;
+    img.resize(size_of_image as usize,0);
 
     let hdr_n = (size_of_headers as usize).min(file.len()).min(img.len());
     img[..hdr_n].copy_from_slice(&file[..hdr_n]);
@@ -728,7 +732,9 @@ fn stage_image(file: &[u8], want_base: Option<u64>) -> Result<StagedImage, &'sta
     };
     let delta = load_base.wrapping_sub(image_base);
     if delta != 0 {
-        if reloc_size == 0 {
+        // An image that declares DYNAMIC_BASE yet has no relocations is position independent: it can
+        // simply be mapped elsewhere.
+        if reloc_size == 0 && dll_chars & IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE == 0 {
             return Err("PE: needs relocation but has no .reloc");
         }
         apply_relocs(&mut img, reloc_rva as u64, reloc_size as u64, delta, size_of_image)?;
@@ -771,14 +777,27 @@ fn stage_image(file: &[u8], want_base: Option<u64>) -> Result<StagedImage, &'sta
 /// system modules and real DLLs from `C:\Windows\System32`), map everything,
 /// and lay out the TEB / PEB.
 /// A DLL loaded from disk, as the PEB `Ldr` list needs it.
+#[derive(Clone)]
 struct LdrFileMod {
     base: u64,
     entry: u64,
     size: u64,
     name: String, // lowercase base name incl. ".dll"
+    full:String,
 }
 
 pub fn load(proc: &Process, file: &[u8], stack_top: u64) -> Result<PeImage, &'static str> {
+    load_named(proc, file, stack_top, "/pe-hello.exe", b"pe-hello.exe")
+}
+
+pub fn load_named(proc: &Process, file: &[u8], stack_top: u64, path: &str, cmdline: &[u8]) -> Result<PeImage, &'static str> {
+    // Bound the separately mapped launch strings before allocating or mapping.
+    let image_name = alloc::format!("C:{}", path.replace('/', "\\"));
+    let image_units = image_name.encode_utf16().count();
+    let cmd_units = core::str::from_utf8(cmdline).map_err(|_| "PE: invalid command line UTF-8")?.encode_utf16().count();
+    if image_units.checked_add(cmd_units).and_then(|n|n.checked_add(2)).filter(|n|*n<=2048).is_none() || cmdline.len()>=PE_ANSI_CMDLINE_CAP {
+        return Err("PE: launch metadata too long");
+    }
     let mut ldr = Loader::new(proc);
     let mut staged = stage_image(file, None)?;
 
@@ -819,16 +838,9 @@ pub fn load(proc: &Process, file: &[u8], stack_top: u64) -> Result<PeImage, &'st
         .mods
         .iter()
         .filter(|m| m.is_file)
-        .map(|m| LdrFileMod { base: m.base, entry: m.entry, size: m.size, name: m.name.clone() })
+        .map(|m| LdrFileMod { base: m.base, entry: m.entry, size: m.size, name: m.name.clone(), full:m.full.clone() })
         .collect();
-    if file_mods.len() > MAX_FILE_LDR_MODS {
-        crate::kprintln!(
-            "THOS: pe warn          {} file DLLs, only {} land in the Ldr list",
-            file_mods.len(),
-            MAX_FILE_LDR_MODS
-        );
-    }
-    map_teb_peb(
+    let metadata_bytes=map_teb_peb(
         proc,
         staged.load_base,
         staged.entry,
@@ -836,6 +848,8 @@ pub fn load(proc: &Process, file: &[u8], stack_top: u64) -> Result<PeImage, &'st
         stack_top,
         &file_mods,
         tls_ptr,
+        &image_name,
+        cmdline,
     )?;
 
     // Ring-3 process init, in order: every TLS callback, then every `DllMain`
@@ -857,6 +871,8 @@ pub fn load(proc: &Process, file: &[u8], stack_top: u64) -> Result<PeImage, &'st
         map_bootstrap(proc, &init, n_tls, staged.entry)?;
         PE_BOOTSTRAP_ADDR
     };
+
+    *proc.pe_runtime.lock()=Some(RuntimeState::new(ldr.arena_next,file_mods,path,metadata_bytes)?);
 
     Ok(PeImage {
         entry,
@@ -966,7 +982,7 @@ fn map_bootstrap(
 fn link_ring(page: &mut [u8], page_base: u64, nodes: &[u64]) {
     let n = nodes.len();
     for (p, &va) in nodes.iter().enumerate() {
-        if va < page_base || va >= page_base + 4096 {
+        if va < page_base || va.checked_add(16).is_none_or(|end|end>page_base+page.len() as u64) {
             continue;
         }
         let off = (va - page_base) as usize;
@@ -986,8 +1002,13 @@ fn map_teb_peb(
     stack_top: u64,
     file_mods: &[LdrFileMod],
     tls_ptr: u64,
-) -> Result<(), &'static str> {
-    let n_file = file_mods.len().min(MAX_FILE_LDR_MODS);
+    image_name: &str,
+    cmdline: &[u8],
+) -> Result<usize, &'static str> {
+    // Build and validate all variable names before allocating any metadata page.
+    let entries:Vec<_>=file_mods.iter().map(|m|crate::pe_ldr_layout::Module{name:&m.name,full:&m.full,base:m.base,entry:m.entry,size:m.size}).collect();
+    let mut file_data=crate::pe_ldr_layout::build(PE_LDRDATA_ADDR,&entries)?;
+    let n_file = file_mods.len();
     // The LIST_ENTRY VAs for list `i` (0=InLoadOrder, 1=InMemoryOrder,
     // 2=InInitOrder): head, exe, kernel32, ntdll, then each file DLL.
     let nodes_for = |i: u64| -> Vec<u64> {
@@ -996,6 +1017,7 @@ fn map_teb_peb(
         v.push(PE_PARAMS_ADDR + MOD_OFF + i * 0x10); // exe
         v.push(PE_PARAMS_ADDR + MOD2_OFF + i * 0x10); // kernel32
         v.push(PE_PARAMS_ADDR + MOD3_OFF + i * 0x10); // ntdll
+        for k in 0..3 {v.push(PE_PARAMS_ADDR+EXTRA_SYNTH_OFF+k*0x80+i*0x10);}
         for k in 0..n_file {
             v.push(PE_LDRDATA_ADDR + k as u64 * LDR_ENTRY_STRIDE + i * 0x10);
         }
@@ -1034,6 +1056,22 @@ fn map_teb_peb(
         put(p, 0x30, crate::nt::PE_PROCESS_HEAP); // ProcessHeap
     })?;
 
+    // Long/unicode executable paths and the wide command line get their own
+    // bounded page, rather than overwriting the fixed loader-list fields.
+    let image_len = (image_name.encode_utf16().count()*2) as u16;
+    let cmd_text = core::str::from_utf8(cmdline).map_err(|_| "PE: invalid command line UTF-8")?;
+    let cmd_len = (cmd_text.encode_utf16().count()*2) as u16;
+    let image_buf = PE_LAUNCH_ADDR;
+    let cmd_buf = image_buf + image_len as u64 + 2;
+    let basename = image_name.rsplit('\\').next().unwrap_or(image_name);
+    let base_len = (basename.encode_utf16().count()*2) as u16;
+    let base_buf = image_buf + image_len as u64 - base_len as u64;
+    w(PE_LAUNCH_ADDR, &|b| {
+        for (offset,text) in [(0usize,image_name),(image_len as usize+2,cmd_text)] {
+            for (i,u) in text.encode_utf16().enumerate() {b[offset+i*2..offset+i*2+2].copy_from_slice(&u.to_le_bytes());}
+        }
+    })?;
+
     // A UTF-16LE string placed at WSTR_OFF+cursor; returns (buffer_va, byte_len).
     w(PE_PARAMS_ADDR, &|b| {
         let mut wcur = WSTR_OFF;
@@ -1049,9 +1087,6 @@ fn map_teb_peb(
             wcur = (wcur + 1) & !1;
             (va, n as u16)
         };
-        let (image_buf, image_len) = wstr(b, "C:\\pe-hello.exe");
-        let (cmd_buf, cmd_len) = wstr(b, "pe-hello.exe");
-        let (base_buf, base_len) = wstr(b, "pe-hello.exe");
         let (cur_buf, cur_len) = wstr(b, "C:\\");
         let (k32_full_buf, k32_full_len) = wstr(b, "C:\\Windows\\System32\\KERNEL32.DLL");
         let (k32_base_buf, k32_base_len) = wstr(b, "KERNEL32.DLL");
@@ -1115,51 +1150,35 @@ fn map_teb_peb(
         put16(b, MOD3_OFF + 0x58, ntd_base_len); // BaseDllName
         put16(b, MOD3_OFF + 0x5A, ntd_base_len + 2);
         put(b, MOD3_OFF + 0x60, ntd_base_buf);
+        // All mapped synthetic modules must be discoverable, not just kernel32/ntdll.
+        // Fixed names live after their entries, clear of command line and environment.
+        let mut cursor=EXTRA_SYNTH_NAMES;
+        for (k,(name,base)) in [("msvcrt.dll",PE_MSVCRT_ADDR),("user32.dll",PE_USER32_ADDR),("gdi32.dll",PE_GDI32_ADDR)].iter().enumerate() {
+            let node=EXTRA_SYNTH_OFF+k as u64*0x80;
+            put(b,node+0x30,*base);put(b,node+0x40,0x1000);
+            let full=alloc::format!("C:\\Windows\\System32\\{}",name);
+            for (field,text) in [(0x48,full.as_str()),(0x58,*name)] {
+                let start=cursor;
+                for code in text.encode_utf16() {b[cursor..cursor+2].copy_from_slice(&code.to_le_bytes());cursor+=2;}
+                b[cursor..cursor+2].copy_from_slice(&[0,0]);cursor+=2;
+                let len=(cursor-start-2) as u16;
+                put16(b,node+field,len);put16(b,node+field+2,len+2);
+                put(b,node+field+8,PE_PARAMS_ADDR+start as u64);
+            }
+        }
 
         // --- ANSI command line (GetCommandLineA) + empty environment ---
-        b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + ANSI_CMDLINE.len()]
-            .copy_from_slice(ANSI_CMDLINE);
+        b[ANSI_CMDLINE_OFF as usize..ANSI_CMDLINE_OFF as usize + cmdline.len()].copy_from_slice(cmdline);
         // ENV_OFF: leave the two NUL words already zeroed
     })?;
 
-    // --- PE_LDRDATA page: one LDR_DATA_TABLE_ENTRY per on-disk DLL, plus its
-    //     UTF-16 names, plus this page's share of the three ring links. ---
-    if n_file != 0 {
-        w(PE_LDRDATA_ADDR, &|d| {
-            let mut scur = LDRDATA_STR_OFF;
-            let mut wput = |d: &mut [u8], s: &str| -> (u64, u16) {
-                let va = PE_LDRDATA_ADDR + scur as u64;
-                let mut n = 0usize;
-                for u in s.encode_utf16() {
-                    d[scur + n..scur + n + 2].copy_from_slice(&u.to_le_bytes());
-                    n += 2;
-                }
-                d[scur + n..scur + n + 2].copy_from_slice(&[0, 0]);
-                scur += n + 2;
-                scur = (scur + 1) & !1;
-                (va, n as u16)
-            };
-            for (k, m) in file_mods.iter().take(n_file).enumerate() {
-                let e = k * LDR_ENTRY_STRIDE as usize;
-                let (full_buf, full_len) =
-                    wput(d, &alloc::format!("C:\\Windows\\System32\\{}", m.name));
-                let (base_buf, base_len) = wput(d, &m.name);
-                d[e + 0x30..e + 0x38].copy_from_slice(&m.base.to_le_bytes()); // DllBase
-                d[e + 0x38..e + 0x40].copy_from_slice(&m.entry.to_le_bytes()); // EntryPoint
-                d[e + 0x40..e + 0x48].copy_from_slice(&(m.size & 0xFFFF_FFFF).to_le_bytes());
-                d[e + 0x48..e + 0x4A].copy_from_slice(&full_len.to_le_bytes()); // FullDllName
-                d[e + 0x4A..e + 0x4C].copy_from_slice(&(full_len + 2).to_le_bytes());
-                d[e + 0x50..e + 0x58].copy_from_slice(&full_buf.to_le_bytes());
-                d[e + 0x58..e + 0x5A].copy_from_slice(&base_len.to_le_bytes()); // BaseDllName
-                d[e + 0x5A..e + 0x5C].copy_from_slice(&(base_len + 2).to_le_bytes());
-                d[e + 0x60..e + 0x68].copy_from_slice(&base_buf.to_le_bytes());
-            }
-            for i in 0..3u64 {
-                link_ring(d, PE_LDRDATA_ADDR, &nodes_for(i));
-            }
-        })?;
+    // The validated file table can span pages. Link the complete byte buffer
+    // before mapping; no fixed 2 KiB string area or silent module truncation.
+    if n_file!=0 {
+        for i in 0..3u64 {link_ring(&mut file_data,PE_LDRDATA_ADDR,&nodes_for(i));}
+        map_seg(proc,&file_data,PE_LDRDATA_ADDR,0,file_data.len() as u64,false)?;
     }
-    Ok(())
+    Ok(if n_file==0{0}else{file_data.len()})
 }
 
 /// Walk the `.reloc` blocks and add `delta` to every `DIR64` target. Rejects
@@ -1330,18 +1349,26 @@ fn map_thread_start_page(proc: &Process) -> Result<(), &'static str> {
 /// Spawn one ring-3 worker thread in the current PE process: it shares the
 /// address space + `Task`, gets its own TEB (`PE_TEB2_ADDR`), 32 KiB stack and
 /// kernel stack, and enters at [`PE_THREADSTART_ADDR`] with
-/// `[start][arg]` on top of its user stack. Returns `(tid, exit_event)` — the
-/// event is signalled (manual-reset) when the thread terminates.
+/// `[start][arg]` on top of its user stack. Registers the typed completion
+/// object before publishing the runnable thread. Returns its scheduler ID.
 ///
-/// One worker per process for now (the TEB / stack regions are fixed).
+/// Fixed 32 KiB stacks; at most 15 worker starts per process, no slot reuse.
 pub fn spawn_thread(
     start: u64,
     arg: u64,
-) -> Result<(u64, alloc::sync::Arc<crate::wait::Event>), &'static str> {
+    completion: alloc::sync::Arc<crate::nt_thread::Thread>,
+) -> Result<u64, &'static str> {
     let task = crate::sched::current().task().ok_or("no current task")?;
     let proc = task.space();
 
-    // user stack: fresh frames, contiguous VA at PE_THREAD_STACK_ADDR.
+    // Every worker gets its own stack (64 KiB stride) and TEB page; at most 15 workers.
+    let slot = proc.next_pe_thread_slot();
+    if slot >= 15 {
+        return Err("PE: too many threads");
+    }
+    let stack_addr = PE_THREAD_STACK_ADDR + slot * 0x1_0000;
+    let teb_addr = if slot == 0 { PE_TEB2_ADDR } else { NT_STUB_BASE + 0x0020_0000 + slot * 0x1000 };
+    // user stack: fresh frames, contiguous VA at `stack_addr`.
     let pages = (PE_THREAD_STACK_BYTES / 0x1000) as usize;
     for i in 0..pages {
         let fr = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread stack)")?;
@@ -1354,9 +1381,9 @@ pub fn spawn_thread(
                 *((top - 8) as *mut u64) = arg;
             }
         }
-        proc.map(PE_THREAD_STACK_ADDR + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
+        proc.map(stack_addr + (i as u64) * 0x1000, fr.start_address().as_u64(), true, false);
     }
-    let user_rsp = PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES - 16;
+    let user_rsp = stack_addr + PE_THREAD_STACK_BYTES - 16;
 
     // worker TEB.
     let tf = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (thread TEB)")?;
@@ -1364,17 +1391,15 @@ pub fn spawn_thread(
         let p = phys_to_virt(tf.start_address()).as_mut_ptr::<u8>();
         core::ptr::write_bytes(p, 0, 4096);
         let put = |off: usize, v: u64| *((p.add(off)) as *mut u64) = v;
-        put(0x08, PE_THREAD_STACK_ADDR + PE_THREAD_STACK_BYTES); // StackBase
-        put(0x10, PE_THREAD_STACK_ADDR); // StackLimit
-        put(0x30, PE_TEB2_ADDR); // NT_TIB.Self
+        put(0x08, stack_addr + PE_THREAD_STACK_BYTES); // StackBase
+        put(0x10, stack_addr); // StackLimit
+        put(0x30, teb_addr); // NT_TIB.Self
         put(0x60, PE_PEB_ADDR); // ProcessEnvironmentBlock
     }
-    proc.map(PE_TEB2_ADDR, tf.start_address().as_u64(), true, false);
+    proc.map(teb_addr, tf.start_address().as_u64(), true, false);
 
-    let ev = alloc::sync::Arc::new(crate::wait::Event::new());
-    let tid = crate::sched::spawn_user_pe("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, PE_TEB2_ADDR);
-    crate::process::register_thread_exit(tid, ev.clone());
-    Ok((tid, ev))
+    let tid = crate::sched::spawn_user_pe_with_exit("pe-thread", task, PE_THREADSTART_ADDR, user_rsp, teb_addr, Some(completion));
+    Ok(tid)
 }
 
 fn map_kernel32_page(proc: &Process) -> Result<(), &'static str> {
@@ -1508,6 +1533,8 @@ fn map_synth_dll(
     sel_flag: u16,
     data_exports: &[u16],
 ) -> Result<(), &'static str> {
+    let layout=crate::synth_layout::plan(dll_name,exports,SYNTH_STUBS_OFF as usize,NT_STUB_STRIDE as usize,SYNTH_EXPDIR_OFF as usize,4096)
+        .ok_or("PE: synthetic DLL code/exports do not fit in one page")?;
     let frame = FRAME_ALLOC.lock().alloc().ok_or("PE: out of frames (synth dll)")?;
     let phys = frame.start_address();
     let page = unsafe {
@@ -1558,27 +1585,32 @@ fn map_synth_dll(
     }
 
     // Export tables, laid out after the fixed-size directory.
-    let expdir = SYNTH_EXPDIR_OFF as usize;
-    let eat = expdir + 0x28; // AddressOfFunctions
-    let enpt = eat + n * 4; // AddressOfNames
-    let ords = enpt + n * 4; // AddressOfNameOrdinals
-    let mut cur = ords + n * 2;
+    let expdir = layout.directory;
+    let eat = layout.functions;
+    let enpt = layout.names;
+    let ords = layout.ordinals;
+    let mut cur = layout.dll_name;
 
     let name_rva = cur;
     page[cur..cur + dll_name.len()].copy_from_slice(dll_name.as_bytes());
     cur += dll_name.len() + 1;
+    debug_assert_eq!(cur,layout.strings);
 
-    for (i, fname) in exports.iter().enumerate() {
+    for i in 0..n {
         p32(page, eat + i * 4, SYNTH_STUBS_OFF as u32 + (i * NT_STUB_STRIDE as usize) as u32);
-        p32(page, enpt + i * 4, cur as u32);
-        p16(page, ords + i * 2, i as u16);
-        let fb = fname.as_bytes();
+    }
+    // PE's name pointer table is lexically sorted; the parallel ordinals
+    // retain the syscall/EAT order. Vendor loaders can then binary-search it.
+    let mut sorted:Vec<usize>=(0..n).collect();
+    sorted.sort_unstable_by(|&a,&b|exports[a].cmp(exports[b]));
+    for (position,&ordinal) in sorted.iter().enumerate() {
+        p32(page, enpt + position * 4, cur as u32);
+        p16(page, ords + position * 2, ordinal as u16);
+        let fb = exports[ordinal].as_bytes();
         page[cur..cur + fb.len()].copy_from_slice(fb);
         cur += fb.len() + 1;
     }
-    if cur > 4096 {
-        return Err("PE: synthetic DLL overflows its page");
-    }
+    debug_assert_eq!(cur,layout.end);
 
     // IMAGE_EXPORT_DIRECTORY @ SYNTH_EXPDIR_OFF.
     p32(page, expdir + 0x0C, name_rva as u32); // Name
@@ -1635,3 +1667,5 @@ fn map_seg(
     }
     Ok(())
 }
+
+include!("pe_runtime.rs");

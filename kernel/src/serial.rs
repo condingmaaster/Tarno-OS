@@ -65,7 +65,15 @@ pub fn init() {
 pub fn print(s: &str) {
     let port = PORT.lock();
     write_str(&port, s);
-    crate::fbcon::write(s.as_bytes());
+    crate::fbcon::write_log(s.as_bytes());
+}
+
+/// Write bytes to the serial port without taking the port lock (for the lock-up detector: the lock may be what is stuck).
+pub fn emergency(bytes: &[u8]) {
+    let port = Uart { base: 0x3F8 };
+    for &b in bytes {
+        port.write_byte(b);
+    }
 }
 
 /// Write raw bytes verbatim (no CR translation) — used by `write`/`writev`.
@@ -86,12 +94,72 @@ fn write_str(port: &Uart, s: &str) {
     }
 }
 
+/// The last 32 KiB of kernel log text (`/proc/dmesg`, `dmesg`): the only record of a boot on a machine without a serial port.
+const LOG_SIZE: usize = 32 * 1024;
+struct LogRing {
+    buf: [u8; LOG_SIZE],
+    total: usize,
+}
+static LOG: spin::Mutex<LogRing> = spin::Mutex::new(LogRing { buf: [0; LOG_SIZE], total: 0 });
+
+fn log_append(s: &str) {
+    if let Some(mut l) = LOG.try_lock() {
+        for b in s.bytes() {
+            let i = l.total % LOG_SIZE;
+            l.buf[i] = b;
+            l.total += 1;
+        }
+    }
+}
+
+/// The retained kernel log as two slices (oldest first), without blocking or allocating: for the interrupt-context watchdog that
+/// brings the boot log back onto the screen. `false` if the log was busy.
+pub fn with_log_try(f: impl FnOnce(&[u8], &[u8])) -> bool {
+    let Some(l) = LOG.try_lock() else { return false };
+    if l.total <= LOG_SIZE {
+        f(&l.buf[..l.total], &[]);
+    } else {
+        let start = l.total % LOG_SIZE;
+        f(&l.buf[start..], &l.buf[..start]);
+    }
+    true
+}
+
+/// Copy retained log bytes starting at absolute position `*pos` into `out`, advancing `*pos` (netconsole). If the ring has wrapped past
+/// `*pos`, the position jumps to the oldest byte still held. Never blocks: 0 if the log is busy or nothing is new.
+pub fn log_read(pos: &mut usize, out: &mut [u8]) -> usize {
+    let Some(l) = LOG.try_lock() else { return 0 };
+    if l.total > LOG_SIZE && *pos < l.total - LOG_SIZE {
+        *pos = l.total - LOG_SIZE;
+    }
+    let n = (l.total - *pos).min(out.len());
+    for i in 0..n {
+        out[i] = l.buf[(*pos + i) % LOG_SIZE];
+    }
+    *pos += n;
+    n
+}
+
+/// The retained kernel log, oldest byte first.
+pub fn log_snapshot() -> alloc::vec::Vec<u8> {
+    let l = LOG.lock();
+    if l.total <= LOG_SIZE {
+        l.buf[..l.total].to_vec()
+    } else {
+        let start = l.total % LOG_SIZE;
+        let mut v = l.buf[start..].to_vec();
+        v.extend_from_slice(&l.buf[..start]);
+        v
+    }
+}
+
 struct Writer<'a>(&'a Uart);
 
 impl core::fmt::Write for Writer<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        log_append(s);
         write_str(self.0, s);
-        crate::fbcon::write(s.as_bytes());
+        crate::fbcon::write_log(s.as_bytes());
         Ok(())
     }
 }

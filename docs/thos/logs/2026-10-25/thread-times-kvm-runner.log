@@ -1,0 +1,39 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2012:17
+     |
+2012 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 9.98s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winthread-times-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (3.0% non-contiguous), 103833/524288 blocks
+winthread-times-start
+winthread-times-ok actual-time-export
+winthread-times-ok current-thread-real-creation
+winthread-times-ok sleep-is-not-CPU-time
+winthread-times-ok eight-workers-really-started
+winthread-times-ok blocked-workers-CPU-time-stays-fixed
+winthread-times-ok workers-query-user-and-kernel-time
+winthread-times-ok real-create-exit-FILETIME-bounds
+winthread-times-ok actual-user-kernel-CPU-both-increase
+winthread-times-ok per-thread-CPU-not-eight-wall-clocks
+winthread-times-ok completed-thread-records-stable
+winthread-times-ok all-output-pointers-validated-before-write
+winthread-times-ok null-output-refused
+winthread-times-ok event-is-not-thread
+winthread-times-ok high-handle-bits-refused
+winthread-times-ok closed-handle-refused
+winthread-times-result=PASS
+winthread-times-done

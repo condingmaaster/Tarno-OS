@@ -1,0 +1,30 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include <windows.h>
+#include "winframe-test.h"
+static unsigned failures;
+static void say(const char*s){DWORD n;unsigned k=0;while(s[k])k++;WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),s,k,&n,0);}
+#define CHECK(n,c) do{if(c)say("gdi-pen-ok " n "\n");else{say("gdi-pen-FAIL " n "\n");failures++;}}while(0)
+static void fill(HDC dc,int w,int h,COLORREF color){RECT r={0,0,w,h};FillRect(dc,&r,CreateSolidBrush(color));}
+static void text(HDC d,int x,int y,const WCHAR*s){int n=0;while(s[n])n++;TextOutW(d,x,y,s,n);}
+static LRESULT CALLBACK proc(HWND h,UINT m,WPARAM w,LPARAM l){if(m==WM_PAINT)return 0;if(m==WM_CLOSE){say("gdi-pen-close\n");PostQuitMessage(failures?1:0);return 0;}return DefWindowProcA(h,m,w,l);}
+void __attribute__((noreturn)) start(void){
+ WNDCLASSA wc={0};wc.lpfnWndProc=proc;wc.lpszClassName="gdi-pen";RegisterClassA(&wc);HWND wnd=thos_test_client_window(0,"gdi-pen","Windows drawing objects",WS_OVERLAPPEDWINDOW,0,0,400,240,0,0,0,0);ShowWindow(wnd,1);
+ HDC window=GetDC(wnd),mem=CreateCompatibleDC(window);HBITMAP bitmap=CreateCompatibleBitmap(window,64,64);HGDIOBJ oldbitmap=SelectObject(mem,bitmap);COLORREF sentinel=RGB(25,35,45),red=RGB(220,40,50),blue=RGB(40,90,220),green=RGB(40,180,70);
+ CHECK("default-black-pen",GetCurrentObject(mem,OBJ_PEN)==GetStockObject(BLACK_PEN));CHECK("initial-dc-pen-color",GetDCPenColor(mem)==RGB(0,0,0));
+ fill(mem,64,64,sentinel);CHECK("rectangle-default-border-fill",Rectangle(mem,10,10,30,30)&&GetPixel(mem,10,10)==RGB(0,0,0)&&GetPixel(mem,11,11)==RGB(255,255,255)&&GetPixel(mem,29,29)==RGB(0,0,0));CHECK("rectangle-right-bottom-excluded",GetPixel(mem,30,20)==sentinel&&GetPixel(mem,20,30)==sentinel&&GetPixel(mem,9,10)==sentinel);
+ CHECK("dc-pen-color-independent-of-solid",SetDCPenColor(mem,red)==RGB(0,0,0));Rectangle(mem,10,10,30,30);CHECK("solid-black-not-recolored",GetPixel(mem,10,10)==RGB(0,0,0));
+ CHECK("select-dc-pen-returns-old",SelectObject(mem,GetStockObject(DC_PEN))==GetStockObject(BLACK_PEN));Rectangle(mem,10,10,30,30);CHECK("dc-pen-real-border",GetPixel(mem,10,10)==red&&GetPixel(mem,29,20)==red);
+ CHECK("update-dc-pen-previous-color",SetDCPenColor(mem,blue)==red&&GetDCPenColor(mem)==blue);CHECK("other-window-pen-state-independent",GetDCPenColor(window)==RGB(0,0,0));CHECK("brush-color-not-pen-color",GetDCBrushColor(mem)==RGB(255,255,255));
+ CHECK("hollow-brush-select",SelectObject(mem,GetStockObject(NULL_BRUSH))==GetStockObject(WHITE_BRUSH));fill(mem,64,64,sentinel);CHECK("hollow-rectangle-draw",Rectangle(mem,10,10,30,30));CHECK("hollow-interior-preserved",GetPixel(mem,11,11)==sentinel&&GetPixel(mem,20,20)==sentinel);CHECK("hollow-border-colored",GetPixel(mem,10,10)==blue&&GetPixel(mem,29,29)==blue);
+ fill(mem,64,64,sentinel);CHECK("partially-clipped-stroke",Rectangle(mem,-10,-10,20,20));CHECK("clipping-does-not-invent-border",GetPixel(mem,0,0)==sentinel&&GetPixel(mem,10,10)==sentinel&&GetPixel(mem,19,0)==blue&&GetPixel(mem,0,19)==blue&&GetPixel(mem,20,19)==sentinel);
+ CHECK("null-pen-select",SelectObject(mem,GetStockObject(NULL_PEN))==GetStockObject(DC_PEN));SelectObject(mem,CreateSolidBrush(green));fill(mem,64,64,sentinel);CHECK("null-pen-pure-fill",Rectangle(mem,10,10,30,30)&&GetPixel(mem,10,10)==green&&GetPixel(mem,29,29)==green&&GetPixel(mem,30,20)==sentinel);
+ SelectObject(mem,GetStockObject(NULL_BRUSH));fill(mem,64,64,sentinel);CHECK("both-hollow-noop",Rectangle(mem,10,10,30,30)&&GetPixel(mem,10,10)==sentinel&&GetPixel(mem,20,20)==sentinel);RECT r={10,10,30,30};CHECK("fillrect-null-brush-noop",FillRect(mem,&r,(HBRUSH)GetStockObject(NULL_BRUSH))&&GetPixel(mem,20,20)==sentinel);
+ HPEN owned=CreatePen(PS_SOLID,1,red),single=CreatePen(PS_SOLID,0,blue);CHECK("real-owned-pens",owned&&single&&owned!=single);CHECK("owned-pen-selection",SelectObject(mem,owned)==GetStockObject(NULL_PEN));CHECK("owned-pen-cannot-delete-selected",!DeleteObject(owned));fill(mem,64,64,sentinel);Rectangle(mem,10,10,30,30);CHECK("owned-pen-uses-own-color",GetPixel(mem,10,10)==red&&GetPixel(mem,20,20)==sentinel);
+ CHECK("one-pixel-wide-rectangle",Rectangle(mem,40,10,41,14)&&GetPixel(mem,40,10)==red&&GetPixel(mem,40,12)==red&&GetPixel(mem,41,12)==sentinel);CHECK("one-pixel-high-rectangle",Rectangle(mem,10,40,14,41)&&GetPixel(mem,12,40)==red&&GetPixel(mem,12,41)==sentinel);
+ CHECK("pen-multiple-dcs-allowed",SelectObject(window,owned)==GetStockObject(BLACK_PEN));SelectObject(mem,GetStockObject(BLACK_PEN));CHECK("window-retains-owned-pen",!DeleteObject(owned));SelectObject(window,GetStockObject(BLACK_PEN));CHECK("unselected-owned-pen-deleted",DeleteObject(owned));CHECK("stale-owned-pen-refused",!SelectObject(mem,owned)&&!DeleteObject(owned));CHECK("unselected-second-pen-deleted",DeleteObject(single));
+ CHECK("unsupported-wide-pen-fails",!CreatePen(PS_SOLID,2,red));CHECK("unsupported-dashed-pen-fails",!CreatePen(PS_DASH,1,red));CHECK("invalid-dc-pen-state",SetDCPenColor((HDC)(ULONG_PTR)0x12345,red)==CLR_INVALID&&GetDCPenColor((HDC)(ULONG_PTR)0x12345)==CLR_INVALID);CHECK("invalid-dc-no-rectangle",!Rectangle((HDC)(ULONG_PTR)0x12345,0,0,20,20));
+ CHECK("other-object-classes-preserved",GetCurrentObject(mem,OBJ_BITMAP)==bitmap&&GetCurrentObject(mem,OBJ_FONT)==GetStockObject(SYSTEM_FONT));
+ fill(window,400,240,RGB(14,17,24));SelectObject(window,GetStockObject(NULL_BRUSH));SelectObject(window,GetStockObject(DC_PEN));SetDCPenColor(window,RGB(75,160,240));Rectangle(window,20,20,380,220);CHECK("window-stroke-corner",GetPixel(window,20,20)==RGB(75,160,240)&&GetPixel(window,21,21)==RGB(14,17,24)&&GetPixel(window,380,20)==RGB(14,17,24));
+ SetBkMode(window,TRANSPARENT);SetTextColor(window,RGB(235,240,248));text(window,34,56,L"GDI: echte Ränder");SetTextColor(window,RGB(156,172,204));text(window,34,100,L"Hollow • Clipping");text(window,34,130,L"Getrennte Zustände, echte Objekte");
+ SelectObject(mem,oldbitmap);DeleteObject(bitmap);DeleteDC(mem);say(failures?"gdi-pen-result=FAIL\n":"gdi-pen-result=PASS\n");say("gdi-pen-ready-close\n");MSG msg;while(GetMessageA(&msg,0,0,0)){TranslateMessage(&msg);DispatchMessageA(&msg);}ExitProcess(failures?1:0);
+}

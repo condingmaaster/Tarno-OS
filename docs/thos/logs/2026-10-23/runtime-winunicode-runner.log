@@ -1,0 +1,61 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1882:17
+     |
+1882 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winunicode-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1112/32768 files (3.0% non-contiguous), 104039/524288 blocks
+winunicode-ok leadbyte-supported-non-dbcs-pages
+winunicode-ok leadbyte-aliases
+winunicode-ok leadbyte-default-acp
+winunicode-ok leadbyte-utf8-is-not-dbcs
+winunicode-ok leadbyte-unknown-codepage
+winunicode-ok leadbyte-unsupported-dbcs-codepage
+winunicode-ok cpinfo-utf8
+winunicode-ok cpinfo-real-buffer
+winunicode-ok cpinfo-utf8-no-dbcs
+winunicode-ok cpinfo-legacy-metadata
+winunicode-ok cpinfo-unknown
+winunicode-ok mb-query-terminated
+winunicode-ok mb-query-counted
+winunicode-ok mb-utf8-supplementary
+winunicode-ok wc-query-terminated
+winunicode-ok wc-query-counted
+winunicode-ok wc-utf8-supplementary
+winunicode-ok mb-short-buffer
+winunicode-ok wc-short-buffer
+winunicode-ok mb-counted-embedded-nul
+winunicode-ok wc-counted-embedded-nul
+winunicode-ok mb-reject-truncated
+winunicode-ok mb-replace-truncated
+winunicode-ok wc-reject-surrogate
+winunicode-ok wc-replace-surrogates
+winunicode-ok mb-invalid-flags
+winunicode-ok wc-invalid-flags
+winunicode-ok wc-no-used-default
+winunicode-ok wc-no-default-char
+winunicode-ok mb-invalid-source-length
+winunicode-ok wc-invalid-source-length
+winunicode-ok mb-negative-capacity
+winunicode-ok wc-negative-capacity
+winunicode-ok mb-null-output
+winunicode-ok wc-null-output
+winunicode-ok mb-invalid-user-address
+winunicode-ok wc-invalid-user-address
+winunicode-ok mb-preserve-error
+winunicode-ok wc-preserve-error
+winunicode-failures=0
+winunicode-done

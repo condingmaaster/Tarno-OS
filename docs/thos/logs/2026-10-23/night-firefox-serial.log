@@ -1,0 +1,118 @@
+THOS: kmain reached (Milestone 0)
+THOS: framebuffer painted
+THOS: GDT + IDT loaded
+THOS: SMEP             enabled
+THOS trap: #BP at 0xffffffff800eade5
+THOS: traps ok (returned from #BP)
+THOS: HHDM offset      0xffff800000000000
+THOS: usable RAM       3988 MiB in 1020551 frames
+THOS: largest region   2963 MiB
+THOS: bootstrap heap   98304 KiB
+THOS: heap smoke ok    sum(i^2, i<1024) = 357389824
+THOS: frame alloc ok   1020551 -> 1020550 -> 1020551 (phys 0x13ffff000)
+THOS: power ok         ACPI S5 (PM1a 0x604, SLP_TYP 0/0), reset via 0xCF9/i8042
+THOS: ACPI rev 0       LAPIC @ 0xfee00000
+THOS: CPUs             4 (4 enabled now)
+THOS: IOAPIC id 0      @ 0xfec00000  gsi_base 0
+THOS: IRQ overrides    5
+THOS: LAPIC id 0       timer 62491 counts/ms
+THOS: clock            TSC 2488 MHz; RTC 1792792407 (unix)
+THOS: random           ChaCha20 CSPRNG seeded (8 hardware words, 512 jitter samples; RDSEED/RDRAND present)
+THOS: APIC timer ok    6 ticks @ ~1000 Hz
+THOS: own page tables  PML4 switched; 5 GiB HHDM + 4 GiB identity + W^X kernel (1 GiB pages)
+THOS: PAT              framebuffer WC slot 1 configured
+THOS: framebuffer      WC aliases verified (1000 pages)
+THOS: gdi ok           1280x800 @ 32bpp mapped for GDI32/User32
+THOS: AP 1 online     lapic 2
+THOS: AP 3 online     lapic 1
+THOS: AP 2 online     lapic 3
+THOS: SMP              4/4 CPUs online
+THOS: ahci ident       QEMU HARDDISK — 3295232 sectors (1609 MiB); NCQ
+THOS: ahci irq         MSI completion; queue depth 32
+THOS: ext2 part        root FS in MBR partition at LBA 133120 (1544 MiB)
+THOS: registry ok      0/3 hives loaded from disk
+THOS: secsvc ok        pid 1, isolated userspace, 430424 bytes
+THOS: xhci             no xHCI controller
+THOS: ehci             no EHCI controller
+THOS: hda              no HD Audio controller
+THOS: wlan firmware    validated (39864 MIMO16 bytes), not uploaded
+THOS: wlan             BCM43225 not present
+THOS: radeon firmware  validated, not uploaded
+THOS: net nic          e1000 52:54:00:12:34:56
+THOS: ps2 mouse ok     PS/2 mouse / touchpad streaming (/dev/input/mice)
+THOS: ps2 ok           i8042 keyboard attached (IRQ 1/12 via the I/O APIC)
+
+  Welcome. THOS first-run setup
+  No account exists yet: create the administrator.
+  (It can be changed later via settings + reboot.)
+
+  admin username: thoTHOS: net dhcp         lease 10.0.2.15/24 via 10.0.2.2 dns [[10, 0, 2, 3]]
+THOS: net ok           ping 10.0.2.2 answered in 22 ms (ARP + ICMP over virtio-net + smoltcp)
+s
+
+  password: ****
+
+  repeat password: ****
+
+  ✓ administrator 'thos' created.
+
+
+THOS login: thos
+
+password: ****
+
+  welcome, thos.
+
+  Tip: `desktop` starts the graphical desktop (Alt+Enter = new terminal, Print = screenshot),
+       `thos-pkg update` then `thos-pkg install <name>` adds programs, `hwreport` collects hardware data.
+
+THOS: session          thos (uid 1000)
+THOS: shell            /busybox sh = 2024544 bytes
+THOS: interactive hold — type on the keyboard
+
+
+BusyBox v1.37.0 (Debian 1:1.37.0-6+b9) built-in shell (ash)
+Enter 'help' for a list of built-in commands.
+
+thos$ THOS_FIREFOX_WAIT=110   /busybox sh /firefox.sh
+desk: ready 1280x800
+THOS: unhandled syscall 435 (further calls suppressed in release)
+THOS: unhandled syscall 187 (further calls suppressed in release)
+Mozilla Firefox 153.4.0esr
+THOS: unhandled syscall 140 (further calls suppressed in release)
+[Parent 10, Main Thread] WARNING: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+: 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+
+** (firefox-esr:10): [1;33mWARNING[0m **: [34m21:53:59.910[0m: Failed to create DBus proxy for org.a11y.Bus: Cannot spawn a message bus without a machine-id: Unable to load /var/lib/dbus/machine-id or /etc/machine-id: Failed to open file “/var/lib/dbus/machine-id”: No such file or directory
+
+desk: wayland window 1 mapped 1256x824
+THOS trap: #PF page fault [user] rip=0x7001ac143afa cr2=0x0 err=0x6
+THOS: pid 76 killed by signal 11
+[Parent 10, IPC I/O Parent] WARNING: Failed to launch tab subprocess @FSC::SFNS::Recv (Error:0): file ipc/glue/GeckoChildProcessHost.cpp:823
+[Parent 10, IPC I/O Parent] WARNING: Failed to launch tab subprocess @FSC::SFNS::Failed (Error:0): file ipc/glue/GeckoChildProcessHost.cpp:823
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 76 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+THOS: unhandled syscall 252 (further calls suppressed in release)
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 325 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 329 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[WARN  glean_core] Shutdown called before Glean is initialized. Waiting.
+desk: quit requested
+desk: loop end idle=0 quit=1
+desk ok: 1 window(s) at exit
+THOS trap: #PF page fault [user] rip=0x7001afc0a960 cr2=0x0 err=0x6
+THOS: pid 204 killed by signal 11
+THOS trap: #PF page fault [user] rip=0x7001afc0a960 cr2=0x0 err=0x6
+THOS trap: #PF page fault [user] rip=0x7001afc0a960 cr2=0x0 err=0x6
+THOS: pid 164 killed by signal 11
+THOS: pid 113 killed by signal 11
+THOS trap: #PF page fault [user] rip=0x7001afc0a960 cr2=0x0 err=0x6
+THOS: pid 218 killed by signal 11
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 204 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 113 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Child 422, Main Thread] WARNING: cannot open display: : 'glib warning', file toolkit/xre/nsSigHandlers.cpp:200
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 164 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+[Parent 10, IPC I/O Parent] WARNING: waiting for process 218 failed with error 10: file ipc/chromium/src/chrome/common/process_watcher_posix_sigchld.cc:174
+
+(/usr/lib/firefox-esr/firefox-esr:422): Gtk-[1;33mWARNING[0m **: [34m21:55:41.202[0m: cannot open display: 
+[GFX1-]: Wayland compositor unavailable (), proxy: WP:E WP:CA WP:CR WP:CPCA WP:CPCF  - scheduling graceful shutdown
+firefox-test-done
+thos$ 

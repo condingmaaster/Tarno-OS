@@ -1,0 +1,66 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1891:17
+     |
+1891 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask gdi-font-test`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1113/32768 files (3.0% non-contiguous), 103817/524288 blocks
+GDI font independent FreeType reference: 0 different pixels, 6147 ink pixels
+gdi-font-ok real-font-objects
+gdi-font-ok default-font-selection
+gdi-font-ok unsupported-monospace-not-proportional-fake
+gdi-font-ok font-current-object
+gdi-font-ok bitmap-selection-independent
+gdi-font-ok selected-font-cannot-delete
+gdi-font-ok unknown-font-cannot-select
+gdi-font-ok actual-text-metrics
+gdi-font-ok actual-fallback-face-query
+gdi-font-ok actual-fallback-face-name
+gdi-font-ok face-name-truncation-bounded
+gdi-font-ok empty-extent-zero
+gdi-font-ok measured-positive-extent
+gdi-font-ok latin-euro-extent
+gdi-font-ok surrogate-pair-one-fallback
+gdi-font-ok invalid-surrogate-safe-fallback
+gdi-font-ok text-color-default-and-set
+gdi-font-ok bk-color-default-and-set
+gdi-font-ok mode-default-opaque
+gdi-font-ok opaque-text-render
+gdi-font-ok opaque-cell-background-and-border
+gdi-font-ok transparent-mode-change
+gdi-font-ok transparent-space-preserves-pixel
+gdi-font-ok invalid-mode-preserves-state
+gdi-font-ok negative-origin-clips
+gdi-font-ok invalid-input-pointer
+gdi-font-ok invalid-count
+gdi-font-ok invalid-metrics-pointer
+gdi-font-ok invalid-dc-no-text
+gdi-font-ok unsupported-width-explicit-fail
+gdi-font-ok unsupported-rotation-explicit-fail
+gdi-font-ok window-state-independent
+gdi-font-ok font-selection-multiple-dcs-valid
+gdi-font-ok window-selected-font-not-delete
+gdi-font-ok window-selection-still-retains-font
+gdi-font-ok unselected-font-delete
+gdi-font-ok stale-font-refused
+gdi-font-ok independent-ansi-font-delete
+gdi-font-result=PASS
+gdi-font-ready-close
+gdi-font-close
+gdi-font-exit:0
+gdi-font-done

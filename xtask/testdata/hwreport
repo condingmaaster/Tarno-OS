@@ -1,0 +1,25 @@
+#!/busybox sh
+# hwreport: collect what THOS sees of this machine into /tmp/hwreport.txt and a copy in your home folder (the stick's second
+# partition is an ordinary ext2 file system: plug the stick into another Linux computer to read ~/hwreport.txt without photos).
+B=/busybox
+OUT=/tmp/hwreport.txt
+{
+echo "== THOS hardware report =="
+$B uname -a
+echo "== boot disk (usb = running from a stick, sata = internal disk) =="; $B cat /proc/bootdisk
+echo "== disks =="
+for d in /dev/sda /dev/sdb; do [ -e $d ] && echo "$d $($B stat -c %s $d 2>/dev/null) bytes"; done
+echo "== network =="; $B cat /proc/netinfo
+echo "== Wi-Fi =="; $B cat /proc/wlaninfo
+echo "== graphics =="; $B cat /proc/gpuinfo
+echo "== power and sensors (battery, AC, temperatures, lid) =="; $B cat /proc/power
+echo "== uptime =="; $B cat /proc/uptime
+echo "== cpu =="; $B cat /proc/cpuinfo
+echo "== memory =="; $B cat /proc/meminfo
+echo "== pci =="; $B cat /proc/pci
+echo "== mounts =="; $B cat /proc/mounts
+echo "== kernel log =="; $B cat /proc/dmesg
+} > $OUT
+[ -n "$HOME" ] && [ -d "$HOME" ] && $B cp $OUT "$HOME/hwreport.txt" 2>/dev/null
+$B cat $OUT
+echo "(saved as $OUT and, if possible, $HOME/hwreport.txt)"

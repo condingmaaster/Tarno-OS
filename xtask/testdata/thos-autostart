@@ -1,0 +1,7 @@
+#!/busybox sh
+# thos-autostart on|off: start the graphical desktop automatically after login (the shell stays available when it quits)
+case "$1" in
+    on) /busybox touch /tmp/autostart && echo "the desktop will start after the next login" ;;
+    off) /busybox rm -f /tmp/autostart && echo "autostart is off" ;;
+    *) if [ -f /tmp/autostart ]; then echo "autostart: on"; else echo "autostart: off"; fi; echo "usage: thos-autostart on|off" ;;
+esac

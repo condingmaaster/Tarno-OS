@@ -30,6 +30,9 @@ const EROFS: i64 = -30;
 
 pub trait FileOps: Send + Sync {
     fn read(&self, buf: &mut [u8]) -> i64;
+    /// Positional read that does not alter the shared descriptor position.
+    fn read_at(&self, _offset: u64, _buf: &mut [u8]) -> i64 { ESPIPE }
+    fn write_at(&self,_offset:u64,_buf:&[u8])->i64 {ESPIPE}
     fn write(&self, buf: &[u8]) -> i64;
     fn seek(&self, offset: i64, whence: u32) -> i64;
     /// (mode bits for `st_mode`, size for `st_size`).
@@ -54,12 +57,42 @@ pub trait FileOps: Send + Sync {
     fn ino(&self) -> u64 {
         0
     }
+    /// Whole-file lock identity in the sole ext2 root; other backends opt out.
+    fn flock_inode(&self) -> Option<u64> { None }
     /// `fsync`: make sure everything written reached the disk.
     fn sync(&self) -> i64 {
         0
     }
     /// The socket behind this file, if it is one.
     fn as_socket(&self) -> Option<&crate::net_sock::SockFile> {
+        None
+    }
+    /// Is this a terminal (console, tty, pty)? Regular files, pipes and sockets answer ENOTTY to the termios ioctls.
+    fn is_tty(&self) -> bool {
+        true
+    }
+    /// Terminal `ioctl`s of a pseudo-terminal end; `None` = not a pty (the console's defaults apply).
+    fn tty_ioctl(&self, _cmd: u64, _arg: u64) -> Option<i64> {
+        None
+    }
+    /// The directory path of an opened directory (`fchdir`, `openat`).
+    fn dir_path(&self) -> Option<String> {
+        None
+    }
+    /// The path of an ext2 file (for `fchmod`/`fchown`).
+    fn fs_path(&self) -> Option<String> {
+        None
+    }
+    /// `ftruncate`: only `memfd` files support it.
+    fn truncate(&self, _len: u64) -> i64 {
+        -22
+    }
+    /// The shared-memory section behind a `memfd`, for `mmap(MAP_SHARED)`.
+    fn shm_section(&self) -> Option<alloc::sync::Arc<crate::process::Section>> {
+        None
+    }
+    /// The AF_UNIX socket behind this file, if it is one.
+    fn as_unix(&self) -> Option<&crate::unix::UnixSock> {
         None
     }
     /// For `mmap`: the device memory this file maps (`(physical base, length)`), if any.
@@ -74,6 +107,34 @@ pub trait FileOps: Send + Sync {
     fn set_nonblock(&self, _on: bool) {}
     fn is_nonblock(&self) -> bool {
         false
+    }
+    /// For `poll`/`epoll`: the monotonic time (ns) at which this object becomes ready by itself (a `timerfd`),
+    /// so a poller sleeping on it knows when to look again.
+    fn next_wake_ns(&self) -> Option<u64> {
+        None
+    }
+    /// Physical address of page `idx` of a sparse memfd, allocated on demand (None past the end / out of memory).
+    fn lazy_page(&self, _idx: usize) -> Option<u64> {
+        None
+    }
+    fn is_memfd(&self) -> bool {
+        false
+    }
+    fn access_mode(&self)->u64 {2}
+    fn register_mapping(&self,writable:bool,may_write:bool)->Result<bool,i64> {
+        if writable&&!may_write {Err(-13)}else{Ok(may_write)}
+    }
+    fn unregister_mapping(&self,_may_write:bool) {}
+    fn fcntl_seals(&self,_op:u64,_value:u64)->i64 {EINVAL}
+    fn as_epoll(&self) -> Option<&crate::eventpoll::Epoll> {
+        None
+    }
+    fn as_timerfd(&self) -> Option<&crate::eventpoll::TimerFd> {
+        None
+    }
+    /// `inotify_add_watch` on an inotify descriptor: a fresh watch descriptor.
+    fn as_inotify_wd(&self) -> Option<i64> {
+        None
     }
 }
 
@@ -94,11 +155,140 @@ pub enum DevKind {
     Random,
     /// `/dev/input/mice`: raw PS/2 mouse packets.
     Mice,
+    /// `/dev/input/wheel`: scroll wheel clicks, one signed byte each.
+    Wheel,
+}
+
+/// `/dev/winsys`: the display server's side of the Win32 window manager. `read` = 32-byte window
+/// events, `ioctl(0x7701, hwnd)` maps a window's pixels, `write` = 32-byte input records
+/// (`[kind, hwnd, a, b, ...]`: 10 = mouse message a at (b, c); 11 = char a; 12 = close; 13 = paint;
+/// 14 = destroy). Holding it open turns on composition: windows then draw into their own buffers.
+pub struct WinSys;
+
+impl FileOps for WinSys {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        if buf.len() < 32 {
+            return -22;
+        }
+        loop {
+            if let Some(e) = crate::window::winsys_read() {
+                for (i, v) in e.iter().enumerate() {
+                    buf[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+                }
+                return 32;
+            }
+            if crate::signal::interrupted() {
+                return -4;
+            }
+            crate::window::winsys_wait();
+        }
+    }
+    fn write(&self, buf: &[u8]) -> i64 {
+        let mut done = 0;
+        for rec in buf.chunks_exact(32) {
+            let w = |i: usize| u32::from_le_bytes([rec[4 * i], rec[4 * i + 1], rec[4 * i + 2], rec[4 * i + 3]]);
+            let (kind, hwnd) = (w(0), w(1));
+            match kind {
+                10 => {
+                    crate::window::post_message(hwnd, w(2), w(5) as u64, (w(3) & 0xFFFF) as u64 | (((w(4) & 0xFFFF) as u64) << 16));
+                }
+                11 => {
+                    crate::window::post_message(hwnd, 0x102, w(2) as u64, 0);
+                }
+                12 => {
+                    crate::window::post_message(hwnd, 0x10, 0, 0);
+                }
+                13 => {
+                    crate::window::post_message(hwnd, crate::window::WM_PAINT, 0, 0);
+                }
+                14 => crate::window::destroy_window(hwnd),
+                15 => if !crate::window::resize_from_server(hwnd,w(2),w(3),w(4)){return -12;},
+                _ => {}
+            }
+            done += 32;
+        }
+        done as i64
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        (if want & POLLIN != 0 && crate::window::winsys_ready() { POLLIN } else { 0 }) | (want & POLLOUT)
+    }
+    fn ioctl(&self, cmd: u64, arg: u64) -> i64 {
+        match cmd {
+            0x7701=>crate::window::winsys_map(arg),
+            0x7702=>if crate::sched::current_proc().is_some_and(|p|p.unmap_view(arg)){0}else{-22},
+            0x7704=>{
+                let hwnd=crate::usercopy::get::<u32>(arg);
+                let Some(title)=crate::window::title_of(hwnd) else{return -22;};
+                let mut n=title.len().min(16);while !title.is_char_boundary(n){n-=1;}
+                let mut text=[0u8;17];text[..n].copy_from_slice(&title.as_bytes()[..n]);
+                let Some(out)=arg.checked_add(4) else{return -14;};
+                if crate::usercopy::put(out,text){n as i64}else{-14}
+            }
+            _=>-25,
+        }
+    }
+}
+
+impl Drop for WinSys {
+    fn drop(&mut self) {
+        crate::window::winsys_open(false);
+    }
+}
+
+/// `/dev/input/kbd`: key press/release events (see `console::kbd_read`). Holding it open takes the
+/// keyboard away from the tty.
+pub struct KbdDev {
+    nonblock: AtomicBool,
+}
+
+impl FileOps for KbdDev {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn read(&self, buf: &mut [u8]) -> i64 {
+        crate::console::kbd_read(buf, self.nonblock.load(Ordering::Relaxed))
+    }
+    fn write(&self, _buf: &[u8]) -> i64 {
+        -9
+    }
+    fn seek(&self, _o: i64, _w: u32) -> i64 {
+        0
+    }
+    fn stat(&self) -> (u32, u64) {
+        (S_IFCHR | 0o666, 0)
+    }
+    fn poll_mask(&self, want: u16) -> u16 {
+        if want & POLLIN != 0 && crate::console::kbd_ready() { POLLIN } else { 0 }
+    }
+    fn set_nonblock(&self, on: bool) {
+        self.nonblock.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.nonblock.load(Ordering::Relaxed)
+    }
+}
+
+impl Drop for KbdDev {
+    fn drop(&mut self) {
+        crate::console::kbd_grab(false);
+    }
 }
 
 pub struct DevFile(pub DevKind);
 
 impl FileOps for DevFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         match self.0 {
             DevKind::Null => 0, // always EOF
@@ -111,12 +301,16 @@ impl FileOps for DevFile {
                 buf.len() as i64
             }
             DevKind::Mice => crate::ps2::mouse_read(buf),
+            DevKind::Wheel => crate::ps2::wheel_read(buf),
         }
     }
     fn poll_mask(&self, want: u16) -> u16 {
         match self.0 {
             DevKind::Mice => {
                 if want & POLLIN != 0 && crate::ps2::mouse_ready() { POLLIN } else { 0 }
+            }
+            DevKind::Wheel => {
+                if want & POLLIN != 0 && crate::ps2::wheel_ready() { POLLIN } else { 0 }
             }
             _ => want & (POLLIN | POLLOUT),
         }
@@ -139,16 +333,42 @@ impl FileOps for DevFile {
 /// screen (the same objects fds 0/1 are made of).
 pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<dyn FileOps>> {
     Some(match path {
+        p if p.starts_with("/dev/sd") || p == "/dev/ram0" => crate::rawdisk::open(p)?,
         "/dev/null" => Arc::new(DevFile(DevKind::Null)),
         "/dev/zero" => Arc::new(DevFile(DevKind::Zero)),
+        "/dev/netctl" => Arc::new(NetControl),
         "/dev/urandom" | "/dev/random" => Arc::new(DevFile(DevKind::Random)),
         "/dev/input/mice" | "/dev/input/mouse0" => Arc::new(DevFile(DevKind::Mice)),
+        "/dev/input/wheel" => Arc::new(DevFile(DevKind::Wheel)),
+        "/dev/dsp" | "/dev/audio" => crate::hda::open_dsp()?,
+        "/dev/ptmx" => crate::pty::open_master(),
+        p if p.starts_with("/dev/pts/") => crate::pty::open_slave(p[9..].parse().ok()?)?,
+        "/dev/winsys" => {
+            crate::window::winsys_open(true);
+            Arc::new(WinSys)
+        }
+        "/dev/input/kbd" => {
+            crate::console::kbd_grab(true);
+            Arc::new(KbdDev { nonblock: AtomicBool::new(false) })
+        }
         "/dev/fb0" => {
             if crate::gdi::fb_geometry().is_none() {
                 return None;
             }
+            // The opener owns the screen: the text console stops painting (its model keeps
+            // updating) until the last fd of /dev/fb0 closes — also when the owner crashes.
+            if FB_OPENS.fetch_add(1, Ordering::AcqRel) == 0 {
+                crate::fbcon::suspend();
+            }
             Arc::new(FbFile { pos: AtomicU64::new(0) })
         }
+        "/dev/tty" if crate::sched::current().task().is_some_and(|t| t.ctty().is_some()) => {
+            let p = crate::sched::current().task().and_then(|t| t.ctty())?;
+            crate::pty::open_ctty(&p)
+        }
+        "/dev/kmsg" if want_write && !want_read => Arc::new(KmsgFile),
+        "/dev/wlan" if want_write && !want_read => Arc::new(WlanFile),
+        "/dev/inject" if want_write && !want_read => Arc::new(InjectFile { src: crate::ps2::usb_mouse_attach(), buttons: core::sync::atomic::AtomicU8::new(0) }),
         "/dev/tty" | "/dev/console" => {
             if want_read && !want_write {
                 Arc::new(KeyboardFile)
@@ -162,13 +382,104 @@ pub fn open_device(path: &str, want_read: bool, want_write: bool) -> Option<Arc<
     })
 }
 
+/// `/dev/kmsg` (write only, root): a line into the kernel log, so a boot service shows up in `dmesg` and on the netconsole.
+struct KmsgFile;
+impl FileOps for KmsgFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        let s = alloc::string::String::from_utf8_lossy(buf);
+        for l in s.lines().filter(|l| !l.is_empty()) { crate::kprintln!("THOS: user           {l}"); }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
+/// `/dev/inject` (write only, root): synthetic keyboard and mouse input that flows through the same queues as real hardware (remote control, tests).
+/// One command per line: `m DX DY` moves the mouse by (DX, DY) · `b N` sets the held buttons (1 left, 2 right, 4 middle) · `w N` wheel (positive up) ·
+/// `k MODS CODE` holds a key (USB HID usage, modifier bits as in a boot report) · `u` releases all keys.
+struct InjectFile {
+    src: usize,
+    buttons: core::sync::atomic::AtomicU8,
+}
+impl Drop for InjectFile {
+    fn drop(&mut self) { crate::ps2::usb_mouse_detach(self.src); }
+}
+impl FileOps for InjectFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        let text = alloc::string::String::from_utf8_lossy(buf);
+        for line in text.lines() {
+            let mut it = line.split_whitespace();
+            let Some(cmd) = it.next() else { continue };
+            let mut num = || it.next().and_then(|t| t.parse::<i32>().ok()).unwrap_or(0);
+            let b = self.buttons.load(core::sync::atomic::Ordering::Relaxed);
+            match cmd {
+                "m" => { let (dx, dy) = (num(), num()); crate::ps2::usb_mouse_event(self.src, b, dx, dy, 0); }
+                "b" => { let n = (num() & 7) as u8; self.buttons.store(n, core::sync::atomic::Ordering::Relaxed); crate::ps2::usb_mouse_event(self.src, n, 0, 0, 0); }
+                "w" => { let n = num(); crate::ps2::usb_mouse_event(self.src, b, 0, 0, n); }
+                "k" => { let (mods, code) = (num() as u8, num() as u8); crate::console::feed_report(&[mods, 0, code, 0, 0, 0, 0, 0]); }
+                "u" => crate::console::feed_report(&[0; 8]),
+                _ => return -22,
+            }
+        }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
+/// `/dev/wlan` (write only, root): bring-up commands for the Wi-Fi adapter (see wlan::control).
+struct WlanFile;
+impl FileOps for WlanFile {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 {
+        if crate::process::current_uid() != 0 { return -13; }
+        for line in alloc::string::String::from_utf8_lossy(buf).lines() {
+            let r = crate::wlan::control(line);
+            if r < 0 { return r; }
+        }
+        buf.len() as i64
+    }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o200, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
+/// `/dev/netctl`: authenticated network commands from Settings or the shell.
+struct NetControl;
+impl FileOps for NetControl {
+    fn read(&self, _buf: &mut [u8]) -> i64 { 0 }
+    fn write(&self, buf: &[u8]) -> i64 { crate::net::control(buf) }
+    fn seek(&self, _offset: i64, _whence: u32) -> i64 { -29 }
+    fn stat(&self) -> (u32,u64) { (0x2000 | 0o600, 0) }
+    fn is_tty(&self) -> bool { false }
+}
+
 /// `/dev/fb0`: the boot framebuffer as a Linux-style fbdev — `read`/`write`/`lseek` at byte
 /// offsets, `FBIOGET_VSCREENINFO` / `FBIOGET_FSCREENINFO` for its geometry. (No `mmap` yet.)
 pub struct FbFile {
     pos: AtomicU64,
 }
 
+static FB_OPENS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+impl Drop for FbFile {
+    fn drop(&mut self) {
+        if FB_OPENS.fetch_sub(1, Ordering::AcqRel) == 1 {
+            crate::fbcon::resume();
+        }
+    }
+}
+
 impl FileOps for FbFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let pos = self.pos.load(Ordering::Relaxed) as usize;
         let n = crate::gdi::fb_read(pos, buf);
@@ -340,7 +651,7 @@ impl FileOps for ConsoleFile {
 /// the one implementation where that write reaches ext2.
 pub struct Ext2File {
     path: String,
-    buf: Mutex<Vec<u8>>,
+    buf: crate::io_mutex::IoMutex<Vec<u8>>,
     pos: AtomicUsize,
     ino: core::sync::atomic::AtomicU64,
     /// Write-back state: bytes written since the last flush, and whether the file on disk
@@ -385,7 +696,7 @@ impl Ext2File {
     pub fn new(path: String, data: Vec<u8>) -> Arc<Self> {
         Arc::new(Self {
             path,
-            buf: Mutex::new(data),
+            buf: crate::io_mutex::IoMutex::new(data),
             pos: AtomicUsize::new(0),
             ino: core::sync::atomic::AtomicU64::new(0),
             unflushed: AtomicUsize::new(0),
@@ -405,19 +716,105 @@ impl Drop for Ext2File {
         // The last close: whatever was written but not yet flushed goes to disk now.
         let data = self.buf.lock();
         let _ = self.flush_locked(&data);
+        if self.ino.load(Ordering::Relaxed)!=0 {crate::flock::notify_closed();}
     }
+}
+
+/// A separate read-only description of a regular file or reopened memfd.
+/// It shares the object, not its access rights or input position.
+pub struct ReadOnlyFd {file:Arc<dyn FileOps>,pos:AtomicU64}
+impl ReadOnlyFd {pub fn new(file:Arc<dyn FileOps>)->Arc<Self> {Arc::new(Self {file,pos:AtomicU64::new(0)})}}
+impl Drop for ReadOnlyFd {fn drop(&mut self){if self.file.flock_inode().is_some(){crate::flock::notify_closed();}}}
+impl FileOps for ReadOnlyFd {
+    fn read_at(&self,off:u64,buf:&mut [u8])->i64 {self.file.read_at(off,buf)}
+    fn read(&self,buf:&mut [u8])->i64 {let p=self.pos.load(Ordering::Relaxed);let n=self.file.read_at(p,buf);if n>0 {self.pos.store(p+n as u64,Ordering::Relaxed);}n}
+    fn write(&self,_:&[u8])->i64 {EBADF}
+    fn write_at(&self,_:u64,_:&[u8])->i64 {EBADF}
+    fn truncate(&self,_:u64)->i64 {EBADF}
+    fn seek(&self,off:i64,whence:u32)->i64 {
+        let base=match whence {SEEK_SET=>0,SEEK_CUR=>self.pos.load(Ordering::Relaxed),SEEK_END=>self.file.stat().1,_=>return EINVAL};
+        let Some(p)=(base as i64).checked_add(off) else{return EINVAL};if p<0{return EINVAL;}self.pos.store(p as u64,Ordering::Relaxed);p
+    }
+    fn stat(&self)->(u32,u64) {self.file.stat()}
+    fn times(&self)->(u32,u32,u32) {self.file.times()}
+    fn ino(&self)->u64 {self.file.ino()}
+    fn flock_inode(&self)->Option<u64> {self.file.flock_inode()}
+    fn fs_path(&self)->Option<String> {self.file.fs_path()}
+    fn sync(&self)->i64 {self.file.sync()}
+    fn is_tty(&self)->bool {false}
+    fn is_memfd(&self)->bool {self.file.is_memfd()}
+    fn lazy_page(&self,idx:usize)->Option<u64> {self.file.lazy_page(idx)}
+    fn access_mode(&self)->u64 {0}
+    fn register_mapping(&self,writable:bool,_:bool)->Result<bool,i64> {self.file.register_mapping(writable,false)}
+    fn unregister_mapping(&self,may_write:bool) {self.file.unregister_mapping(may_write);}
+    fn fcntl_seals(&self,op:u64,value:u64)->i64 {if op==1034 {self.file.fcntl_seals(op,value)}else{EBADF}}
+}
+
+struct Ext2WriteState {pos:u64,size:u64,roots:[u32;15],blocks:Vec<u32>,meta:u32,epoch:u64}
+/// Disk-backed regular writer. Payload stays in the caller's buffer; only a
+/// compact block map is cached, so downloading a large file cannot consume its
+/// entire size from the kernel heap. Writes are visible to other descriptors.
+pub struct Ext2WriteFile {
+    fs:crate::ext2::Ext2,ino:u32,path:String,readable:bool,
+    state:crate::io_mutex::IoMutex<Ext2WriteState>,
+}
+impl Ext2WriteFile {
+    pub fn new(fs:crate::ext2::Ext2,ino:u32,path:String,readable:bool)->Arc<Self> {
+        Arc::new(Self {fs,ino,path,readable,state:crate::io_mutex::IoMutex::new(Ext2WriteState {pos:0,size:u64::MAX,roots:[0;15],blocks:Vec::new(),meta:0,epoch:0})})
+    }
+    fn error(e:&str)->i64 {match e {"no space"=>-28,"file too large"=>-27,_=>EIO}}
+    fn read_locked(&self,state:&mut Ext2WriteState,off:u64,buf:&mut [u8])->i64 {
+        if !self.readable{return EBADF;}
+        let node=self.fs.read_inode(self.ino);
+        if node.size>self.fs.max_write_size(){return -27;}
+        if state.size!=node.size||state.roots!=node.block {
+            state.blocks=self.fs.file_blocks(&node);state.roots=node.block;state.size=node.size;state.meta=self.fs.metadata_blocks(&node);state.epoch=0;
+        }
+        self.fs.read_at(&state.blocks,node.size,off,buf) as i64
+    }
+}
+impl Drop for Ext2WriteFile {fn drop(&mut self){crate::flock::notify_closed();}}
+impl FileOps for Ext2WriteFile {
+    fn flock_inode(&self) -> Option<u64> { let ino=self.ino(); if ino!=0 {Some(ino)} else {None} }
+    fn access_mode(&self)->u64 {if self.readable {2}else{1}}
+    fn read_at(&self,off:u64,buf:&mut [u8])->i64 {let mut s=self.state.lock();self.read_locked(&mut s,off,buf)}
+    fn read(&self,buf:&mut [u8])->i64 {
+        let mut s=self.state.lock();let pos=s.pos;let n=self.read_locked(&mut s,pos,buf);if n>0 {s.pos+=n as u64;}n
+    }
+    fn write_at(&self,off:u64,data:&[u8])->i64 {
+        if data.is_empty(){return 0;}
+        let mut s=self.state.lock();match self.fs.write_range(self.ino,off,data,Some((s.size,s.roots,&s.blocks,s.meta,s.epoch))) {Ok((size,roots,blocks,meta,epoch))=>{s.size=size;s.roots=roots;s.blocks=blocks;s.meta=meta;s.epoch=epoch;data.len() as i64},Err(e)=>Self::error(e)}
+    }
+    fn write(&self,data:&[u8])->i64 {
+        if data.is_empty(){return 0;}
+        let mut s=self.state.lock();match self.fs.write_range(self.ino,s.pos,data,Some((s.size,s.roots,&s.blocks,s.meta,s.epoch))) {Ok((size,roots,blocks,meta,epoch))=>{s.pos+=data.len() as u64;s.size=size;s.roots=roots;s.blocks=blocks;s.meta=meta;s.epoch=epoch;data.len() as i64},Err(e)=>Self::error(e)}
+    }
+    fn seek(&self,off:i64,whence:u32)->i64 {
+        let mut s=self.state.lock();let base=match whence {SEEK_SET=>0,SEEK_CUR=>s.pos,SEEK_END=>self.fs.read_inode(self.ino).size,_=>return EINVAL};
+        let Some(pos)=(base as i64).checked_add(off) else{return EINVAL};if pos<0{return EINVAL;}s.pos=pos as u64;pos
+    }
+    fn truncate(&self,size:u64)->i64 {
+        let mut s=self.state.lock();match self.fs.truncate_inode(self.ino,size) {Ok(())=>{s.size=u64::MAX;0},Err(e)=>Self::error(e)}
+    }
+    fn sync(&self)->i64 {match crate::blk::flush(){Ok(())=>0,Err(_)=>EIO}}
+    fn stat(&self)->(u32,u64) {let n=self.fs.read_inode(self.ino);(n.mode as u32,n.size)}
+    fn times(&self)->(u32,u32,u32) {let n=self.fs.read_inode(self.ino);(n.atime,n.mtime,n.ctime)}
+    fn ino(&self)->u64 {self.ino as u64}
+    fn fs_path(&self)->Option<String> {Some(self.path.clone())}
+    fn is_tty(&self)->bool {false}
 }
 
 /// A large read-only file on the root filesystem, read on demand in 64 KiB chunks — opening
 /// a multi-gigabyte file costs its block map (4 bytes per 4 KiB), not its size.
 pub struct Ext2Stream {
     ino: u64,
+    path:String,
     fs: crate::ext2::Ext2,
     blocks: Vec<u32>,
     size: u64,
     pos: AtomicU64,
     /// The last chunk read: `(file offset, bytes)`.
-    cache: Mutex<(u64, Vec<u8>)>,
+    cache: Mutex<(u64, Arc<Vec<u8>>)>,
 }
 
 const STREAM_CHUNK: usize = 64 * 1024;
@@ -425,56 +822,66 @@ const STREAM_CHUNK: usize = 64 * 1024;
 pub const STREAM_THRESHOLD: u64 = 256 * 1024;
 
 impl Ext2Stream {
-    pub fn new(fs: crate::ext2::Ext2, ino: u32, inode: &crate::ext2::Inode) -> Arc<Self> {
+    pub fn new(fs: crate::ext2::Ext2, ino: u32, inode: &crate::ext2::Inode,path:String) -> Arc<Self> {
         let blocks = fs.file_blocks(inode);
         Arc::new(Self {
             ino: ino as u64,
+            path,
             fs,
             blocks,
             size: inode.size,
             pos: AtomicU64::new(0),
-            cache: Mutex::new((0, Vec::new())),
+            cache: Mutex::new((0, Arc::new(Vec::new()))),
         })
     }
 }
 
+impl Drop for Ext2Stream {fn drop(&mut self){crate::flock::notify_closed();}}
 impl FileOps for Ext2Stream {
-    fn ino(&self) -> u64 {
-        self.ino
-    }
-    fn read(&self, buf: &mut [u8]) -> i64 {
-        let pos = self.pos.load(Ordering::Relaxed);
-        if pos >= self.size || buf.is_empty() {
-            return 0;
+    fn flock_inode(&self) -> Option<u64> { let ino=self.ino(); if ino!=0 {Some(ino)} else {None} }
+    fn fs_path(&self)->Option<String>{Some(self.path.clone())}
+    fn read_at(&self, pos: u64, buf: &mut [u8]) -> i64 {
+        if pos >= self.size || buf.is_empty() { return 0; }
+        let n=buf.len().min((self.size-pos) as usize);
+        if n>=STREAM_CHUNK { return self.fs.read_at(&self.blocks,self.size,pos,&mut buf[..n]) as i64; }
+        let mut done=0;
+        while done<n {
+            let p=pos+done as u64;
+            let hit={
+                let cache=self.cache.lock();
+                if p>=cache.0 && p<cache.0+cache.1.len() as u64 { Some((cache.0,cache.1.clone())) } else {None}
+            };
+            let (start,data)=match hit {
+                Some(hit)=>hit,
+                None=>{
+                    let aligned=p & !(STREAM_CHUNK as u64-1);
+                    let want=STREAM_CHUNK.min((self.size-aligned) as usize);
+                    let mut chunk=alloc::vec![0u8;want];
+                    // No stream-cache lock while AHCI can block the thread.
+                    let got=self.fs.read_at(&self.blocks,self.size,aligned,&mut chunk);
+                    if got==0 {break;}
+                    chunk.truncate(got);let data=Arc::new(chunk);
+                    *self.cache.lock()=(aligned,data.clone());
+                    (aligned,data)
+                }
+            };
+            let off=(p-start) as usize;
+            let take=(data.len()-off).min(n-done);
+            buf[done..done+take].copy_from_slice(&data[off..off+take]);
+            done+=take;
         }
-        let n = buf.len().min((self.size - pos) as usize);
-        if n >= STREAM_CHUNK {
-            // big read: straight into the caller's buffer, no copy through the cache
-            let got = self.fs.read_at(&self.blocks, self.size, pos, &mut buf[..n]);
-            self.pos.store(pos + got as u64, Ordering::Relaxed);
-            return got as i64;
-        }
-        let mut done = 0usize;
-        let mut cache = self.cache.lock();
-        while done < n {
-            let p = pos + done as u64;
-            let (start, ref data) = *cache;
-            if !(p >= start && p < start + data.len() as u64) {
-                let aligned = p & !(STREAM_CHUNK as u64 - 1);
-                let want = STREAM_CHUNK.min((self.size - aligned) as usize);
-                let mut chunk = alloc::vec![0u8; want];
-                let got = self.fs.read_at(&self.blocks, self.size, aligned, &mut chunk);
-                chunk.truncate(got);
-                *cache = (aligned, chunk);
-                continue;
-            }
-            let off = (p - start) as usize;
-            let take = (data.len() - off).min(n - done);
-            buf[done..done + take].copy_from_slice(&data[off..off + take]);
-            done += take;
-        }
-        self.pos.store(pos + done as u64, Ordering::Relaxed);
         done as i64
+    }
+    fn is_tty(&self) -> bool { false }
+    fn ino(&self) -> u64 { self.ino }
+    fn read(&self,buf: &mut [u8]) -> i64 {
+        // Reserve the input range once, so concurrent readers of an inherited
+        // descriptor do not both consume the same bytes. Regular-file read_at
+        // supplies the entire bounded range or reaches EOF.
+        let pos=self.pos.fetch_update(Ordering::AcqRel,Ordering::Relaxed,|p| {
+            Some(p.saturating_add((buf.len() as u64).min(self.size.saturating_sub(p))))
+        }).unwrap();
+        self.read_at(pos,buf)
     }
     fn write(&self, _buf: &[u8]) -> i64 {
         EBADF // opened read-only
@@ -504,8 +911,43 @@ impl FileOps for Ext2Stream {
 }
 
 impl FileOps for Ext2File {
+    fn flock_inode(&self) -> Option<u64> { let ino=self.ino(); if ino!=0 {Some(ino)} else {None} }
+    fn write_at(&self,offset:u64,src:&[u8])->i64 {
+        let mut data=self.buf.lock();
+        let Some(end)=(offset as usize).checked_add(src.len()) else{return EINVAL};
+        if end>data.len() {
+            let extra=end-data.len();if data.try_reserve_exact(extra).is_err(){return -12;}
+            data.resize(end,0);
+        }
+        data[offset as usize..end].copy_from_slice(src);
+        self.dirty.store(true,Ordering::Release);self.dirty_lo.fetch_min(offset as usize,Ordering::Relaxed);self.dirty_hi.fetch_max(end,Ordering::Relaxed);
+        let total=self.unflushed.fetch_add(src.len(),Ordering::Relaxed)+src.len();
+        if total>=FLUSH_EVERY.max(data.len()/2)&&self.flush_locked(&data)<0 {return EIO;}
+        src.len() as i64
+    }
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> i64 {
+        let data=self.buf.lock();
+        if offset>=data.len() as u64 {return 0;}
+        let pos=offset as usize;let n=buf.len().min(data.len()-pos);
+        buf[..n].copy_from_slice(&data[pos..pos+n]);n as i64
+    }
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn ino(&self) -> u64 {
         self.ino.load(Ordering::Relaxed)
+    }
+    fn fs_path(&self) -> Option<String> {
+        Some(self.path.clone())
+    }
+    fn truncate(&self, len: u64) -> i64 {
+        let mut data = self.buf.lock();
+        data.resize(len as usize, 0);
+        self.dirty.store(true, Ordering::Release);
+        self.dirty_lo.store(0, Ordering::Relaxed);
+        self.dirty_hi.store(data.len(), Ordering::Relaxed);
+        self.unflushed.store(usize::MAX / 2, Ordering::Relaxed);
+        self.flush_locked(&data)
     }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let data = self.buf.lock();
@@ -590,6 +1032,14 @@ impl FatFile {
 }
 
 impl FileOps for FatFile {
+    fn read_at(&self, offset: u64, buf: &mut [u8]) -> i64 {
+        if offset>=self.buf.len() as u64 {return 0;}
+        let pos=offset as usize;let n=buf.len().min(self.buf.len()-pos);
+        buf[..n].copy_from_slice(&self.buf[pos..pos+n]);n as i64
+    }
+    fn is_tty(&self) -> bool {
+        false
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         let pos = self.pos.load(Ordering::Relaxed);
         if pos >= self.buf.len() {
@@ -634,6 +1084,7 @@ pub struct DirFile {
     /// Back-to-back `linux_dirent64` records, each `d_reclen`-aligned to 8.
     blob: Vec<u8>,
     pos: Mutex<usize>,
+    path: Mutex<Option<String>>,
 }
 
 impl DirFile {
@@ -650,11 +1101,23 @@ impl DirFile {
             blob[s + 18] = *dtype;
             blob[s + DIRENT_HEAD..s + DIRENT_HEAD + name.len()].copy_from_slice(name.as_bytes());
         }
-        Arc::new(Self { blob, pos: Mutex::new(0) })
+        Arc::new(Self { blob, pos: Mutex::new(0), path: Mutex::new(None) })
+    }
+
+    /// Remember which directory this is (for `fchdir` and the `*at` calls).
+    pub fn with_path(self: Arc<Self>, p: &str) -> Arc<Self> {
+        *self.path.lock() = Some(String::from(p));
+        self
     }
 }
 
 impl FileOps for DirFile {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn dir_path(&self) -> Option<String> {
+        self.path.lock().clone()
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EISDIR
     }
@@ -702,6 +1165,9 @@ struct PipeInner {
     buf: Mutex<VecDeque<u8>>,
     readers: AtomicUsize,
     writers: AtomicUsize,
+    /// O_NONBLOCK of the read / write end: an empty pipe answers EAGAIN instead of waiting (Dropbear drains its signal pipe that way).
+    read_nb: core::sync::atomic::AtomicBool,
+    write_nb: core::sync::atomic::AtomicBool,
     /// Woken on every state change: data added, space freed, an end closed.
     wq: crate::wait::WaitQueue,
 }
@@ -719,6 +1185,8 @@ pub fn pipe() -> (Arc<PipeReadEnd>, Arc<PipeWriteEnd>) {
         buf: Mutex::new(VecDeque::new()),
         readers: AtomicUsize::new(1),
         writers: AtomicUsize::new(1),
+        read_nb: core::sync::atomic::AtomicBool::new(false),
+        write_nb: core::sync::atomic::AtomicBool::new(false),
         wq: crate::wait::WaitQueue::new(),
     });
     (Arc::new(PipeReadEnd(inner.clone())), Arc::new(PipeWriteEnd(inner)))
@@ -738,6 +1206,15 @@ impl Drop for PipeWriteEnd {
 }
 
 impl FileOps for PipeReadEnd {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn set_nonblock(&self, on: bool) {
+        self.0.read_nb.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.0.read_nb.load(Ordering::Relaxed)
+    }
     fn read(&self, buf: &mut [u8]) -> i64 {
         loop {
             {
@@ -754,6 +1231,9 @@ impl FileOps for PipeReadEnd {
                 if self.0.writers.load(Ordering::Acquire) == 0 {
                     return 0; // EOF — no writers left
                 }
+            }
+            if self.0.read_nb.load(Ordering::Relaxed) {
+                return -11; // EAGAIN
             }
             if crate::signal::interrupted() {
                 return -4; // EINTR
@@ -785,6 +1265,15 @@ impl FileOps for PipeReadEnd {
 }
 
 impl FileOps for PipeWriteEnd {
+    fn is_tty(&self) -> bool {
+        false
+    }
+    fn set_nonblock(&self, on: bool) {
+        self.0.write_nb.store(on, Ordering::Relaxed);
+    }
+    fn is_nonblock(&self) -> bool {
+        self.0.write_nb.load(Ordering::Relaxed)
+    }
     fn read(&self, _buf: &mut [u8]) -> i64 {
         EBADF
     }
@@ -808,6 +1297,9 @@ impl FileOps for PipeWriteEnd {
                     self.0.wq.wake_all(); // data available — wake blocked readers
                     continue;
                 }
+            }
+            if self.0.write_nb.load(Ordering::Relaxed) {
+                return if done == 0 { -11 } else { done as i64 }; // EAGAIN: the pipe is full
             }
             self.0.wq.wait_if_intr(|| {
                 self.0.buf.lock().len() == PIPE_CAP && self.0.readers.load(Ordering::Acquire) != 0

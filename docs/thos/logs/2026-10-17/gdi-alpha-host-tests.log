@@ -1,0 +1,15 @@
+
+running 10 tests
+test gdi_blit::tests::destination_clip_does_not_hide_invalid_source ... ok
+test gdi_blit::tests::extreme_coordinates ... ok
+test gdi_blit::tests::invalid_buffers_unchanged ... ok
+test gdi_blit::tests::overlapping_all_directions ... ok
+test gdi_memory::tests::dc_brush_color_survives_selection ... ok
+test gdi_memory::tests::ownership_selection_lifetime ... ok
+test gdi_memory::tests::paged_store_and_reclaim ... ok
+test gdi_blit::tests::constant_alpha_endpoints_rounding_and_bounds ... ok
+test gdi_blit::tests::snapshot_model_10000 ... ok
+test gdi_memory::tests::budgets_and_invalid_dimensions ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+

@@ -30,8 +30,8 @@ pub struct PerCpu {
     pub kernel_rsp: u64,   // 16 — kernel stack loaded by `syscall`
     pub user_scratch: u64, // 24 — user rsp stashed across `syscall`
     /// The value currently programmed into `IA32_KERNEL_GS_BASE` for this CPU
-    /// (= the ring-3 `%gs` base after the exit `swapgs`). The per-CPU pointer
-    /// for POSIX/kernel threads; a PE thread's TEB while one is scheduled. Lets
+    /// (= the ring-3 `%gs` base after the exit `swapgs`). A Linux user base
+    /// or a PE thread's TEB, separate from live kernel per-CPU GS. Lets
     /// `apply_cpu_state` skip the `wrmsr` on the common POSIX→POSIX switch.
     pub user_gs: u64, // 32
 }
@@ -95,6 +95,12 @@ pub fn this_cpu_ptr() -> u64 {
     }
 }
 
+/// Local APIC id of CPU `cpu` (for IPIs).
+pub fn lapic_id_of(cpu: usize) -> u32 {
+    assert!(cpu < MAX_CPUS);
+    unsafe { (*core::ptr::addr_of!(PER_CPU[cpu])).lapic_id }
+}
+
 pub fn online() -> usize {
     CPUS_ONLINE.load(Ordering::Relaxed)
 }
@@ -149,6 +155,8 @@ unsafe extern "C" fn ap_entry(_info: &MpInfo) -> ! {
     crate::vmm::activate();
     crate::cpu::enable_sse();
     crate::cpu::enable_smep();
+    crate::mtrr::apply(); // every CPU needs the same MTRRs as the boot CPU
+    crate::pat::apply(); // framebuffer mappings use the same PAT on every CPU
 
     let index = NEXT_INDEX.fetch_add(1, Ordering::Relaxed);
     assert!((index as usize) < MAX_CPUS, "more CPUs than MAX_CPUS");

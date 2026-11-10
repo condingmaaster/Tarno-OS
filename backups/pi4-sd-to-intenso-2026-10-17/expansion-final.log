@@ -1,0 +1,50 @@
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+rootfs: 370084/1846656 files (0.2% non-contiguous), 4216662/7500288 blocks
+rootfs: 370084/1846656 files (0.2% non-contiguous), 4216662/7500288 blocks
+Checking that no-one is using this disk right now ... OK
+
+Disk /dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0: 58.98 GiB, 63333990400 bytes, 123699200 sectors
+Disk model: cMobile Line    
+Units: sectors of 1 * 512 = 512 bytes
+Sector size (logical/physical): 512 bytes / 512 bytes
+I/O size (minimum/optimal): 512 bytes / 512 bytes
+Disklabel type: dos
+Disk identifier: 0x12ef633f
+
+Old situation:
+
+Device                                                              Boot   Start      End  Sectors  Size Id Type
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part1        16384  1064959  1048576  512M  c W95 FAT32 (LBA)
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2      1064960 61067263 60002304 28.6G 83 Linux
+
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2: 
+New situation:
+Disklabel type: dos
+Disk identifier: 0x12ef633f
+
+Device                                                              Boot   Start       End   Sectors  Size Id Type
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part1        16384   1064959   1048576  512M  c W95 FAT32 (LBA)
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2      1064960 123699199 122634240 58.5G 83 Linux
+
+The partition table has been altered.
+Calling ioctl() to re-read partition table.
+Syncing disks.
+resize2fs 1.47.2 (1-Jan-2025)
+Resizing the filesystem on /dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2 to 15329280 (4k) blocks.
+The filesystem on /dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part2 is now 15329280 (4k) blocks long.
+
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+rootfs: 370084/3773952 files (0.2% non-contiguous), 4338338/15329280 blocks
+fsck.fat 4.2 (2021-01-31)
+/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0-part1: 436 files, 160927/1032408 clusters
+COMPLETE: exact raw clone SHA256 matched before expansion; root expanded and checked; source boot/fstab hashes match; both disks unmounted.

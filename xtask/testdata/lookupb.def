@@ -1,0 +1,4 @@
+LIBRARY lookupb.dll
+EXPORTS
+ marker_b @1
+ Loop=lookupa.Loop @2

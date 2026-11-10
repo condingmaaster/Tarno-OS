@@ -1,0 +1,22 @@
+{
+  "removed": [
+    {
+      "path": "target/thos-browser-night-qa-2026-10-23.img",
+      "sha256": "e3084d5bcdb5faf50ca74c62da9b1052887c629b6d42314942b67514177354bc",
+      "allocated_bytes": 716943360
+    },
+    {
+      "path": "target/thos-browser-baseline-2026-10-23.img",
+      "sha256": "58ce4479c6b9cd4c8731c06b949c087212348a5e1361d7ebd25f2f374082ea48",
+      "allocated_bytes": 717025280
+    },
+    {
+      "path": "target/test-scratch/run-12110-1792792030370733971",
+      "allocated_bytes": 453279744
+    }
+  ],
+  "free_bytes_after": 217802207232,
+  "active_qemu": false,
+  "test_scratch_empty": true,
+  "live_sha256": "c75ee952e76c7d44a4b9464a67f3fb052503ba54dd9e749e6e35b5e2371a3e9c"
+}

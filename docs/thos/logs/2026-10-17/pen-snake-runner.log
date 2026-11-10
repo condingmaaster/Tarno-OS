@@ -1,0 +1,31 @@
+warning: unused variable: `out`
+    --> xtask/src/main.rs:1859:17
+     |
+1859 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.02s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask windows-snake-probe`
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1112
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1113
+debugfs 1.47.2 (1-Jan-2025)
+Allocated inode: 1114
+e2fsck 1.47.2 (1-Jan-2025)
+Pass 1: Checking inodes, blocks, and sizes
+Pass 2: Checking directory structure
+Pass 3: Checking directory connectivity
+Pass 4: Checking reference counts
+Pass 5: Checking group summary information
+THOSROOT: 1114/32768 files (2.9% non-contiguous), 104052/524288 blocks
+thos$ /busybox sh /windows-snake-probe.sh
+windows-snake-present
+THOS: pe unresolved    msvcrt.dll!__wgetmainargs
+THOS: pe load failed: PE: name not exported
+windows-snake-status=126
+windows-snake-probe-end
+Real Windows-only x64 Snake compatibility probe recorded; no gameplay claim without actual running-game evidence

@@ -1,0 +1,6 @@
+QEMU 10.0.13 monitor - type 'help' for more information
+(qemu) i[K[Din[K[D[Dinf[K[D[D[Dinfo[K[D[D[D[Dinfo [K[D[D[D[D[Dinfo b[K[D[D[D[D[D[Dinfo bl[K[D[D[D[D[D[D[Dinfo blo[K[D[D[D[D[D[D[D[Dinfo bloc[K[D[D[D[D[D[D[D[D[Dinfo block[K[D[D[D[D[D[D[D[D[D[Dinfo blocks[K[D[D[D[D[D[D[D[D[D[D[Dinfo blockst[K[D[D[D[D[D[D[D[D[D[D[D[Dinfo blocksta[K[D[D[D[D[D[D[D[D[D[D[D[D[Dinfo blockstat[K[D[D[D[D[D[D[D[D[D[D[D[D[D[Dinfo blockstats[K
+stick: rd_bytes=531636736 wr_bytes=512 rd_operations=16387 wr_operations=1 flush_operations=0 wr_total_time_ns=40655 rd_total_time_ns=1496165161 flush_total_time_ns=0 rd_merged=0 wr_merged=0 idle_time_ns=15029125
+ide1-cd0: rd_bytes=0 wr_bytes=0 rd_operations=0 wr_operations=0 flush_operations=0 wr_total_time_ns=0 rd_total_time_ns=0 flush_total_time_ns=0 rd_merged=0 wr_merged=0 idle_time_ns=0
+floppy0: rd_bytes=0 wr_bytes=0 rd_operations=0 wr_operations=0 flush_operations=0 wr_total_time_ns=0 rd_total_time_ns=0 flush_total_time_ns=0 rd_merged=0 wr_merged=0 idle_time_ns=0
+(qemu) 

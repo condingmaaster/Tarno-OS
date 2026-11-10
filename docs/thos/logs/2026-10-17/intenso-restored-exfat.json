@@ -1,0 +1,14 @@
+{
+  "serial": "2608260739440441",
+  "device_by_id": "/dev/disk/by-id/usb-Intenso_cMobile_Line_2608260739440441-0:0",
+  "disk_bytes": 63333990400,
+  "status": "complete_verified",
+  "label": "INTENSO",
+  "filesystem": "exfat",
+  "host_ssd_modified": false,
+  "partition_bytes": 63332941824,
+  "test_bytes": 8388608,
+  "readback_sha256": "ea550134a641b7bd4e383f799ebdc52c6fa439ae4bf88858dcc3cb27eca10375",
+  "test_file_removed": true,
+  "unmounted": true
+}

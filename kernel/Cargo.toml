@@ -27,6 +27,13 @@ sha2 = { version = "0.10", default-features = false, features = ["force-soft"] }
 smoltcp = { version = "0.12", default-features = false, features = ["alloc", "medium-ethernet", "proto-ipv4", "socket-icmp", "socket-udp", "socket-tcp", "socket-dhcpv4", "socket-dns"] }
 
 [features]
+# Focused IPC syscall diagnostics for private compatibility probes; off in releases.
+ipc-diagnostics = []
+# Private browser/native-runtime probes: file mapping addresses and fork memory.
+# Off in ordinary live builds; no background tracing or extra allocations there.
+vm-diagnostics = []
+# Experimental bounded small-allocation cache; compare in QEMU before promoting.
+small-block-heap = []
 # `selftest`: compile in the full in-kernel verification suite (milestones,
 # registry/exec-gate/section/integrity/DAC checks, the scratch-sector AHCI
 # tests, ...). A normal boot is just bring-up -> mount -> login -> shell.

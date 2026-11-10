@@ -1,0 +1,382 @@
+#!/busybox sh
+# thos-pkg: install programs from a file or URL into /opt/<name> and put them in the Start menu.
+#   thos-pkg install <file-or-url> [name]     .deb .rpm .zip .tar.gz/.tgz/.tar.xz/.tar.bz2 .exe
+#   thos-pkg list
+#   thos-pkg remove <name>
+#   thos-pkg update                           fetch the Debian package index (needs the network)
+#   thos-pkg search <word>                    look a package up in the index
+#   thos-pkg install <name>                   a package from the Debian archive, with the libraries it needs
+#   thos-pkg installed                        what came from the archive (they share /opt/root)
+# Programs are unpacked as they are: libraries they need beyond what THOS ships must be in the package itself.
+# Start-menu entries live in /opt/apps.conf ("Label|command"); the panel picks them up when it starts.
+OPT=/opt
+APPS=$OPT/apps.conf
+B=/busybox
+ELF=$($B printf '\177ELF')
+die() { echo "thos-pkg: $*" >&2; exit 1; }
+quote() { $B printf "'"; $B printf '%s' "$1" | $B sed "s/'/'\\\\''/g"; $B printf "'"; }
+entry() {
+    label=$($B printf '%s' "$1" | $B tr '\n|' '__')
+    # what GTK/Wayland programs from the archive need to find their data (the panel adds XDG_RUNTIME_DIR, GDK_BACKEND, HOME)
+    guienv="XDG_DATA_DIRS=$dir/usr/share:/usr/share GDK_PIXBUF_MODULE_FILE=$dir/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0/2.10.0/loaders.cache XKB_CONFIG_ROOT=$dir/usr/share/X11/xkb WAYLAND_DISPLAY=wayland-0 GSETTINGS_BACKEND=memory GTK_USE_PORTAL=0 NO_AT_BRIDGE=1 MOZ_ENABLE_WAYLAND=1 MOZ_DISABLE_CONTENT_SANDBOX=1 MOZ_DISABLE_RDD_SANDBOX=1"
+    catalog_line="$label|LD_LIBRARY_PATH=$(quote "$libs") $guienv $(quote "$2")${3:-}"
+    if [ -f "$APPS" ] && $B grep -qxF "$catalog_line" "$APPS"; then return; fi
+    $B printf '%s\n' "$catalog_line" >> "$APPS"
+}
+
+# label|command lines for what was unpacked into $1 (name $2)
+register() {
+    dir=$1 name=$2 owned=${3:-}
+    libs="$dir/usr/lib:$dir/usr/lib/x86_64-linux-gnu:$dir/lib:$dir/lib/x86_64-linux-gnu:$dir/lib64"
+    n=0
+    # 1. proper desktop entries
+    for d in "$dir"/usr/share/applications/*.desktop; do
+        [ -f "$d" ] || continue
+        [ -z "$owned" ] || $B grep -qxF "${d#"$dir"/}" "$owned" || continue
+        label=$($B sed -n 's/^Name=//p' "$d" | $B head -n 1)
+        exe=$($B sed -n 's/^Exec=//p' "$d" | $B head -n 1 | $B sed 's/ *%[a-zA-Z]//g')
+        prog=${exe%% *}
+        rest=${exe#"$prog"}
+        [ "$rest" = "$exe" ] && rest=
+        base=${prog##*/}
+        for cand in "$dir/usr/bin/$base" "$dir/bin/$base" "$dir/usr/games/$base" "$dir$prog"; do
+            if [ -f "$cand" ]; then
+                entry "${label:-$base}" "$cand" "$rest"
+                n=$((n+1)); break
+            fi
+        done
+    done
+    [ $n -gt 0 ] && return
+    # 2. otherwise: the executables in bin directories (at most five), then loose executables in the top directory
+    for d in "$dir/usr/bin" "$dir/bin" "$dir/usr/games" "$dir" "$dir"/*/; do
+        [ -d "$d" ] || continue
+        for f in "$d"/*; do
+            [ -f "$f" ] || continue
+            [ -z "$owned" ] || $B grep -qxF "${f#"$dir"/}" "$owned" || continue
+            case "$f" in *.so|*.so.*|*.txt|*.md|*.html|*.conf|*.json|*.png|*.dll) continue ;; esac
+            if [ "$($B head -c4 "$f")" = "$ELF" ]; then $B chmod +x "$f"; fi     # unzip does not keep the mode
+            suffix=$($B printf '%s' "${f##*.}" | $B tr 'A-Z' 'a-z')
+            [ "$suffix" != exe ] || $B chmod u+x "$f"
+            if [ -x "$f" ] || [ "$suffix" = exe ]; then
+                entry "${f##*/}" "$f"
+                n=$((n+1))
+                [ $n -ge 5 ] && return
+            fi
+        done
+        [ $n -gt 0 ] && return
+    done
+    if [ $n -eq 0 ] && [ -z "$owned" ]; then                # deeper trees (MSI "Program Files/Vendor/App/x.exe")
+        found=$($B find "$dir" -type f -iname '*.exe' | $B head -n 1)
+        if [ -n "$found" ]; then
+            $B find "$dir" -type f -iname '*.exe' | $B head -n 8 | while IFS= read -r f; do
+                $B chmod u+x "$f"
+                entry "${f##*/}" "$f"
+            done
+            n=1
+        fi
+    fi
+    [ $n -gt 0 ] || echo "thos-pkg: no program found to put in the Start menu (files are in $dir)"
+}
+
+cmd_install() {
+    src=$1
+    [ -n "$src" ] || die "install what? (a file, an http/https URL or a Debian package name)"
+    case "$src" in
+        */*|*.deb|*.rpm|*.zip|*.tar.*|*.tgz|*.exe|*.msi|*.txz) ;;
+        *) FIRST=$src; cmd_install_repo "$src"; return $? ;;
+    esac
+    $B mkdir -p $OPT || die "cannot create $OPT"
+    tmp=
+    case "$src" in
+        http://*|https://*|ftp://*)
+            tmp=/tmp/thos-pkg.$$
+            echo "downloading $src"
+            if [ -x /usr/bin/curl ]; then
+                /usr/bin/curl --fail --location --show-error --progress-bar --cacert /etc/ssl/certs/ca-certificates.crt --connect-timeout 20 --max-time 3600 --output "$tmp" --url "$src"
+            else
+                $B wget -q -O "$tmp" "$src"
+            fi
+            [ $? -eq 0 ] || { $B rm -f "$tmp"; die "download failed"; }
+            file=$tmp; base=${src##*/}; base=${base%%\?*} ;;
+        *) [ -f "$src" ] || die "no such file: $src"
+           file=$src; base=${src##*/} ;;
+    esac
+    name=$2
+    if [ -z "$name" ]; then
+        name=${base%.deb}; name=${name%.rpm}; name=${name%.zip}; name=${name%.tar.gz}; name=${name%.tgz}
+        name=${name%.tar.xz}; name=${name%.txz}; name=${name%.tar.bz2}; name=${name%.exe}; name=${name%.msi}
+        name=${name%%_*}
+    fi
+    [ -n "$name" ] || die "cannot derive a name, give one"
+    case "$name" in */*|.*) die "bad name: $name" ;; esac
+    dir=$OPT/$name
+    [ -e "$dir" ] && die "$name is already installed (thos-pkg remove $name)"
+    srcfile=$file; srcname=$name; srcdir=$dir
+    $B mkdir -p "$dir"
+    case "$base" in
+        *.deb) $B dpkg-deb -x "$file" "$dir" ;;
+        *.rpm) ( cd "$dir" && $B rpm2cpio "$file" | $B cpio -idm 2>/dev/null ) ;;
+        *.zip) $B unzip -q -o "$file" -d "$dir" ;;
+        *.tar.gz|*.tgz) $B zcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar.xz|*.txz) $B xzcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar.bz2) $B bzcat "$file" | $B tar -x -C "$dir" ;;
+        *.tar) $B tar -xf "$file" -C "$dir" ;;
+        *.exe) $B cp "$file" "$dir/$base"; $B chmod +x "$dir/$base" ;;
+        *.msi)
+            echo "Extracting MSI files only; registry, services and installer custom actions are not installed."
+            # no Windows Installer here: msiextract (from the Debian package msitools) unpacks the files of the package;
+            # installers whose work is done by custom actions (services, registry set-up) are not covered
+            if [ ! -x $ROOT/usr/bin/msiextract ]; then
+                echo "an MSI needs msitools; fetching it from the Debian archive"
+                [ -f $IDX ] || cmd_update || { $B rm -rf "$dir"; die "cannot fetch msitools"; }
+                FIRST=msitools; cmd_install_repo msitools || { $B rm -rf "$srcdir"; die "cannot install msitools"; }
+                name=$srcname; dir=$srcdir; file=$srcfile
+            fi
+            # the package tables are in Windows code page 1252: glibc needs its extra conversion modules for that
+            if [ ! -f $ROOT/usr/lib/x86_64-linux-gnu/gconv/CP1252.so ]; then
+                FIRST=libc-gconv-modules-extra; cmd_install_repo libc-gconv-modules-extra || echo "thos-pkg: warning: no code page modules"
+                name=$srcname; dir=$srcdir; file=$srcfile
+            fi
+            ( cd "$dir" && GCONV_PATH=$ROOT/usr/lib/x86_64-linux-gnu/gconv $ROOT/usr/bin/msiextract -C "$dir" "$srcfile" ) ;;
+        *) $B rm -rf "$dir"; [ -n "$tmp" ] && $B rm -f $tmp; die "unknown package type: $base" ;;
+    esac
+    status=$?
+    [ -n "$tmp" ] && $B rm -f $tmp
+    if [ $status -ne 0 ]; then $B rm -rf "$dir"; die "unpacking failed"; fi
+    register "$dir" "$name"
+    echo "installed $name in $dir"
+}
+
+# ---- the Debian archive ----
+MIRROR=http://deb.debian.org/debian
+INDEX_URL=http://deb.debian.org/debian/dists/trixie/main/binary-amd64/Packages.xz
+IDX=$OPT/.index
+DB=$OPT/.db
+ROOT=$OPT/root
+# packages THOS already provides (the C library and friends) or that are only installer plumbing
+SKIP=" libc6 libc-bin gcc-14-base debconf dpkg perl-base base-files base-passwd install-info libcrypt1 libgomp1 "
+
+GPGV=/usr/bin/gpgv
+KEYRING=/usr/share/keyrings/debian-archive-keyring.pgp
+SUITE_URL=http://deb.debian.org/debian/dists/trixie
+
+# download the signed Release file, check its signature with the Debian archive keyring, and return the SHA-256 it lists for Packages.xz
+fetch_release() {
+    $B wget -q -O /tmp/InRelease "$SUITE_URL/InRelease" || return 1
+    if [ -x $GPGV ] && [ -f $KEYRING ]; then
+        if ! $GPGV --keyring $KEYRING --output /tmp/Release.verified /tmp/InRelease 2>/tmp/gpgv.err; then
+            $B cat /tmp/gpgv.err >&2; $B rm -f /tmp/InRelease /tmp/Release.verified
+            echo "thos-pkg: the signature of the package index is NOT valid - refusing to use it" >&2; return 2
+        fi
+        WANT=$($B awk '$3 == "main/binary-amd64/Packages.xz" && length($1) == 64 { print $1; exit }' /tmp/Release.verified)
+        [ -n "$WANT" ] || { echo "thos-pkg: the signed Release file does not list Packages.xz" >&2; return 2; }
+        $B rm -f /tmp/Release.verified /tmp/InRelease /tmp/gpgv.err
+        echo "package index signature verified (Debian archive key)"
+    else
+        WANT=
+        echo "WARNING: gpgv or the Debian archive keyring is missing - the package index is NOT verified"
+    fi
+}
+
+cmd_update() {
+    $B mkdir -p $OPT $DB
+    echo "checking the signed Release file"
+    fetch_release || die "cannot verify the package index"
+    echo "downloading the package index (about 10 MB)"
+    $B wget -q -O /tmp/Packages.xz "$INDEX_URL" || die "cannot download the index (network?)"
+    if [ -n "$WANT" ]; then
+        got=$($B sha256sum /tmp/Packages.xz | $B cut -d' ' -f1)
+        [ "$got" = "$WANT" ] || { $B rm -f /tmp/Packages.xz; die "Packages.xz does not match the signed Release file"; }
+    fi
+    echo "building the local index (a minute or two)"
+    $B xzcat /tmp/Packages.xz | $B awk '
+        function flush(   d, n, i, p, o, first) {
+            if (name != "") {
+                d = dep; n = split(d, parts, ","); o = ""
+                for (i = 1; i <= n; i++) {
+                    p = parts[i]; sub(/\|.*/, "", p); sub(/\(.*/, "", p); sub(/:.*/, "", p); gsub(/[ \t]/, "", p)
+                    if (p != "") o = o " " p
+                }
+                print name "|" ver "|" file "|" sha "|" o "|" size "|" desc
+            }
+            name = ""; dep = ""; ver = ""; file = ""; sha = ""; size = ""; desc = ""
+        }
+        /^Package: /{ flush(); name = substr($0, 10) }
+        /^Version: /{ ver = substr($0, 10) }
+        /^Depends: /{ dep = substr($0, 10) }
+        /^Pre-Depends: /{ dep = (dep == "" ? "" : dep ", ") substr($0, 14) }
+        /^Filename: /{ file = substr($0, 11) }
+        /^SHA256: /{ sha = substr($0, 9) }
+        /^Size: /{ size = substr($0, 7) }
+        /^Description: /{ desc = substr($0, 14) }
+        END { flush() }' > $IDX.new || { $B rm -f $IDX.new /tmp/Packages.xz; die "indexing failed"; }
+    $B mv $IDX.new $IDX; $B rm -f /tmp/Packages.xz
+    echo "index ready: $($B wc -l < $IDX) packages"
+}
+
+cmd_search() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    $B grep -i -- "$1" $IDX | $B awk -F'|' '{ print $1 " " $2 " - " $7 }' | $B head -n 40
+}
+
+# the line of the index for a package
+idx_line() { $B grep -m1 "^$1|" $IDX; }
+
+install_one() {
+    pn=$1
+    pl=$(idx_line "$pn")
+    [ -n "$pl" ] || { echo "thos-pkg: $pn is not in the archive index"; return 1; }
+    pf=$(echo "$pl" | $B cut -d'|' -f3); ps=$(echo "$pl" | $B cut -d'|' -f4); pz=$(echo "$pl" | $B cut -d'|' -f6)
+    echo "  $pn ($((pz / 1024)) kB)"
+    try=0
+    until $B wget -q -T 30 -O /tmp/pkg-$$.deb "$MIRROR/$pf"; do          # the CDN sometimes times out: try again before giving up
+        try=$((try + 1)); $B rm -f /tmp/pkg-$$.deb
+        [ $try -lt 4 ] || { echo "thos-pkg: download of $pn failed"; return 1; }
+        echo "    download failed, trying again ($try/3)"; $B sleep 3
+    done
+    got=$($B sha256sum /tmp/pkg-$$.deb | $B cut -d' ' -f1)
+    if [ "$got" != "$ps" ]; then $B rm -f /tmp/pkg-$$.deb; echo "thos-pkg: checksum of $pn does not match the index"; return 1; fi
+    $B mkdir -p $ROOT $DB
+    $B dpkg-deb -c /tmp/pkg-$$.deb | $B awk '{ print $NF }' | $B sed 's|^\./||' > /tmp/pkg-$$.list
+    if ! $B dpkg-deb -x /tmp/pkg-$$.deb $ROOT; then
+        # whatever was unpacked before the failure is removed again (usually: the disk is full)
+        $B sort -r /tmp/pkg-$$.list | while read -r f; do [ -n "$f" ] || continue; if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi; done
+        $B rm -f /tmp/pkg-$$.deb /tmp/pkg-$$.list
+        echo "thos-pkg: unpacking $pn failed (is the disk full? 'df' shows the free space)"; return 1
+    fi
+    $B mv /tmp/pkg-$$.list $DB/$pn.list
+    echo "$pl" | $B cut -d'|' -f2 > $DB/$pn.ver                                # the version that is installed (for `upgrade`)
+    $B rm -f /tmp/pkg-$$.deb
+}
+
+# what Debian's maintainer scripts would do: the MIME database (image format detection!), GSettings schemas, gdk-pixbuf loader cache, machine-id
+post_install() {
+    export LD_LIBRARY_PATH="$ROOT/usr/lib/x86_64-linux-gnu:$ROOT/lib/x86_64-linux-gnu:$ROOT/usr/lib"
+    [ -x $ROOT/usr/bin/update-mime-database ] && [ -d $ROOT/usr/share/mime/packages ] && $ROOT/usr/bin/update-mime-database $ROOT/usr/share/mime >/dev/null 2>&1
+    [ -x $ROOT/usr/bin/glib-compile-schemas ] && [ -d $ROOT/usr/share/glib-2.0/schemas ] && $ROOT/usr/bin/glib-compile-schemas $ROOT/usr/share/glib-2.0/schemas >/dev/null 2>&1
+    pb=$ROOT/usr/lib/x86_64-linux-gnu/gdk-pixbuf-2.0
+    if [ -x $pb/gdk-pixbuf-query-loaders ] && [ -d $pb/2.10.0/loaders ]; then
+        GDK_PIXBUF_MODULEDIR=$pb/2.10.0/loaders $pb/gdk-pixbuf-query-loaders > $pb/2.10.0/loaders.cache.new 2>/dev/null && $B mv $pb/2.10.0/loaders.cache.new $pb/2.10.0/loaders.cache
+    fi
+    # Firefox: THOS defaults (no welcome tour, no sandbox warning bar, less animation and telemetry for a weak machine)
+    ff=$ROOT/usr/lib/firefox-esr
+    if [ -d $ff ]; then
+        $B mkdir -p $ff/defaults/pref
+        printf '%s\n' 'pref("general.config.filename", "thos.cfg");' 'pref("general.config.obscure_value", 0);' > $ff/defaults/pref/thos-autoconfig.js
+        {
+            echo '// THOS defaults for Firefox (written by thos-pkg)'
+            for kv in 'security.sandbox.warn_unprivileged_namespaces:false' 'browser.shell.checkDefaultBrowser:false' 'browser.aboutwelcome.enabled:false' \
+                     'trailhead.firstrun.didSeeAboutWelcome:true' 'browser.startup.homepage_override.mstone:"ignore"' 'toolkit.telemetry.enabled:false' \
+                     'toolkit.telemetry.unified:false' 'datareporting.policy.dataSubmissionEnabled:false' 'datareporting.healthreport.uploadEnabled:false' \
+                     'browser.tabs.animate:false' 'browser.fullscreen.animate:false' 'general.smoothScroll:false' 'ui.prefersReducedMotion:1' \
+                     'browser.newtabpage.activity-stream.feeds.telemetry:false' 'browser.newtabpage.activity-stream.telemetry:false' \
+                     'extensions.pocket.enabled:false' 'browser.urlbar.suggest.quicksuggest.sponsored:false' \
+                     'browser.newtabpage.activity-stream.showSponsoredTopSites:false' 'browser.newtabpage.activity-stream.showSponsored:false' 'datareporting.policy.firstRunURL:""'; do
+                echo "defaultPref(\"${kv%%:*}\", ${kv#*:});"
+            done
+        } > $ff/thos.cfg
+    fi
+    { [ -s /etc/machine-id ] || { $B head -c 16 /dev/urandom | $B od -An -tx1 | $B tr -d ' \n'; echo; } > /etc/machine-id; } 2>/dev/null     # 32 hex digits and a newline, as D-Bus insists (only root can write it)
+    unset LD_LIBRARY_PATH
+}
+
+cmd_install_repo() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    todo=$1; seen=" "
+    while [ -n "$todo" ]; do
+        set -- $todo; cur=$1; shift; todo="$*"
+        case "$seen" in *" $cur "*) continue ;; esac
+        seen="$seen$cur "
+        case "$SKIP" in *" $cur "*) continue ;; esac
+        [ -f $DB/$cur.ok ] && [ -f $DB/$cur.list ] && continue               # checked before: no index lookup needed
+        rline=$(idx_line "$cur")
+        if [ -z "$rline" ]; then [ -f $DB/$cur.list ] && continue; echo "thos-pkg: $cur is not in the archive index"; [ "$cur" = "$FIRST" ] && return 1; continue; fi
+        deps=$(echo "$rline" | $B cut -d'|' -f5)
+        if [ -f $DB/$cur.list ]; then
+            [ -f $DB/$cur.ok ] && continue                                   # installed and everything it needs was checked once
+            todo="$todo $deps"; continue                                     # already there, but what it needs may be missing (an earlier run can have stopped half way)
+        fi
+        install_one "$cur" || return 1
+        todo="$todo $deps"
+        case "$cur" in libgtk-3-0t64) todo="$todo shared-mime-info libglib2.0-bin libgdk-pixbuf2.0-bin xkb-data fonts-dejavu-core" ;; esac
+    done
+    # A repository installation must be discoverable through the same UI as
+    # a downloaded archive. Only register files owned by the requested package,
+    # rather than unrelated programs from its shared /opt/root dependencies.
+    for n in $seen; do [ -f $DB/$n.list ] && : > $DB/$n.ok; done          # everything visited is installed together with what it needs
+    post_install
+    [ ! -f "$DB/$FIRST.list" ] || register "$ROOT" "$FIRST" "$DB/$FIRST.list"
+    echo "installed $FIRST (programs are in /opt/root/usr/bin and /opt/root/bin, both on PATH)"
+}
+
+# upgrade: every installed archive package whose version in the index differs from the one that was installed is installed again
+cmd_upgrade() {
+    [ -f $IDX ] || die "no index yet: run  thos-pkg update"
+    todo=""
+    for f in $DB/*.ver; do
+        [ -f "$f" ] || continue
+        name=${f##*/}; name=${name%.ver}
+        line=$(idx_line "$name"); [ -n "$line" ] || continue
+        [ "$($B cat "$f")" = "$(echo "$line" | $B cut -d'|' -f2)" ] || todo="$todo $name"
+    done
+    [ -n "$todo" ] || { post_install; echo "all installed packages are up to date"; return 0; }
+    n=0
+    for name in $todo; do
+        echo "upgrading $name"
+        remove_archive "$name" > /dev/null 2>&1                               # the unpacker does not overwrite: the old files go first (files other packages also own stay)
+        install_one "$name" || return 1
+        n=$((n + 1))
+    done
+    post_install
+    echo "upgraded $n package(s)"
+}
+
+cmd_installed() { for f in $DB/*.list; do [ -f "$f" ] && { n=${f##*/}; echo "${n%.list}"; }; done; }
+
+cmd_list() {
+    for d in $OPT/*; do [ -d "$d" ] && echo "${d##*/}"; done
+}
+
+# remove a package that came from the archive: delete its files unless another installed package lists them too
+remove_archive() {
+    name=$1
+    other=$($B ls $DB/*.list 2>/dev/null | $B grep -v "/$name.list$")
+    if [ -n "$other" ]; then
+        $B cat $other | $B sort -u > /tmp/pkg-keep.$$
+        $B grep -vxFf /tmp/pkg-keep.$$ $DB/$name.list > /tmp/pkg-del.$$
+        $B rm -f /tmp/pkg-keep.$$
+    else
+        $B cp $DB/$name.list /tmp/pkg-del.$$
+    fi
+    # files first (longest paths first so directories empty out), then empty directories
+    $B sort -r /tmp/pkg-del.$$ | while read -r f; do
+        [ -n "$f" ] || continue
+        if [ -d "$ROOT/$f" ] && [ ! -L "$ROOT/$f" ]; then $B rmdir "$ROOT/$f" 2>/dev/null; else $B rm -f "$ROOT/$f"; fi
+    done
+    $B rm -f /tmp/pkg-del.$$ $DB/$name.list $DB/$name.ok
+    echo "removed $name"
+}
+
+cmd_remove() {
+    name=$1
+    if [ -n "$name" ] && [ -f "$DB/$name.list" ]; then remove_archive "$name"; return; fi
+    [ -n "$name" ] && [ -d "$OPT/$name" ] || die "not installed: $name"
+    $B rm -rf "$OPT/$name"
+    for f in $APPS /tmp/panel.conf /tmp/desktop.conf; do
+        [ -f "$f" ] || continue
+        $B grep -v "$OPT/$name/" "$f" > $f.new
+        $B mv $f.new $f
+    done
+    echo "removed $name"
+}
+
+case "$1" in
+    install) shift; cmd_install "$@" ;;
+    list) cmd_list ;;
+    update) cmd_update ;;
+    search) shift; cmd_search "$1" ;;
+    installed) cmd_installed ;;
+    upgrade) cmd_upgrade ;;
+    remove) shift; cmd_remove "$@" ;;
+    *) echo "usage: thos-pkg install <file-or-url> [name] | list | remove <name>"; exit 1 ;;
+esac

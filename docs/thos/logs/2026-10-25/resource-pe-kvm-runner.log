@@ -1,0 +1,82 @@
+   Compiling xtask v0.0.0 (/home/router/Projekte/Tarno-OS/xtask)
+warning: unused variable: `out`
+    --> xtask/src/main.rs:2005:17
+     |
+2005 |             let out = boot_and_run(&img, "deskctx", "/busybox sh /desk-ctx.sh", "desk ok:", 150);
+     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_out`
+     |
+     = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `xtask` (bin "xtask") generated 1 warning (run `cargo fix --bin "xtask" -p xtask` to apply 1 suggestion)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 8.14s
+     Running `target/x86_64-unknown-linux-gnu/debug/xtask winresource-test`
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c: In function ‘worker’:
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:7:151: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+    7 | static DWORD WINAPI worker(void*p){HMODULE module=p;for(int n=0;n<200;n++){SetLastError(0x1234);HRSRC info=FindResourceW(module,MAKEINTRESOURCEW(101),RT_RCDATA);if(!payload(module,info)||GetLastError()!=0x1234)return 1;}return 0;}
+      |                                                                                                                                                       ^~~~~~~~~
+      |                                                                                                                                                       |
+      |                                                                                                                                                       CHAR * {aka char *}
+In file included from /usr/share/mingw-w64/include/winbase.h:24,
+                 from /usr/share/mingw-w64/include/windows.h:70,
+                 from /home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:2:
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c: In function ‘start’:
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:8:187: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+    8 | void start(void){output=GetStdHandle(STD_OUTPUT_HANDLE);say("winresource-start\n");HMODULE main=GetModuleHandleW(0);SetLastError(0x1234);HRSRC info=FindResourceW(0,MAKEINTRESOURCEW(101),RT_RCDATA);CHECK("actual-exe-resource-and-default-language",payload(0,info)&&GetLastError()==0x1234);CHECK("explicit-main-same-resource",FindResourceW(main,MAKEINTRESOURCEW(101),RT_RCDATA)==info);
+      |                                                                                                                                                                                           ^~~~~~~~~
+      |                                                                                                                                                                                           |
+      |                                                                                                                                                                                           CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:8:288: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+    8 | void start(void){output=GetStdHandle(STD_OUTPUT_HANDLE);say("winresource-start\n");HMODULE main=GetModuleHandleW(0);SetLastError(0x1234);HRSRC info=FindResourceW(0,MAKEINTRESOURCEW(101),RT_RCDATA);CHECK("actual-exe-resource-and-default-language",payload(0,info)&&GetLastError()==0x1234);CHECK("explicit-main-same-resource",FindResourceW(main,MAKEINTRESOURCEW(101),RT_RCDATA)==info);
+      |                                                                                                                                                                                                                                                                                                ^~~~~
+      |                                                                                                                                                                                                                                                                                                |
+      |                                                                                                                                                                                                                                                                                                CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:13:18: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+   13 |  SetLastError(0);CHECK("unknown-name",!FindResourceW(0,MAKEINTRESOURCEW(999),RT_RCDATA)&&GetLastError()==1814);
+      |                  ^~~~~
+      |                  |
+      |                  CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:14:18: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+   14 |  SetLastError(0);CHECK("unknown-module-no-dereference",!FindResourceW((HMODULE)1,MAKEINTRESOURCEW(101),RT_RCDATA)&&GetLastError()==6);
+      |                  ^~~~~
+      |                  |
+      |                  CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:15:18: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+   15 |  SetLastError(0);CHECK("invalid-decimal-not-truncated",!FindResourceW(0,L"#65536",RT_RCDATA)&&GetLastError()==87);
+      |                  ^~~~~
+      |                  |
+      |                  CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:19:170: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+   19 |  HMODULE dll=LoadLibraryW(L"C:\\Windows\\System32\\resourceleaf.dll");CHECK("actual-leaf-module-loaded",dll!=0);if(dll){HRSRC di=FindResourceW(dll,MAKEINTRESOURCEW(101),RT_RCDATA);HGLOBAL dh=LoadResource(dll,di);CHECK("actual-dll-resource",payload(dll,di)&&di!=info);SetLastError(0);CHECK("cross-module-handle-rejected",!LoadResource(main,di)&&GetLastError()==1812);
+      |                                                                                                                                                                          ^~~~~~~~~
+      |                                                                                                                                                                          |
+      |                                                                                                                                                                          CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c:21:65: error: passing argument 3 of ‘FindResourceW’ from incompatible pointer type [-Wincompatible-pointer-types]
+   21 |  CHECK("leaf-module-unloaded",FreeLibrary(dll));SetLastError(0);CHECK("stale-module-rejected",!FindResourceW(dll,MAKEINTRESOURCEW(101),RT_RCDATA)&&GetLastError()==6);CHECK("stale-data-not-dereferenced",!LockResource(dh));SetLastError(0);CHECK("stale-resource-size-rejected",!SizeofResource(dll,di)&&GetLastError()==6);
+      |                                                                 ^~~~~
+      |                                                                 |
+      |                                                                 CHAR * {aka char *}
+/usr/share/mingw-w64/include/libloaderapi.h:60:82: note: expected ‘LPCWSTR’ {aka ‘const short unsigned int *’} but argument is of type ‘CHAR *’ {aka ‘char *’}
+   60 |   WINBASEAPI HRSRC WINAPI FindResourceW(HMODULE hModule, LPCWSTR lpName, LPCWSTR lpType);
+      |                                                                          ~~~~~~~~^~~~~~
+command failed (exit status: 1): "x86_64-w64-mingw32-gcc" "-O1" "-nostdlib" "-ffreestanding" "-Wl,-e,start" "-o" "/home/router/Projekte/Tarno-OS/target/test-scratch/run-31733-1792913354331208662/winresource-build/winresource.exe" "/home/router/Projekte/Tarno-OS/xtask/testdata/winresource.c" "/home/router/Projekte/Tarno-OS/target/test-scratch/run-31733-1792913354331208662/winresource-build/resource.o" "-lkernel32"

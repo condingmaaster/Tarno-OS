@@ -5,7 +5,7 @@
 //! an MBR, not a GPT. Four primary entries at 0x1BE; extended partitions are not
 //! followed (THOS needs one Linux-type partition for the root FS).
 
-use crate::ahci::{self, SECTOR};
+use crate::ahci::SECTOR;
 
 pub const TYPE_LINUX: u8 = 0x83;
 const SIG: [u8; 2] = [0x55, 0xAA];
@@ -24,7 +24,7 @@ pub struct Entry {
 pub fn entries() -> alloc::vec::Vec<Entry> {
     let mut s = [0u8; SECTOR];
     let mut out = alloc::vec::Vec::new();
-    if ahci::read(0, &mut s).is_err() || s[510..512] != SIG {
+    if crate::blk::read(0, &mut s).is_err() || s[510..512] != SIG {
         return out;
     }
     for i in 0..4 {

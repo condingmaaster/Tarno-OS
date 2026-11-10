@@ -1,0 +1,98 @@
+{
+  "time": "2026-10-24T02:17:49.272627+00:00",
+  "removed": [
+    {
+      "manifest": "target/thos-ldr-qa-2026-10-24-manifest.json",
+      "image": "target/thos-ldr-qa-2026-10-24.img",
+      "sha256": "57e2d23e721330c19f53ad7af0a7ed2aa1bf1848a2ef4a1498c8528bc2ee8176",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168374272,
+      "source_archive": "target/thos-ldr-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-ldr-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-dynamic-qa-2026-10-24-manifest.json",
+      "image": "target/thos-dynamic-qa-2026-10-24.img",
+      "sha256": "a06d974a010b712cace52a7be9b01bed1e04a9221aed4aad52849e60b4cff04b",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 611377152,
+      "source_archive": "target/thos-dynamic-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-dynamic-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-policy-qa-2026-10-24-manifest.json",
+      "image": "target/thos-policy-qa-2026-10-24.img",
+      "sha256": "6a81c262e1a269939efdc8b97b3237009515dfbece7b675d9cdde77aa623d7ff",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168439808,
+      "source_archive": "target/thos-policy-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-policy-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-loader-reuse-qa-2026-10-24-manifest.json",
+      "image": "target/thos-loader-reuse-qa-2026-10-24.img",
+      "sha256": "6fedd595b8a04767d92798bea5fcdc717a77a05829244e774fbcacedf4d8b02d",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168456192,
+      "source_archive": "target/thos-loader-reuse-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-loader-reuse-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-pefail-qa-2026-10-24-manifest.json",
+      "image": "target/thos-pefail-qa-2026-10-24.img",
+      "sha256": "57c9a8e4c5cde32271149d8856d49701380e8a81391fd7271d6d7dbf512dc158",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168456192,
+      "source_archive": "target/thos-pefail-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-pefail-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-pinned-import-qa-2026-10-24-manifest.json",
+      "image": "target/thos-pinned-import-qa-2026-10-24.img",
+      "sha256": "7e112b1bf9abd7e97a3e5b19f71e1ba36c4ed939a70312d85b426d2ced2ed3c4",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168456192,
+      "source_archive": "target/thos-pinned-import-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-pinned-import-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-console-qa-2026-10-24-manifest.json",
+      "image": "target/thos-console-qa-2026-10-24.img",
+      "sha256": "518c2db1cd16322d15552110f2555517131e1b9b020de2edbbda98e8af7df6f6",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168456192,
+      "source_archive": "target/thos-console-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-console-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-loader-qa-2026-10-24-manifest.json",
+      "image": "target/thos-loader-qa-2026-10-24.img",
+      "sha256": "0361fca4e38b994fb4e34f0ba767c9fc0f6e587f97225a7ebcdcd829481a6e84",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 168460288,
+      "source_archive": "target/thos-loader-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-loader-2026-10-24.elf"
+    },
+    {
+      "manifest": "target/thos-locale-qa-2026-10-24-manifest.json",
+      "image": "target/thos-locale-qa-2026-10-24.img",
+      "sha256": "c5700c655d1b02dafdc901424d12b418e9a8fb1d12964e5a95eea430ef488ba9",
+      "logical_bytes": 613416960,
+      "allocated_bytes": 611332096,
+      "source_archive": "target/thos-locale-source-2026-10-24.tar.gz",
+      "kernel": "target/thos-kernel-locale-2026-10-24.elf"
+    }
+  ],
+  "allocated_bytes_removed": 2401808384,
+  "free_before": 214433935360,
+  "free_after": 216835743744,
+  "preserved": [
+    "target/thos-live.img",
+    "target/thos-live-nls-2026-10-24.img",
+    "target/thos-live-night-2026-10-23.img",
+    "target/thos-nls-qa-2026-10-24.img",
+    "target/thos-night-oem-qa-2026-10-23.img",
+    "all source archives, kernels, logs/screenshots and older preexisting backups"
+  ],
+  "physical_disks_touched": false
+}

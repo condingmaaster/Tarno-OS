@@ -64,7 +64,11 @@ core::arch::global_asm!(
     mov  rbp, rsp
     mov  rdi, rbp                   // arg 0: the saved register frame (rip at +120, cs at +128)
     and  rsp, -16                   // dynamic 16-byte align for the SysV call
+    call thos_cpu_irq_enter
+    mov  rdi, rbp
     call \body
+    mov  rdi, rbp
+    call thos_cpu_irq_leave
     mov  rsp, rbp
     pop  r15
     pop  r14
@@ -90,6 +94,7 @@ core::arch::global_asm!(
 IRQ_ENTRY thos_irq_timer, thos_irq_timer_body
 IRQ_ENTRY thos_irq_ahci,  thos_irq_ahci_body
 IRQ_ENTRY thos_irq_input, thos_irq_input_body
+IRQ_ENTRY thos_irq_kick,  thos_irq_kick_body
 "#
 );
 
@@ -97,6 +102,7 @@ extern "C" {
     fn thos_irq_timer();
     fn thos_irq_ahci();
     fn thos_irq_input();
+    fn thos_irq_kick();
 }
 
 /// Body of the APIC timer IRQ — see the removed `apic_timer` for the previous
@@ -107,13 +113,33 @@ extern "C" fn thos_irq_timer_body(frame: *const u64) {
     apic::on_timer_tick();
     crate::random::add_event(apic::ticks());
     apic::eoi();
+    crate::timer::tick(); // advance the monotonic clock + wake timed sleepers (CPU 0 only; 1 kHz)
+    // Keep a 10-ms slice in elapsed time. Ten delivered IRQs can represent
+    // much longer when an interrupt-disabled syscall coalesces timer ticks.
+    static SLICE: [core::sync::atomic::AtomicU64; crate::gdt::MAX_CPUS] = [const { core::sync::atomic::AtomicU64::new(0) }; crate::gdt::MAX_CPUS];
+    if !crate::sched::is_started() {
+        return; // per-CPU state (gs) is not live yet
+    }
+    let cpu = crate::smp::this_cpu() as usize;
+    unsafe { crate::lockup::sample(cpu, *frame.add(15), *frame.add(16)) }; // where was this CPU interrupted (rip at +120, cs at +128)?
+    let now = crate::timer::monotonic_ns();
+    if now.saturating_sub(SLICE[cpu].load(core::sync::atomic::Ordering::Relaxed)) < 10_000_000 {
+        return;
+    }
+    SLICE[cpu].store(now, core::sync::atomic::Ordering::Relaxed);
     crate::ahci::poll_wake(); // safety net for a dropped AHCI completion IRQ
-    crate::timer::tick(); // advance the monotonic clock + wake timed sleepers
     // Interrupted ring 3 (saved CS.RPL == 3, 16th slot after the 15 pushed GPRs)?
     // Then a fatal signal ends the process even if it never makes a syscall.
     if unsafe { *frame.add(16) } & 3 == 3 {
         crate::signal::irq_check_fatal();
     }
+    crate::sched::on_tick();
+}
+
+/// A thread became runnable while this CPU was idle: run the scheduler now.
+#[no_mangle]
+extern "C" fn thos_irq_kick_body(_frame: *const u64) {
+    apic::eoi();
     crate::sched::on_tick();
 }
 
@@ -150,8 +176,10 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
             .set_handler_fn(nmi)
             .set_stack_index(gdt::NMI_IST_INDEX);
         idt.page_fault
-            .set_handler_addr(a(seh::thos_pf_entry))
-            .set_stack_index(gdt::PAGE_FAULT_IST_INDEX);
+            .set_handler_addr(a(seh::thos_pf_entry));
+        // Demand faults can park. A per-CPU IST would be overwritten by
+        // another task's fault while the first task sleeps. User faults use
+        // the thread's TSS RSP0; double faults keep an emergency IST stack.
     }
 
     // APIC vectors (>= 32). Timer + AHCI use hand-rolled entry stubs with a
@@ -163,6 +191,7 @@ static IDT: Lazy<InterruptDescriptorTable> = Lazy::new(|| {
         idt[apic::AHCI_VECTOR].set_handler_addr(a(thos_irq_ahci));
         idt[apic::KBD_VECTOR].set_handler_addr(a(thos_irq_input));
         idt[apic::MOUSE_VECTOR].set_handler_addr(a(thos_irq_input));
+        idt[apic::KICK_VECTOR].set_handler_addr(a(thos_irq_kick));
     }
     idt[apic::SPURIOUS_VECTOR].set_handler_fn(apic_spurious);
 
@@ -189,6 +218,9 @@ extern "x86-interrupt" fn apic_spurious(_frame: InterruptStackFrame) {
 // --- fatal ---
 
 extern "x86-interrupt" fn nmi(frame: InterruptStackFrame) {
+    if crate::sched::is_started() && crate::lockup::nmi(crate::smp::this_cpu() as usize, frame.instruction_pointer.as_u64()) {
+        return; // the lock-up detector asked for this one
+    }
     kprintln!("THOS trap: NMI\n{:#?}", frame);
     exit_qemu(ExitCode::Failed);
     hcf();
@@ -213,8 +245,8 @@ fn fatal(name: &str, frame: &InterruptStackFrame, code: Option<u64>) -> ! {
     }
     if from_user {
         kprintln!("  killed user rip={:#x}", frame.instruction_pointer.as_u64());
-        crate::process::set_term_signal(11); // SIGSEGV
         crate::syscall::note_user_exit();
+        crate::process::set_term_signal(11); // SIGSEGV
         crate::sched::exit();
     }
     kprintln!("{:#?}", frame);
